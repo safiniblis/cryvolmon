@@ -1,38 +1,40 @@
-import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
+import { cryptoCache, type CryptoStat } from "@shared/schema";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  getCryptoStats(): Promise<CryptoStat[]>;
+  updateCryptoStat(stat: CryptoStat): Promise<CryptoStat>;
+  updateCryptoStats(stats: CryptoStat[]): Promise<void>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-
-  constructor() {
-    this.users = new Map();
+export class DatabaseStorage implements IStorage {
+  async getCryptoStats(): Promise<CryptoStat[]> {
+    return await db.select().from(cryptoCache);
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  async updateCryptoStat(stat: CryptoStat): Promise<CryptoStat> {
+    // Upsert logic
+    await db
+      .insert(cryptoCache)
+      .values(stat)
+      .onConflictDoUpdate({
+        target: cryptoCache.slug,
+        set: stat,
+      });
+    return stat;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  async updateCryptoStats(stats: CryptoStat[]): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Clear old data first to handle ranking changes?
+      // Or just upsert everything. Let's truncate and re-insert to keep it clean for top 20.
+      await tx.delete(cryptoCache);
+      if (stats.length > 0) {
+        await tx.insert(cryptoCache).values(stats);
+      }
+    });
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

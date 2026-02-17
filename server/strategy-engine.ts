@@ -295,9 +295,11 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     if (!config.lowerPrice) config.lowerPrice = currentPrice * 0.90;
     if (!config.upperPrice) config.upperPrice = currentPrice * 1.02;
     if (!config.liquidationPrice) config.liquidationPrice = currentPrice * 0.88;
-    if (!config.amountPerGrid) config.amountPerGrid = 5;
+    if (!config.amountPerGrid) {
+      config.amountPerGrid = Math.max(marginPerSlot, 1);
+    }
 
-    console.log(`[InitialBuy ${strategy.id}] Balance=${available.toFixed(2)} USDT, leverage=${leverage}x, gridBuysIn1%=${gridBuyCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
+    console.log(`[InitialBuy ${strategy.id}] Balance=${available.toFixed(2)} USDT, leverage=${leverage}x, gridBuysIn1%=${gridBuyCount}, marginPerSlot=${marginPerSlot.toFixed(2)}, amountPerGrid=${config.amountPerGrid.toFixed(2)}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
 
     const result = await client.placeOrder({
       symbol: strategy.symbol,
@@ -411,7 +413,7 @@ async function executeGridStrategy(strategy: Strategy) {
       if (!config.lowerPrice) config.lowerPrice = cp * 0.90;
       if (!config.upperPrice) config.upperPrice = cp * 1.02;
       if (!config.liquidationPrice) config.liquidationPrice = cp * 0.88;
-      if (!config.amountPerGrid) config.amountPerGrid = 5;
+      if (!config.amountPerGrid) config.amountPerGrid = 2;
       await storage.updateStrategy(strategy.id, { config });
     }
   }
@@ -526,12 +528,19 @@ async function executeGridStrategy(strategy: Strategy) {
   } catch {}
 
   const missingBuyLevels = buyLevels.filter(l => !coveredBuyPrices.has(roundPrice(l, precision.quotePrecision)));
-  const amountPerGrid = config.amountPerGrid || 5;
+  const amountPerGrid = config.amountPerGrid || 2;
+  const leverage = config.leverage || 8;
+  const marginPerOrder = amountPerGrid;
 
   let placedBuys = 0;
   for (const level of missingBuyLevels) {
-    if (availableBalance < 0.5) continue;
-    const notional = amountPerGrid * (config.leverage || 8) * 0.95;
+    if (availableBalance < marginPerOrder) {
+      if (placedBuys === 0 && missingBuyLevels.indexOf(level) === 0) {
+        console.log(`[Grid ${strategy.id}] Insufficient balance for buy orders: ${availableBalance.toFixed(2)} USDT < ${marginPerOrder.toFixed(2)} per grid`);
+      }
+      continue;
+    }
+    const notional = amountPerGrid * leverage * 0.95;
     const qtyBase = notional / level;
     const qty = Math.max(qtyBase, precision.minTradeVolume);
     const qtyStr = roundQty(qty, precision.basePrecision);
@@ -550,6 +559,7 @@ async function executeGridStrategy(strategy: Strategy) {
 
       if (result?.code === 0 && result.data?.orderId) {
         placedBuys++;
+        availableBalance -= marginPerOrder;
       } else {
         console.error(`[Grid ${strategy.id}] BUY failed @ ${priceStr}: ${result?.msg}`);
       }
@@ -564,47 +574,78 @@ async function executeGridStrategy(strategy: Strategy) {
     let existingTpsl: any[] = [];
     try {
       const tpRes = await client.getPendingTpslOrders(strategy.symbol);
-      if (tpRes?.code === 0 && Array.isArray(tpRes.data)) {
-        existingTpsl = tpRes.data.filter((t: any) => t.positionId === positionId);
+      if (tpRes?.code === 0) {
+        let rawData = tpRes.data;
+        if (rawData && !Array.isArray(rawData) && Array.isArray(rawData.orderList)) {
+          rawData = rawData.orderList;
+        }
+        if (Array.isArray(rawData)) {
+          existingTpsl = rawData.filter((t: any) => t.positionId === positionId);
+        }
       }
+      console.log(`[Grid ${strategy.id}] Existing TP orders: ${existingTpsl.length} (total qty: ${existingTpsl.reduce((s: number, t: any) => s + parseFloat(t.tpQty || t.qty || "0"), 0).toFixed(precision.basePrecision)})`);
     } catch (e: any) {
       console.error(`[Grid ${strategy.id}] Failed to fetch TP/SL orders:`, e.message);
     }
 
     const desiredTpPrices = new Set(sellLevels.map(l => roundPrice(l, precision.quotePrecision)));
 
+    const existingTpPriceSet = new Set<string>();
+    let totalExistingTpQty = 0;
+    let existingMatchCount = 0;
+
     for (const tp of existingTpsl) {
-      const tpPriceStr = roundPrice(parseFloat(tp.tpPrice || "0"), precision.quotePrecision);
-      if (!desiredTpPrices.has(tpPriceStr)) {
+      const tpPriceStr = roundPrice(parseFloat(tp.tpPrice || tp.price || "0"), precision.quotePrecision);
+      const tpQty = parseFloat(tp.tpQty || tp.qty || "0");
+      totalExistingTpQty += tpQty;
+      if (desiredTpPrices.has(tpPriceStr) && !existingTpPriceSet.has(tpPriceStr)) {
+        existingTpPriceSet.add(tpPriceStr);
+        existingMatchCount++;
+      }
+    }
+
+    const targetQtyPerLevel = positionQty / sellLevels.length;
+    const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);
+    const flooredQty = Math.floor(targetQtyPerLevel * basePrecisionMultiplier) / basePrecisionMultiplier;
+    const tpQtyPerLevel = Math.max(flooredQty, precision.minTradeVolume);
+    const targetQtyStr = tpQtyPerLevel.toFixed(precision.basePrecision);
+    const totalPlannedQty = tpQtyPerLevel * sellLevels.length;
+
+    let qtyMismatch = false;
+    for (const tp of existingTpsl) {
+      const tpQty = parseFloat(tp.tpQty || tp.qty || "0");
+      if (Math.abs(tpQty - tpQtyPerLevel) > tpQtyPerLevel * 0.05) {
+        qtyMismatch = true;
+        break;
+      }
+    }
+
+    const needsRebuild = totalExistingTpQty > positionQty * 1.02 ||
+      existingMatchCount !== sellLevels.length ||
+      existingTpsl.length !== sellLevels.length ||
+      qtyMismatch;
+
+    if (needsRebuild) {
+      console.log(`[Grid ${strategy.id}] TP rebuild needed: existingQty=${totalExistingTpQty.toFixed(precision.basePrecision)} posQty=${positionQty} matched=${existingMatchCount}/${sellLevels.length} existing=${existingTpsl.length}`);
+
+      for (const tp of existingTpsl) {
         try {
-          await client.cancelTpslOrder(strategy.symbol, tp.id);
-          cancelledTps++;
+          const tpId = tp.id || tp.orderId;
+          if (tpId) {
+            await client.cancelTpslOrder(strategy.symbol, tpId);
+            cancelledTps++;
+          }
         } catch (e: any) {
           console.error(`[Grid ${strategy.id}] Cancel TP error:`, e.message);
         }
       }
-    }
 
-    let existingTpQty = 0;
-    const existingTpPrices = new Set<string>();
-    for (const tp of existingTpsl) {
-      const tpPriceStr = roundPrice(parseFloat(tp.tpPrice || "0"), precision.quotePrecision);
-      if (desiredTpPrices.has(tpPriceStr)) {
-        existingTpPrices.add(tpPriceStr);
-        existingTpQty += parseFloat(tp.tpQty || "0");
-      }
-    }
+      if (totalPlannedQty > positionQty * 1.02) {
+        const maxLevels = Math.floor(positionQty / tpQtyPerLevel);
+        const levelsToPlace = sellLevels.slice(0, maxLevels);
+        console.log(`[Grid ${strategy.id}] TP qty capped: ${tpQtyPerLevel} x ${maxLevels} levels (of ${sellLevels.length}) = ${(tpQtyPerLevel * maxLevels).toFixed(precision.basePrecision)} <= posQty ${positionQty}`);
 
-    const remainingQtyForTp = Math.max(positionQty - existingTpQty, 0);
-    const newTpLevels = sellLevels.filter(l => !existingTpPrices.has(roundPrice(l, precision.quotePrecision)));
-
-    if (remainingQtyForTp > 0 && newTpLevels.length > 0) {
-      const tpQtyPerLevel = remainingQtyForTp / newTpLevels.length;
-      const tpQtyStr = roundQty(Math.max(tpQtyPerLevel, precision.minTradeVolume), precision.basePrecision);
-      const totalNewTpQty = parseFloat(tpQtyStr) * newTpLevels.length;
-
-      if (totalNewTpQty <= remainingQtyForTp * 1.01) {
-        for (const level of newTpLevels) {
+        for (const level of levelsToPlace) {
           const priceStr = roundPrice(level, precision.quotePrecision);
           try {
             const result = await client.placeTpslOrder({
@@ -613,7 +654,28 @@ async function executeGridStrategy(strategy: Strategy) {
               tpPrice: priceStr,
               tpStopType: "LAST_PRICE",
               tpOrderType: "MARKET",
-              tpQty: tpQtyStr,
+              tpQty: targetQtyStr,
+            });
+            if (result?.code === 0) {
+              placedTps++;
+            } else {
+              console.error(`[Grid ${strategy.id}] TP failed @ ${priceStr}: ${result?.msg}`);
+            }
+          } catch (e: any) {
+            console.error(`[Grid ${strategy.id}] TP error @ ${priceStr}:`, e.message);
+          }
+        }
+      } else {
+        for (const level of sellLevels) {
+          const priceStr = roundPrice(level, precision.quotePrecision);
+          try {
+            const result = await client.placeTpslOrder({
+              symbol: strategy.symbol,
+              positionId,
+              tpPrice: priceStr,
+              tpStopType: "LAST_PRICE",
+              tpOrderType: "MARKET",
+              tpQty: targetQtyStr,
             });
             if (result?.code === 0) {
               placedTps++;
@@ -628,7 +690,8 @@ async function executeGridStrategy(strategy: Strategy) {
     }
   }
 
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | Band=[${bandLow.toFixed(precision.quotePrecision)}-${bandHigh.toFixed(precision.quotePrecision)}] | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}`);
+  const tpUpperBound = config.upperPrice ? config.upperPrice.toFixed(precision.quotePrecision) : bandHigh.toFixed(precision.quotePrecision);
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${currentPrice.toFixed(precision.quotePrecision)}-${tpUpperBound}] | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}`);
 
   await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 }

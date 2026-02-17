@@ -33,7 +33,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Bot, Play, Square, Trash2, Plus, Wifi, WifiOff,
   TrendingUp, TrendingDown, DollarSign, Activity,
-  AlertTriangle, ArrowRight, Calculator,
+  AlertTriangle, ArrowRight, Calculator, Zap,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, ArrowDownToLine,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
@@ -100,7 +100,7 @@ function AccountOverview() {
             <AlertTriangle className="h-5 w-5 text-yellow-400 flex-shrink-0" />
             <div>
               <p className="text-sm text-yellow-400 font-medium">Low balance warning</p>
-              <p className="text-xs text-muted-foreground">You have {formatCurrency(data.balances[0]?.available)} USDT available. Grid strategies need at least 10 USDT (ideally 50+) to place orders reliably.</p>
+              <p className="text-xs text-muted-foreground">You have {formatCurrency(data.balances[0]?.available)} USDT available. Orders are spread across grid levels using your full balance.</p>
             </div>
           </CardContent>
         </Card>

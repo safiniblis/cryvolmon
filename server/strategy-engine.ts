@@ -292,7 +292,12 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     const baseQty = Math.max(initialNotional / currentPrice, precision.minTradeVolume);
     const qtyStr = roundQty(baseQty, precision.basePrecision);
 
-    console.log(`[InitialBuy ${strategy.id}] Balance=${available.toFixed(2)} USDT, leverage=${leverage}x, gridBuysIn1%=${gridBuyCount}, marginPerSlot=${marginPerSlot.toFixed(2)}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}`);
+    if (!config.lowerPrice) config.lowerPrice = currentPrice * 0.90;
+    if (!config.upperPrice) config.upperPrice = currentPrice * 1.02;
+    if (!config.liquidationPrice) config.liquidationPrice = currentPrice * 0.88;
+    if (!config.amountPerGrid) config.amountPerGrid = 5;
+
+    console.log(`[InitialBuy ${strategy.id}] Balance=${available.toFixed(2)} USDT, leverage=${leverage}x, gridBuysIn1%=${gridBuyCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
 
     const result = await client.placeOrder({
       symbol: strategy.symbol,
@@ -323,7 +328,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     if (success) {
       await storage.updateStrategy(strategy.id, {
         totalTrades: (strategy.totalTrades || 0) + 1,
-        config: { ...config, initialBuyDone: true, startPrice: currentPrice },
+        config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid },
       });
 
       let remainingBalance = 0;
@@ -397,6 +402,19 @@ async function executeGridStrategy(strategy: Strategy) {
   if (!client) throw new Error("Bitunix client not configured");
 
   const config = strategy.config as GridConfig & { initialBuyDone?: boolean };
+
+  if (!config.startPrice || !config.lowerPrice || !config.upperPrice) {
+    const ticker = await getTickerPrice(strategy.symbol);
+    if (ticker) {
+      const cp = ticker.lastPrice;
+      if (!config.startPrice) config.startPrice = cp;
+      if (!config.lowerPrice) config.lowerPrice = cp * 0.90;
+      if (!config.upperPrice) config.upperPrice = cp * 1.02;
+      if (!config.liquidationPrice) config.liquidationPrice = cp * 0.88;
+      if (!config.amountPerGrid) config.amountPerGrid = 5;
+      await storage.updateStrategy(strategy.id, { config });
+    }
+  }
 
   if (!config.initialBuyDone) {
     if (initialBuyLocks.has(strategy.id)) {
@@ -512,7 +530,7 @@ async function executeGridStrategy(strategy: Strategy) {
     try {
       await client.post("/api/v1/futures/trade/cancel_orders", {
         symbol: strategy.symbol,
-        orderIds: ordersToCancel,
+        orderList: ordersToCancel.map(id => ({ orderId: id })),
       });
       console.log(`[Grid ${strategy.id}] Cancelled ${ordersToCancel.length} out-of-range orders`);
     } catch (e: any) {
@@ -526,7 +544,16 @@ async function executeGridStrategy(strategy: Strategy) {
     existingPriceKeys.add(pk);
   }
 
-  const sellQtyPerLevel = sellLevels.length > 0 ? positionQty / sellLevels.length : 0;
+  let existingSellQty = 0;
+  for (const [, info] of existingOrders) {
+    if (info.side === "SELL") existingSellQty += info.qty || 0;
+  }
+  const newSellLevels = sellLevels.filter(l => {
+    const key = `SELL_${roundPrice(l, precision.quotePrecision)}`;
+    return !existingPriceKeys.has(key);
+  });
+  const remainingPosForSell = Math.max(positionQty - existingSellQty, 0);
+  const sellQtyPerLevel = newSellLevels.length > 0 ? remainingPosForSell / newSellLevels.length : 0;
 
   let availableBalance = 0;
   try {
@@ -584,6 +611,7 @@ async function executeGridStrategy(strategy: Strategy) {
           price: order.price,
           side: order.side,
           level: order.price,
+          qty: parseFloat(qtyStr),
         });
         placed++;
       } else {
@@ -1133,20 +1161,26 @@ export async function cancelAllGridOrders(strategyId: number, symbol: string) {
   const client = getBitunixClient();
   if (!client) return;
 
-  const orders = activeGridOrders.get(strategyId);
-  if (orders && orders.size > 0) {
-    const orderIds = Array.from(orders.values()).map(o => o.orderId);
-    try {
-      await client.post("/api/v1/futures/trade/cancel_orders", {
-        symbol,
-        orderIds,
-      });
-      console.log(`[Grid ${strategyId}] Cancelled all ${orderIds.length} active grid orders`);
-    } catch (e: any) {
-      console.error(`[Grid ${strategyId}] Cancel all error:`, e.message);
+  try {
+    const pendingRes = await client.get("/api/v1/futures/trade/get_pending_orders", {
+      symbol,
+      pageNum: 1,
+      pageSize: 100,
+    });
+
+    const cancelRes = await client.cancelAllOrders(symbol);
+    if (cancelRes?.code === 0) {
+      const count = pendingRes?.data?.orderList?.length || 0;
+      console.log(`[Grid ${strategyId}] Cancelled all pending orders on exchange for ${symbol} (had ${count})`);
+    } else {
+      console.log(`[Grid ${strategyId}] Cancel all orders response:`, JSON.stringify(cancelRes));
     }
-    orders.clear();
+  } catch (e: any) {
+    console.error(`[Grid ${strategyId}] Cancel all exchange orders error:`, e.message);
   }
+
+  const orders = activeGridOrders.get(strategyId);
+  if (orders) orders.clear();
   activeGridOrders.delete(strategyId);
 }
 

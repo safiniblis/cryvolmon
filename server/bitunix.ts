@@ -157,7 +157,11 @@ export class BitunixClient {
   }
 
   async cancelOrder(orderId: string, symbol: string) {
-    return this.post("/api/v1/futures/trade/cancel_orders", { orderIds: [orderId], symbol });
+    return this.post("/api/v1/futures/trade/cancel_orders", { symbol, orderList: [{ orderId }] });
+  }
+
+  async cancelAllOrders(symbol: string) {
+    return this.post("/api/v1/futures/trade/cancel_all_orders", { symbol });
   }
 
   async getOpenOrders(symbol?: string) {

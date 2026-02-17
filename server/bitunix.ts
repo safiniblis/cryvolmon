@@ -176,6 +176,34 @@ export class BitunixClient {
     return this.get("/api/v1/futures/trade/get_history_orders", params);
   }
 
+  async placeTpslOrder(params: {
+    symbol: string;
+    positionId: string;
+    tpPrice?: string;
+    tpStopType?: string;
+    tpOrderType?: string;
+    tpOrderPrice?: string;
+    tpQty?: string;
+    slPrice?: string;
+    slStopType?: string;
+    slOrderType?: string;
+    slOrderPrice?: string;
+    slQty?: string;
+  }) {
+    return this.post("/api/v1/futures/tpsl/place_order", params);
+  }
+
+  async getPendingTpslOrders(symbol?: string) {
+    const params: Record<string, any> = {};
+    if (symbol) params.symbol = symbol;
+    params.limit = "100";
+    return this.get("/api/v1/futures/tpsl/get_pending_orders", params);
+  }
+
+  async cancelTpslOrder(symbol: string, orderId: string) {
+    return this.post("/api/v1/futures/tpsl/cancel_order", { symbol, orderId });
+  }
+
   async flashClose(symbol: string, positionId?: string) {
     if (positionId) {
       return this.post("/api/v1/futures/trade/flash_close_position", { positionId });

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid } from "./strategy-engine";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -274,6 +274,47 @@ export async function registerRoutes(
       res.json({ order: result, trade: log });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
+    }
+  });
+
+  // === Grid Calculator ===
+  app.post("/api/grid/calculate", async (req, res) => {
+    const calcSchema = z.object({
+      symbol: z.string().min(1),
+      feeRate: z.number().positive().default(0.0006),
+    });
+    try {
+      const { symbol, feeRate } = calcSchema.parse(req.body);
+
+      const client = getBitunixClient();
+      let currentPrice: number | null = null;
+
+      if (client) {
+        try {
+          const result = await client.getTickers(symbol);
+          if (result?.data && result.data.length > 0) {
+            currentPrice = parseFloat(result.data[0].lastPrice || result.data[0].last || "0");
+          }
+        } catch (e) {}
+      }
+
+      if (!currentPrice) {
+        const stats = await storage.getCryptoStats();
+        const match = stats.find(s => s.symbol?.toUpperCase() === symbol.replace("USDT", "").toUpperCase());
+        if (match) currentPrice = match.currentPrice || 0;
+      }
+
+      if (!currentPrice || currentPrice <= 0) {
+        return res.status(400).json({ message: `Cannot determine price for ${symbol}` });
+      }
+
+      const grid = calculateOptimizedGrid(currentPrice, feeRate);
+      res.json({ currentPrice, ...grid });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: e.errors[0].message });
+      }
+      res.status(500).json({ message: "Calculation failed" });
     }
   });
 

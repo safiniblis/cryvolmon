@@ -117,6 +117,23 @@ export function useTradeLogs(strategyId?: number) {
   });
 }
 
+export function useGridCalculator() {
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (data: { symbol: string; feeRate?: number }) => {
+      const res = await apiRequest("POST", "/api/grid/calculate", {
+        symbol: data.symbol,
+        feeRate: data.feeRate || 0.0006,
+      });
+      return res.json();
+    },
+    onError: (e: Error) => {
+      toast({ title: "Calculation Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useManualTrade() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

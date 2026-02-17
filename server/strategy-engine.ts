@@ -528,19 +528,21 @@ async function executeGridStrategy(strategy: Strategy) {
   } catch {}
 
   const missingBuyLevels = buyLevels.filter(l => !coveredBuyPrices.has(roundPrice(l, precision.quotePrecision)));
-  const amountPerGrid = config.amountPerGrid || 2;
   const leverage = config.leverage || 8;
-  const marginPerOrder = amountPerGrid;
+  const levelsToFill = Math.min(missingBuyLevels.length, 4);
+  const marginPerOrder = levelsToFill > 0 ? availableBalance / levelsToFill : 0;
+  const buySlice = missingBuyLevels.slice(0, levelsToFill);
 
   let placedBuys = 0;
-  for (const level of missingBuyLevels) {
-    if (availableBalance < marginPerOrder) {
-      if (placedBuys === 0 && missingBuyLevels.indexOf(level) === 0) {
-        console.log(`[Grid ${strategy.id}] Insufficient balance for buy orders: ${availableBalance.toFixed(2)} USDT < ${marginPerOrder.toFixed(2)} per grid`);
+  for (const level of buySlice) {
+    if (availableBalance < 0.1) {
+      if (placedBuys === 0) {
+        console.log(`[Grid ${strategy.id}] No balance for buy orders: ${availableBalance.toFixed(2)} USDT`);
       }
-      continue;
+      break;
     }
-    const notional = amountPerGrid * leverage * 0.95;
+    const effectiveMargin = Math.min(marginPerOrder, availableBalance * 0.95);
+    const notional = effectiveMargin * leverage * 0.95;
     const qtyBase = notional / level;
     const qty = Math.max(qtyBase, precision.minTradeVolume);
     const qtyStr = roundQty(qty, precision.basePrecision);
@@ -559,7 +561,7 @@ async function executeGridStrategy(strategy: Strategy) {
 
       if (result?.code === 0 && result.data?.orderId) {
         placedBuys++;
-        availableBalance -= marginPerOrder;
+        availableBalance -= effectiveMargin;
       } else {
         console.error(`[Grid ${strategy.id}] BUY failed @ ${priceStr}: ${result?.msg}`);
       }
@@ -1190,37 +1192,46 @@ const strategyExecutors: Record<string, (strategy: Strategy) => Promise<void>> =
 };
 
 let intervalId: NodeJS.Timeout | null = null;
+let cycleRunning = false;
 
 export async function runStrategyCycle() {
-  const activeStrategies = await storage.getStrategiesByStatus("running");
-  console.log(`[Strategy Cycle] Found ${activeStrategies.length} running strategies`);
+  if (cycleRunning) {
+    return;
+  }
+  cycleRunning = true;
+  try {
+    const activeStrategies = await storage.getStrategiesByStatus("running");
+    console.log(`[Strategy Cycle] Found ${activeStrategies.length} running strategies`);
 
-  for (const strategy of activeStrategies) {
-    const executor = strategyExecutors[strategy.type];
-    if (!executor) {
-      console.error(`Unknown strategy type: ${strategy.type}`);
-      continue;
-    }
+    for (const strategy of activeStrategies) {
+      const executor = strategyExecutors[strategy.type];
+      if (!executor) {
+        console.error(`Unknown strategy type: ${strategy.type}`);
+        continue;
+      }
 
-    try {
-      console.log(`[Strategy ${strategy.id}] Executing ${strategy.name} (${strategy.symbol})`);
-      await executor(strategy);
-    } catch (e: any) {
-      console.error(`Error executing strategy ${strategy.id} (${strategy.name}):`, e.message);
-      await storage.updateStrategy(strategy.id, { status: "error" });
-      await storage.createTradeLog({
-        strategyId: strategy.id,
-        symbol: strategy.symbol,
-        side: "BUY",
-        orderType: "MARKET",
-        quantity: 0,
-        price: null,
-        status: "error",
-        orderId: null,
-        pnl: null,
-        errorMsg: e.message,
-      });
+      try {
+        console.log(`[Strategy ${strategy.id}] Executing ${strategy.name} (${strategy.symbol})`);
+        await executor(strategy);
+      } catch (e: any) {
+        console.error(`Error executing strategy ${strategy.id} (${strategy.name}):`, e.message);
+        await storage.updateStrategy(strategy.id, { status: "error" });
+        await storage.createTradeLog({
+          strategyId: strategy.id,
+          symbol: strategy.symbol,
+          side: "BUY",
+          orderType: "MARKET",
+          quantity: 0,
+          price: null,
+          status: "error",
+          orderId: null,
+          pnl: null,
+          errorMsg: e.message,
+        });
+      }
     }
+  } finally {
+    cycleRunning = false;
   }
 }
 
@@ -1262,8 +1273,8 @@ export async function cancelAllGridOrders(strategyId: number, symbol: string) {
 
 export function startStrategyEngine() {
   if (intervalId) return;
-  console.log("Strategy engine started (5s cycle + WebSocket price feed)");
-  intervalId = setInterval(runStrategyCycle, 5_000);
+  console.log("Strategy engine started (15s cycle + WebSocket price feed)");
+  intervalId = setInterval(runStrategyCycle, 15_000);
 
   const strategies = storage.getStrategiesByStatus("running").then((strats) => {
     for (const s of strats) {

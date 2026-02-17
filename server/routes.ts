@@ -593,6 +593,43 @@ export async function registerRoutes(
     res.json(orders);
   });
 
+  app.get("/api/strategies/:id/margin-info", async (req, res) => {
+    const id = parseInt(req.params.id);
+    const strategy = await storage.getStrategy(id);
+    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
+    if (strategy.type !== "grid") return res.status(400).json({ message: "Only grid strategies" });
+
+    const client = getBitunixClient();
+    if (!client) return res.status(400).json({ message: "API keys not configured" });
+
+    try {
+      const { getMarginInfo } = await import("./strategy-engine");
+      const result = await getMarginInfo(strategy);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/strategies/:id/extend-orders", async (req, res) => {
+    const id = parseInt(req.params.id);
+    const strategy = await storage.getStrategy(id);
+    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
+    if (strategy.status !== "running") return res.status(400).json({ message: "Strategy must be running" });
+    if (strategy.type !== "grid") return res.status(400).json({ message: "Only grid strategies" });
+
+    const client = getBitunixClient();
+    if (!client) return res.status(400).json({ message: "API keys not configured" });
+
+    try {
+      const { extendOrdersToLowerBand } = await import("./strategy-engine");
+      const result = await extendOrdersToLowerBand(strategy);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.post("/api/strategies/:id/add-margin", async (req, res) => {
     const id = parseInt(req.params.id);
     const schema = z.object({ amount: z.number().positive() });

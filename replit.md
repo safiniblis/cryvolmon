@@ -57,17 +57,29 @@ A full-stack cryptocurrency trading platform with two main features:
 - Rotation check runs every 5 minutes during strategy cycle
 - Enable via `rotationEnabled: true` in strategy config
 
-## Bitunix API Endpoints (Corrected)
-- Orders: `POST /api/v1/futures/trade/place_order` (qty in base coin, not USDT)
-- Cancel: `POST /api/v1/futures/trade/cancel_orders` (uses orderIds array)
+## Bitunix API Endpoints (Verified)
+- Place order: `POST /api/v1/futures/trade/place_order` (qty in base coin, not USDT)
+- Cancel orders: `POST /api/v1/futures/trade/cancel_orders` (body: `{symbol, orderList: [{orderId}]}`)
+- Cancel all orders: `POST /api/v1/futures/trade/cancel_all_orders` (body: `{symbol}`)
 - Open orders: `GET /api/v1/futures/trade/get_pending_orders`
 - Order history: `GET /api/v1/futures/trade/get_history_orders`
-- Flash close: `POST /api/v1/futures/trade/flash_close`
+- Flash close: `POST /api/v1/futures/trade/flash_close_position` (body: `{positionId}`)
 - Set leverage: `POST /api/v1/futures/account/change_leverage`
 - Set margin mode: `POST /api/v1/futures/account/change_margin_mode`
-- Account: `GET /api/v1/futures/account/get_account` (needs marginCoin=USDT)
+- Account: `GET /api/v1/futures/account` (needs marginCoin=USDT)
 - Positions: `GET /api/v1/futures/position/get_pending_positions`
+- **TP/SL place**: `POST /api/v1/futures/tpsl/place_order` (body: `{symbol, positionId, tpPrice, tpStopType, tpOrderType, tpQty}`)
+- **TP/SL pending**: `GET /api/v1/futures/tpsl/get_pending_orders` (query: symbol, limit)
+- **TP/SL cancel**: `POST /api/v1/futures/tpsl/cancel_order` (body: `{symbol, orderId}`)
+- **TP/SL modify position**: `POST /api/v1/futures/tpsl/position/modify_order`
 - Leverage/margin must be set via separate endpoints before placing orders
+
+## Grid Strategy - Sell Side (TP/SL approach)
+- Grid sell levels are NOT separate SELL CLOSE limit orders (those fail with "Insufficient amount")
+- Instead, sell levels use the TP/SL API: `place_tpsl_order` with `tpPrice`, `tpQty`, `tpStopType: "LAST_PRICE"`, `tpOrderType: "MARKET"`
+- Each TP order is attached to the position via `positionId`
+- Position qty is split equally across all TP levels within the ±1% band
+- On strategy stop, both limit orders AND TP/SL orders are cancelled
 
 ## Initial Buy Logic
 - On grid strategy start, places a market BUY for maximum affordable position

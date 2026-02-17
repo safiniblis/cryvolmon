@@ -523,11 +523,137 @@ function CreateStrategyDialog() {
   );
 }
 
-function StrategiesList() {
-  const { data: strategies, isLoading } = useStrategies();
+function StrategyCard({ s }: { s: Strategy }) {
+  const [expanded, setExpanded] = useState(false);
   const startStrategy = useStartStrategy();
   const stopStrategy = useStopStrategy();
   const deleteStrategy = useDeleteStrategy();
+  const cfg = (s.config || {}) as Record<string, any>;
+
+  const gridParams = s.type === "grid" ? [
+    { label: "Start Price", value: `$${Number(cfg.startPrice || 0).toFixed(2)}` },
+    { label: "Lower Bound", value: `$${Number(cfg.lowerPrice || 0).toFixed(2)}` },
+    { label: "Upper Bound", value: `$${Number(cfg.upperPrice || 0).toFixed(2)}` },
+    { label: "Liquidation", value: `$${Number(cfg.liquidationPrice || 0).toFixed(2)}` },
+    { label: "Grid Count", value: `${cfg.gridCount || 0}` },
+    { label: "Grids Below", value: `${cfg.gridsBelow || 0}` },
+    { label: "Grids Above", value: `${cfg.gridsAbove || 0}` },
+    { label: "Leverage", value: `${cfg.leverage || 1}x` },
+    { label: "Grid Ratio", value: `${Number(cfg.gridRatio || 0).toFixed(4)}` },
+    { label: "Per Grid", value: `$${cfg.amountPerGrid || 0}` },
+    { label: "Gap Growth Below", value: `${cfg.gapGrowthBelow || 1}x` },
+    { label: "Gap Shrink Above", value: `${cfg.gapShrinkAbove || 1}x` },
+    { label: "Extensions", value: `${cfg.extensionsBelow || 0} below / ${cfg.extensionsAbove || 0} above` },
+    { label: "Pair Rotation", value: cfg.rotationEnabled ? "Enabled" : "Disabled" },
+  ] : Object.entries(cfg).map(([key, val]) => ({ label: key, value: String(val) }));
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-lg border border-border/40 bg-card/30 overflow-visible"
+      data-testid={`card-strategy-${s.id}`}
+    >
+      <div
+        className="p-4 cursor-pointer hover-elevate"
+        onClick={() => setExpanded(!expanded)}
+        data-testid={`button-expand-${s.id}`}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`w-2 h-2 rounded-full ${s.status === "running" ? "bg-emerald-400 animate-pulse" : s.status === "error" ? "bg-red-400" : "bg-muted-foreground"}`} />
+            <div>
+              <h3 className="font-bold text-foreground">{s.name}</h3>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <Badge variant="outline" className="text-xs">{s.type.toUpperCase()}</Badge>
+                <span className="text-xs text-muted-foreground">{s.symbol}</span>
+                <span className="text-xs text-muted-foreground">{s.side}</span>
+                {s.type === "grid" && cfg.leverage && (
+                  <span className="text-xs text-yellow-300 font-mono">{cfg.leverage}x</span>
+                )}
+                {s.type === "grid" && (cfg.extensionsBelow > 0 || cfg.extensionsAbove > 0) && (
+                  <Badge variant="secondary" className="text-[10px] bg-blue-500/20 text-blue-300 border-blue-500/30">
+                    Ext: {cfg.extensionsBelow || 0} / {cfg.extensionsAbove || 0}
+                  </Badge>
+                )}
+                {cfg.rotationEnabled && (
+                  <Badge variant="secondary" className="text-[10px] bg-purple-500/20 text-purple-300 border-purple-500/30">
+                    <RotateCcw className="h-2.5 w-2.5 mr-0.5" /> Auto-Rotate
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right hidden sm:block">
+              <div className="text-sm font-mono">
+                <span className={`font-bold ${(s.totalPnl || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {formatCurrency(s.totalPnl || 0)}
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground">{s.totalTrades || 0} trades</div>
+            </div>
+            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+              {s.status === "running" ? (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => stopStrategy.mutate(s.id)}
+                  disabled={stopStrategy.isPending}
+                  data-testid={`button-stop-${s.id}`}
+                >
+                  <Square className="h-4 w-4 text-red-400" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => startStrategy.mutate(s.id)}
+                  disabled={startStrategy.isPending}
+                  data-testid={`button-start-${s.id}`}
+                >
+                  <Play className="h-4 w-4 text-emerald-400" />
+                </Button>
+              )}
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => deleteStrategy.mutate(s.id)}
+                disabled={deleteStrategy.isPending}
+                data-testid={`button-delete-${s.id}`}
+              >
+                <Trash2 className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="px-4 pb-4 pt-0 border-t border-border/30">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mt-3">
+            {gridParams.map(p => (
+              <div key={p.label} className="p-2 rounded border border-border/20 bg-card/20" data-testid={`param-${s.id}-${p.label.toLowerCase().replace(/\s/g, "-")}`}>
+                <p className="text-[10px] text-muted-foreground">{p.label}</p>
+                <p className="font-mono text-xs font-semibold text-foreground">{p.value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
+            <span>Created: {s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}</span>
+            <span>Last run: {s.lastRunAt ? new Date(s.lastRunAt).toLocaleString() : "Never"}</span>
+            <Badge variant={s.status === "running" ? "default" : s.status === "error" ? "destructive" : "outline"}>
+              {s.status}
+            </Badge>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+function StrategiesList() {
+  const { data: strategies, isLoading } = useStrategies();
 
   if (isLoading) {
     return <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-20 animate-pulse bg-card/30 rounded-lg" />)}</div>;
@@ -545,77 +671,7 @@ function StrategiesList() {
   return (
     <div className="space-y-3">
       {strategies.map((s) => (
-        <motion.div
-          key={s.id}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="p-4 rounded-lg border border-border/40 bg-card/30"
-          data-testid={`card-strategy-${s.id}`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className={`w-2 h-2 rounded-full ${s.status === "running" ? "bg-emerald-400 animate-pulse" : s.status === "error" ? "bg-red-400" : "bg-muted-foreground"}`} />
-              <div>
-                <h3 className="font-bold text-foreground">{s.name}</h3>
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <Badge variant="outline" className="text-xs">{s.type.toUpperCase()}</Badge>
-                  <span className="text-xs text-muted-foreground">{s.symbol}</span>
-                  <span className="text-xs text-muted-foreground">{s.side}</span>
-                  {s.type === "grid" && (s.config as any)?.leverage && (
-                    <span className="text-xs text-yellow-300 font-mono">{(s.config as any).leverage}x</span>
-                  )}
-                  {s.type === "grid" && ((s.config as any)?.extensionsBelow > 0 || (s.config as any)?.extensionsAbove > 0) && (
-                    <Badge variant="secondary" className="text-[10px] bg-blue-500/20 text-blue-300 border-blue-500/30">
-                      Ext: {(s.config as any).extensionsBelow || 0}↓ {(s.config as any).extensionsAbove || 0}↑
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right hidden sm:block">
-                <div className="text-sm font-mono">
-                  <span className={`font-bold ${(s.totalPnl || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                    {formatCurrency(s.totalPnl || 0)}
-                  </span>
-                </div>
-                <div className="text-xs text-muted-foreground">{s.totalTrades || 0} trades</div>
-              </div>
-              <div className="flex items-center gap-1">
-                {s.status === "running" ? (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => stopStrategy.mutate(s.id)}
-                    disabled={stopStrategy.isPending}
-                    data-testid={`button-stop-${s.id}`}
-                  >
-                    <Square className="h-4 w-4 text-red-400" />
-                  </Button>
-                ) : (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => startStrategy.mutate(s.id)}
-                    disabled={startStrategy.isPending}
-                    data-testid={`button-start-${s.id}`}
-                  >
-                    <Play className="h-4 w-4 text-emerald-400" />
-                  </Button>
-                )}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => deleteStrategy.mutate(s.id)}
-                  disabled={deleteStrategy.isPending}
-                  data-testid={`button-delete-${s.id}`}
-                >
-                  <Trash2 className="h-4 w-4 text-muted-foreground" />
-                </Button>
-              </div>
-            </div>
-          </div>
-        </motion.div>
+        <StrategyCard key={s.id} s={s} />
       ))}
     </div>
   );

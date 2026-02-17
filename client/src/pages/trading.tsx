@@ -21,11 +21,12 @@ import {
   useDeleteStrategy,
   useTradeLogs,
   useManualTrade,
+  useGridCalculator,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Plus, Wifi, WifiOff,
   TrendingUp, TrendingDown, DollarSign, Activity,
-  AlertTriangle, ArrowRight,
+  AlertTriangle, ArrowRight, Calculator, Zap,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -138,7 +139,8 @@ function PositionsTable() {
 function CreateStrategyDialog() {
   const [open, setOpen] = useState(false);
   const createStrategy = useCreateStrategy();
-  const [type, setType] = useState("dca");
+  const gridCalculator = useGridCalculator();
+  const [type, setType] = useState("grid");
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [side, setSide] = useState("LONG");
@@ -150,15 +152,21 @@ function CreateStrategyDialog() {
   const [leverage, setLeverage] = useState("1");
 
   // Grid config
-  const [upperPrice, setUpperPrice] = useState("70000");
-  const [lowerPrice, setLowerPrice] = useState("60000");
-  const [gridCount, setGridCount] = useState("10");
   const [amountPerGrid, setAmountPerGrid] = useState("10");
+  const [feeRate, setFeeRate] = useState("0.06");
+  const [gridCalc, setGridCalc] = useState<any>(null);
 
   // Momentum config
   const [threshold, setThreshold] = useState("2");
   const [amount, setAmount] = useState("10");
   const [cooldown, setCooldown] = useState("15");
+
+  const handleCalculateGrid = () => {
+    gridCalculator.mutate(
+      { symbol, feeRate: parseFloat(feeRate) / 100 },
+      { onSuccess: (data) => setGridCalc(data) }
+    );
+  };
 
   const handleSubmit = () => {
     let config: Record<string, any> = {};
@@ -171,12 +179,15 @@ function CreateStrategyDialog() {
         leverage: parseInt(leverage),
       };
     } else if (type === "grid") {
+      if (!gridCalc) return;
       config = {
-        upperPrice: parseFloat(upperPrice),
-        lowerPrice: parseFloat(lowerPrice),
-        gridCount: parseInt(gridCount),
+        upperPrice: gridCalc.upperPrice,
+        lowerPrice: gridCalc.lowerPrice,
+        gridCount: gridCalc.gridCount,
         amountPerGrid: parseFloat(amountPerGrid),
-        leverage: parseInt(leverage),
+        leverage: gridCalc.leverage,
+        geometric: true,
+        gridRatio: gridCalc.gridRatio,
       };
     } else if (type === "momentum") {
       config = {
@@ -189,7 +200,7 @@ function CreateStrategyDialog() {
 
     createStrategy.mutate(
       { name: name || `${type.toUpperCase()} ${symbol}`, type, symbol, side, status: "stopped", config },
-      { onSuccess: () => setOpen(false) }
+      { onSuccess: () => { setOpen(false); setGridCalc(null); } }
     );
   };
 
@@ -261,17 +272,19 @@ function CreateStrategyDialog() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Leverage</Label>
-              <Input
-                data-testid="input-leverage"
-                type="number"
-                value={leverage}
-                onChange={(e) => setLeverage(e.target.value)}
-                min="1"
-                max="125"
-              />
-            </div>
+            {type !== "grid" && (
+              <div className="space-y-2">
+                <Label>Leverage</Label>
+                <Input
+                  data-testid="input-leverage"
+                  type="number"
+                  value={leverage}
+                  onChange={(e) => setLeverage(e.target.value)}
+                  min="1"
+                  max="125"
+                />
+              </div>
+            )}
           </div>
 
           <Separator />
@@ -313,36 +326,27 @@ function CreateStrategyDialog() {
 
           {type === "grid" && (
             <div className="space-y-4">
-              <h4 className="text-sm font-semibold text-muted-foreground">Grid Settings</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Upper Price</Label>
-                  <Input
-                    data-testid="input-upper-price"
-                    type="number"
-                    value={upperPrice}
-                    onChange={(e) => setUpperPrice(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Lower Price</Label>
-                  <Input
-                    data-testid="input-lower-price"
-                    type="number"
-                    value={lowerPrice}
-                    onChange={(e) => setLowerPrice(e.target.value)}
-                  />
-                </div>
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5 text-yellow-400" />
+                  Optimized Geometric Grid
+                </h4>
               </div>
+              <p className="text-xs text-muted-foreground -mt-2">
+                Auto-calculates leverage (liquidation = lower bound), upper = price +10%, grids sized for 3x fee profit
+              </p>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Grid Count</Label>
+                  <Label>Fee Rate (%)</Label>
                   <Input
-                    data-testid="input-grid-count"
+                    data-testid="input-fee-rate"
                     type="number"
-                    value={gridCount}
-                    onChange={(e) => setGridCount(e.target.value)}
+                    step="0.01"
+                    value={feeRate}
+                    onChange={(e) => { setFeeRate(e.target.value); setGridCalc(null); }}
                   />
+                  <p className="text-[10px] text-muted-foreground">Taker fee per side (e.g. 0.06%)</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Amount per Grid (USDT)</Label>
@@ -354,6 +358,84 @@ function CreateStrategyDialog() {
                   />
                 </div>
               </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full border-yellow-500/30 text-yellow-300 hover:text-yellow-200"
+                onClick={handleCalculateGrid}
+                disabled={gridCalculator.isPending}
+                data-testid="button-calculate-grid"
+              >
+                <Calculator className="h-4 w-4 mr-2" />
+                {gridCalculator.isPending ? "Calculating..." : "Calculate Optimal Grid"}
+              </Button>
+
+              {gridCalc && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4 space-y-3"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <Zap className="h-4 w-4 text-yellow-400" />
+                    <span className="text-sm font-bold text-yellow-300">Grid Parameters</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Current Price</span>
+                      <span className="font-mono font-bold">{formatCurrency(gridCalc.currentPrice)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Leverage</span>
+                      <span className="font-mono font-bold text-yellow-300">{gridCalc.leverage}x</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Upper (Price+10%)</span>
+                      <span className="font-mono">{formatCurrency(gridCalc.upperPrice)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Lower (Liq. Price)</span>
+                      <span className="font-mono text-red-400">{formatCurrency(gridCalc.lowerPrice)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Grid Count</span>
+                      <span className="font-mono font-bold">{gridCalc.gridCount}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Grid Ratio</span>
+                      <span className="font-mono">{((gridCalc.gridRatio - 1) * 100).toFixed(4)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Profit / Grid</span>
+                      <span className="font-mono text-emerald-400">{(gridCalc.profitPerGrid * 100).toFixed(4)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Fee / Grid</span>
+                      <span className="font-mono text-red-400">{(gridCalc.feePerGrid * 100).toFixed(4)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Net Profit / Grid</span>
+                      <span className="font-mono text-emerald-400 font-bold">{(gridCalc.netProfitPerGrid * 100).toFixed(4)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Profit:Fee Ratio</span>
+                      <span className="font-mono font-bold text-yellow-300">{gridCalc.profitToFeeRatio.toFixed(1)}x</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Grids Above Price</span>
+                      <span className="font-mono">{gridCalc.gridsAbove}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Grids Below Price</span>
+                      <span className="font-mono">{gridCalc.gridsBelow}</span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground border-t border-border/30 pt-2 mt-2">
+                    Geometric spacing ensures equal % profit at every grid level. Leverage set so liquidation = lower boundary.
+                  </p>
+                </motion.div>
+              )}
             </div>
           )}
 
@@ -396,9 +478,9 @@ function CreateStrategyDialog() {
             data-testid="button-submit-strategy"
             className="w-full"
             onClick={handleSubmit}
-            disabled={createStrategy.isPending}
+            disabled={createStrategy.isPending || (type === "grid" && !gridCalc)}
           >
-            {createStrategy.isPending ? "Creating..." : "Create Strategy"}
+            {createStrategy.isPending ? "Creating..." : type === "grid" && !gridCalc ? "Calculate Grid First" : "Create Strategy"}
           </Button>
         </div>
       </DialogContent>

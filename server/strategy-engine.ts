@@ -188,11 +188,105 @@ export interface GridConfig {
   extensionsAbove: number;
 }
 
+export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
+  const client = getBitunixClient();
+  if (!client) return { success: false, message: "Bitunix client not configured" };
+
+  const config = strategy.config as GridConfig;
+  const ticker = await getTickerPrice(strategy.symbol);
+  if (!ticker) return { success: false, message: `Cannot get price for ${strategy.symbol}` };
+
+  const currentPrice = ticker.lastPrice;
+  const leverage = config.leverage || 8;
+
+  try {
+    const accountRes = await client.getAccount();
+    if (accountRes?.code !== 0 || !accountRes?.data) {
+      return { success: false, message: "Cannot fetch account balance" };
+    }
+    const available = parseFloat(accountRes.data.available || "0");
+    if (available < 5) {
+      return { success: false, message: `Insufficient balance: ${available.toFixed(2)} USDT. Need at least 5 USDT.` };
+    }
+
+    try {
+      await client.setMarginMode(strategy.symbol, "ISOLATION");
+    } catch (e: any) {
+      console.log(`[InitialBuy ${strategy.id}] Margin mode note:`, e.message);
+    }
+    try {
+      await client.setLeverage(strategy.symbol, leverage);
+    } catch (e: any) {
+      console.log(`[InitialBuy ${strategy.id}] Leverage note:`, e.message);
+    }
+
+    const maxNotional = available * leverage;
+    const usableNotional = maxNotional * 0.95;
+    const baseQty = (usableNotional / currentPrice).toFixed(6);
+
+    console.log(`[InitialBuy ${strategy.id}] Balance=${available.toFixed(2)} USDT, leverage=${leverage}x, maxNotional=${maxNotional.toFixed(2)}, usable=${usableNotional.toFixed(2)}, qty=${baseQty} ${strategy.symbol} @ ${currentPrice}`);
+
+    const result = await client.placeOrder({
+      symbol: strategy.symbol,
+      qty: baseQty,
+      side: "BUY",
+      tradeSide: "OPEN",
+      orderType: "MARKET",
+    });
+
+    console.log(`[InitialBuy ${strategy.id}] Order result:`, JSON.stringify(result));
+
+    const success = result?.code === 0;
+    const orderId = result?.data?.orderId;
+
+    await storage.createTradeLog({
+      strategyId: strategy.id,
+      symbol: strategy.symbol,
+      side: "BUY",
+      orderType: "MARKET",
+      quantity: usableNotional / currentPrice,
+      price: currentPrice,
+      status: success ? "filled" : "error",
+      orderId: orderId || null,
+      pnl: null,
+      errorMsg: success ? null : (result?.msg || "Order failed"),
+    });
+
+    if (success) {
+      await storage.updateStrategy(strategy.id, {
+        totalTrades: (strategy.totalTrades || 0) + 1,
+        config: { ...config, initialBuyDone: true },
+      });
+    }
+
+    return {
+      success,
+      message: success
+        ? `Bought ${baseQty} ${strategy.symbol} at ~$${currentPrice.toFixed(2)} (${usableNotional.toFixed(2)} USDT notional, ${leverage}x leverage)`
+        : (result?.msg || "Order placement failed"),
+      orderId,
+    };
+  } catch (e: any) {
+    console.error(`[InitialBuy ${strategy.id}] Error:`, e);
+    return { success: false, message: e.message };
+  }
+}
+
 async function executeGridStrategy(strategy: Strategy) {
   const client = getBitunixClient();
   if (!client) throw new Error("Bitunix client not configured");
 
-  const config = strategy.config as GridConfig;
+  const config = strategy.config as GridConfig & { initialBuyDone?: boolean };
+
+  if (!config.initialBuyDone) {
+    console.log(`[Grid ${strategy.id}] No initial buy yet, placing initial position...`);
+    const result = await placeInitialGridBuy(strategy);
+    console.log(`[Grid ${strategy.id}] Initial buy result: ${result.message}`);
+    if (!result.success) {
+      console.error(`[Grid ${strategy.id}] Initial buy failed: ${result.message}`);
+    }
+    return;
+  }
 
   const ticker = await getTickerPrice(strategy.symbol);
   if (!ticker) throw new Error(`Cannot get price for ${strategy.symbol}`);

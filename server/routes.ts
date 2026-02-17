@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy } from "./strategy-engine";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -220,10 +220,19 @@ export async function registerRoutes(
     if (!client) {
       return res.status(400).json({ message: "API keys not configured. Add your Bitunix API Key and Secret Key first." });
     }
+    const strategy = await storage.getStrategy(id);
+    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
+
     const updated = await storage.updateStrategy(id, { status: "running" });
-    if (!updated) return res.status(404).json({ message: "Strategy not found" });
     startStrategyEngine();
-    res.json(updated);
+
+    let initialBuy = null;
+    const config = strategy.config as any;
+    if (strategy.type === "grid" && !config?.initialBuyDone) {
+      initialBuy = await placeInitialGridBuy({ ...strategy, status: "running" });
+    }
+
+    res.json({ ...updated, initialBuy });
   });
 
   app.post("/api/strategies/:id/stop", async (req, res) => {
@@ -423,10 +432,14 @@ export async function registerRoutes(
 
       startStrategyEngine();
 
-      setTimeout(() => runStrategyCycle(), 1000);
+      const initialBuy = await placeInitialGridBuy(strategy);
+      console.log(`[QuickStart] Initial buy result:`, JSON.stringify(initialBuy));
+
+      setTimeout(() => runStrategyCycle(), 2000);
 
       res.status(201).json({
         strategy,
+        initialBuy,
         selectedPair: symbol,
         pairName: bestPair.name,
         volatilityScore: bestPair.score,

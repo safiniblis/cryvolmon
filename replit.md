@@ -57,7 +57,30 @@ A full-stack cryptocurrency trading platform with two main features:
 - Rotation check runs every 5 minutes during strategy cycle
 - Enable via `rotationEnabled: true` in strategy config
 
+## Bitunix API Endpoints (Corrected)
+- Orders: `POST /api/v1/futures/trade/place_order` (qty in base coin, not USDT)
+- Cancel: `POST /api/v1/futures/trade/cancel_orders` (uses orderIds array)
+- Open orders: `GET /api/v1/futures/trade/get_pending_orders`
+- Order history: `GET /api/v1/futures/trade/get_history_orders`
+- Flash close: `POST /api/v1/futures/trade/flash_close`
+- Set leverage: `POST /api/v1/futures/account/change_leverage`
+- Set margin mode: `POST /api/v1/futures/account/change_margin_mode`
+- Account: `GET /api/v1/futures/account/get_account` (needs marginCoin=USDT)
+- Positions: `GET /api/v1/futures/position/get_pending_positions`
+- Leverage/margin must be set via separate endpoints before placing orders
+
+## Initial Buy Logic
+- On grid strategy start, places a market BUY for maximum affordable position
+- Calculation: available_balance * leverage * 0.95 (5% safety buffer)
+- Sets isolated margin mode and leverage before the buy
+- Tracks `initialBuyDone` flag in config to avoid double-buying on restart
+- Strategy engine checks this flag each cycle and auto-places initial buy if missed
+
 ## Recent Changes
+- 2026-02-17: Initial buy on grid start: max affordable position given leverage & liquidation
+- 2026-02-17: Fixed Bitunix API: correct order endpoint, qty in base coin, leverage via separate endpoint
+- 2026-02-17: Strategy engine auto-starts on server boot for running strategies
+- 2026-02-17: Low balance warnings in trading UI
 - 2026-02-17: Added grid simulation/backtest engine using CoinGecko cached 25h price history
 - 2026-02-17: Added volatility scoring: 1-5% swing counter, >5% risk gauge (up/down ratio)
 - 2026-02-17: Added pair rotation controller: auto-switch when score drops 2x, considering risk

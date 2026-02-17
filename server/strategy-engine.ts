@@ -452,12 +452,8 @@ async function executeGridStrategy(strategy: Strategy) {
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
   const minProfitableGap = roundTripFee * 2.5;
-  const minTpPrice = currentPrice * (1 + minProfitableGap);
 
   const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow);
-  const sellLevels = levels.filter(l => l >= minTpPrice && l <= (config.upperPrice || bandHigh));
-
-  console.log(`[Grid ${strategy.id}] Price: ${currentPrice.toFixed(4)} | minTpPrice: ${minTpPrice.toFixed(4)} (gap: ${(minProfitableGap * 100).toFixed(3)}%) | TP levels: ${sellLevels.length} | Buy levels: ${buyLevels.length}`);
 
   let openOrders: any[] = [];
   try {
@@ -476,6 +472,7 @@ async function executeGridStrategy(strategy: Strategy) {
 
   let positionId: string | null = null;
   let positionQty = 0;
+  let positionEntryPrice = 0;
   try {
     const posRes = await client.getPositions(strategy.symbol);
     if (posRes?.code === 0 && Array.isArray(posRes.data) && posRes.data.length > 0) {
@@ -483,6 +480,7 @@ async function executeGridStrategy(strategy: Strategy) {
       if (pos) {
         positionId = pos.positionId;
         positionQty = parseFloat(pos.qty || "0");
+        positionEntryPrice = parseFloat(pos.entryPrice || pos.avgPrice || "0");
       }
     }
   } catch (e: any) {
@@ -579,6 +577,13 @@ async function executeGridStrategy(strategy: Strategy) {
 
   let placedTps = 0;
   let cancelledTps = 0;
+
+  const tpRefPrice = positionEntryPrice > 0 ? positionEntryPrice : currentPrice;
+  const minTpPrice = tpRefPrice * (1 + minProfitableGap);
+  const sellLevels = levels.filter(l => l >= minTpPrice && l <= (config.upperPrice || currentPrice * 1.02));
+
+  console.log(`[Grid ${strategy.id}] Price: ${currentPrice.toFixed(4)} | Entry: ${tpRefPrice.toFixed(4)} | minTpPrice: ${minTpPrice.toFixed(4)} (gap: ${(minProfitableGap * 100).toFixed(3)}%) | TP levels: ${sellLevels.length} | Buy levels: ${buyLevels.length}`);
+
   if (positionId && positionQty > 0 && sellLevels.length > 0) {
     let existingTpsl: any[] = [];
     try {
@@ -629,9 +634,12 @@ async function executeGridStrategy(strategy: Strategy) {
       }
     }
 
-    const needsRebuild = totalExistingTpQty > positionQty * 1.02 ||
-      existingMatchCount !== sellLevels.length ||
-      existingTpsl.length !== sellLevels.length ||
+    const missingLevels = sellLevels.length - existingMatchCount;
+    const extraOrders = existingTpsl.length - existingMatchCount;
+    const needsRebuild = totalExistingTpQty > positionQty * 1.05 ||
+      existingTpsl.length === 0 ||
+      missingLevels > 0 ||
+      extraOrders > 2 ||
       qtyMismatch;
 
     if (needsRebuild) {

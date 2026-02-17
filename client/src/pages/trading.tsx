@@ -22,11 +22,16 @@ import {
   useTradeLogs,
   useManualTrade,
   useGridCalculator,
+  useBitunixPairs,
+  useVolatilityScores,
+  useSimulation,
 } from "@/hooks/use-trading";
+import { Switch } from "@/components/ui/switch";
 import {
   Bot, Play, Square, Trash2, Plus, Wifi, WifiOff,
   TrendingUp, TrendingDown, DollarSign, Activity,
   AlertTriangle, ArrowRight, Calculator, Zap,
+  BarChart3, RotateCcw, Shield,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -140,10 +145,12 @@ function CreateStrategyDialog() {
   const [open, setOpen] = useState(false);
   const createStrategy = useCreateStrategy();
   const gridCalculator = useGridCalculator();
+  const { data: pairsData } = useBitunixPairs();
   const [type, setType] = useState("grid");
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [side, setSide] = useState("LONG");
+  const [rotationEnabled, setRotationEnabled] = useState(false);
 
   // DCA config
   const [buyAmount, setBuyAmount] = useState("10");
@@ -160,6 +167,8 @@ function CreateStrategyDialog() {
   const [threshold, setThreshold] = useState("2");
   const [amount, setAmount] = useState("10");
   const [cooldown, setCooldown] = useState("15");
+
+  const availablePairs = pairsData?.pairs || ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
 
   const handleCalculateGrid = () => {
     gridCalculator.mutate(
@@ -196,6 +205,7 @@ function CreateStrategyDialog() {
         gridsBelow: gridCalc.gridsBelow,
         extensionsBelow: 0,
         extensionsAbove: 0,
+        rotationEnabled,
       };
     } else if (type === "momentum") {
       config = {
@@ -255,12 +265,9 @@ function CreateStrategyDialog() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="BTCUSDT">BTC/USDT</SelectItem>
-                  <SelectItem value="ETHUSDT">ETH/USDT</SelectItem>
-                  <SelectItem value="SOLUSDT">SOL/USDT</SelectItem>
-                  <SelectItem value="XRPUSDT">XRP/USDT</SelectItem>
-                  <SelectItem value="DOGEUSDT">DOGE/USDT</SelectItem>
-                  <SelectItem value="BNBUSDT">BNB/USDT</SelectItem>
+                  {availablePairs.map(p => (
+                    <SelectItem key={p} value={p}>{p.replace("USDT", "/USDT")}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -365,6 +372,21 @@ function CreateStrategyDialog() {
                     onChange={(e) => setAmountPerGrid(e.target.value)}
                   />
                 </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-lg border border-border/30 bg-card/20">
+                <div className="flex items-center gap-2">
+                  <RotateCcw className="h-3.5 w-3.5 text-blue-400" />
+                  <div>
+                    <span className="text-sm font-medium">Auto Pair Rotation</span>
+                    <p className="text-[10px] text-muted-foreground">Switch to higher-volatility pair when current score drops 2x below best</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={rotationEnabled}
+                  onCheckedChange={setRotationEnabled}
+                  data-testid="switch-rotation"
+                />
               </div>
 
               <Button
@@ -662,10 +684,12 @@ function TradeHistory() {
 
 function ManualTradePanel() {
   const manualTrade = useManualTrade();
+  const { data: pairsData } = useBitunixPairs();
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [side, setSide] = useState("BUY");
   const [quantity, setQuantity] = useState("10");
   const [leverage, setLeverage] = useState("1");
+  const manualPairs = pairsData?.pairs || ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
 
   const handleTrade = () => {
     manualTrade.mutate({
@@ -691,10 +715,9 @@ function ManualTradePanel() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="BTCUSDT">BTC/USDT</SelectItem>
-                <SelectItem value="ETHUSDT">ETH/USDT</SelectItem>
-                <SelectItem value="SOLUSDT">SOL/USDT</SelectItem>
-                <SelectItem value="XRPUSDT">XRP/USDT</SelectItem>
+                {manualPairs.map(p => (
+                  <SelectItem key={p} value={p}>{p.replace("USDT", "/USDT")}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -741,6 +764,197 @@ function ManualTradePanel() {
           <AlertTriangle className="h-3 w-3 inline mr-1" />
           Trading involves risk. Only trade what you can afford to lose.
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function VolatilityScoresPanel() {
+  const { data: scores, isLoading } = useVolatilityScores();
+
+  return (
+    <Card className="bg-card/30 border-border/40">
+      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Shield className="h-4 w-4 text-blue-400" />
+          Volatility Scores
+        </CardTitle>
+        <Badge variant="secondary" className="text-[10px]">24h</Badge>
+      </CardHeader>
+      <CardContent className="space-y-1.5">
+        {isLoading && <p className="text-xs text-muted-foreground">Loading scores...</p>}
+        {scores?.slice(0, 10).map(s => (
+          <div key={s.symbol} className="flex items-center justify-between text-xs p-1.5 rounded border border-border/20" data-testid={`vol-score-${s.symbol}`}>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-foreground uppercase">{s.symbol}</span>
+              <span className="text-muted-foreground">{s.name}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="font-mono text-[10px]">
+                {s.swings1to5} swings
+              </Badge>
+              {s.largeSwingsDown > 0 && (
+                <Badge variant="destructive" className="text-[10px]">
+                  {s.largeSwingsDown} drops
+                </Badge>
+              )}
+              {s.largeSwingsUp > 0 && (
+                <Badge className="bg-emerald-600/50 text-[10px]">
+                  {s.largeSwingsUp} pumps
+                </Badge>
+              )}
+              <span className="font-mono text-muted-foreground w-12 text-right">
+                R:{s.riskGauge.toFixed(1)}
+              </span>
+            </div>
+          </div>
+        ))}
+        {scores && scores.length === 0 && (
+          <p className="text-xs text-muted-foreground">No volatility data yet. Refresh dashboard first.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SimulationPanel() {
+  const simulation = useSimulation();
+  const [simSymbol, setSimSymbol] = useState("");
+
+  const handleSimulate = () => {
+    simulation.mutate(simSymbol ? { symbol: simSymbol } : {});
+  };
+
+  const results = simulation.data;
+  const isArray = Array.isArray(results);
+
+  return (
+    <Card className="bg-card/30 border-border/40">
+      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-3">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-yellow-400" />
+          Grid Strategy Simulation
+        </CardTitle>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            data-testid="input-sim-symbol"
+            placeholder="Symbol (empty = all)"
+            value={simSymbol}
+            onChange={e => setSimSymbol(e.target.value)}
+            className="w-40 h-8 text-xs"
+          />
+          <Button
+            variant="outline"
+            onClick={handleSimulate}
+            disabled={simulation.isPending}
+            data-testid="button-run-simulation"
+          >
+            <Zap className="h-4 w-4 mr-1" />
+            {simulation.isPending ? "Simulating..." : "Run Backtest"}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {!results && !simulation.isPending && (
+          <p className="text-sm text-muted-foreground">
+            Run a backtest to simulate the grid strategy on historical CoinGecko price data (25h window).
+            Leave symbol empty to test all top 20 coins.
+          </p>
+        )}
+        {isArray && (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Symbol</TableHead>
+                  <TableHead className="text-right">Trades</TableHead>
+                  <TableHead className="text-right">Buys</TableHead>
+                  <TableHead className="text-right">Sells</TableHead>
+                  <TableHead className="text-right">Realized PnL</TableHead>
+                  <TableHead className="text-right">Unrealized</TableHead>
+                  <TableHead className="text-right">Total PnL</TableHead>
+                  <TableHead className="text-right">Max DD</TableHead>
+                  <TableHead className="text-right">Leverage</TableHead>
+                  <TableHead className="text-right">Grids</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {results.map((r: any) => (
+                  <TableRow key={r.symbol} data-testid={`sim-row-${r.symbol}`}>
+                    <TableCell className="font-bold">{r.symbol}</TableCell>
+                    <TableCell className="text-right font-mono">{r.totalTrades}</TableCell>
+                    <TableCell className="text-right font-mono text-emerald-400">{r.buys}</TableCell>
+                    <TableCell className="text-right font-mono text-red-400">{r.sells}</TableCell>
+                    <TableCell className={`text-right font-mono ${r.realizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      ${r.realizedPnl.toFixed(4)}
+                    </TableCell>
+                    <TableCell className={`text-right font-mono ${r.unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      ${r.unrealizedPnl.toFixed(4)}
+                    </TableCell>
+                    <TableCell className={`text-right font-mono font-bold ${r.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      ${r.totalPnl.toFixed(4)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-amber-400">${r.maxDrawdown.toFixed(4)}</TableCell>
+                    <TableCell className="text-right font-mono">{r.leverage}x</TableCell>
+                    <TableCell className="text-right font-mono">{r.gridCount}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        {results && !isArray && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[10px] text-muted-foreground">Total Trades</p>
+                <p className="font-mono font-bold" data-testid="text-sim-trades">{results.totalTrades}</p>
+              </div>
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[10px] text-muted-foreground">Total PnL</p>
+                <p className={`font-mono font-bold ${results.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`} data-testid="text-sim-pnl">
+                  ${results.totalPnl.toFixed(4)}
+                </p>
+              </div>
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[10px] text-muted-foreground">Max Drawdown</p>
+                <p className="font-mono font-bold text-amber-400" data-testid="text-sim-dd">${results.maxDrawdown.toFixed(4)}</p>
+              </div>
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[10px] text-muted-foreground">Price Range</p>
+                <p className="font-mono text-xs" data-testid="text-sim-range">{results.priceRange}</p>
+              </div>
+            </div>
+            {results.trades?.length > 0 && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Side</TableHead>
+                    <TableHead className="text-right">Price</TableHead>
+                    <TableHead className="text-right">Grid</TableHead>
+                    <TableHead className="text-right">PnL</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {results.trades.map((t: any, i: number) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs text-muted-foreground">{new Date(t.time).toLocaleString()}</TableCell>
+                      <TableCell>
+                        <Badge variant={t.side === "BUY" ? "default" : "destructive"} className="text-[10px]">{t.side}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono">${t.price.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono">{t.gridLevel}</TableCell>
+                      <TableCell className={`text-right font-mono ${t.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        ${t.pnl.toFixed(4)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -823,8 +1037,11 @@ export default function TradingPage() {
 
           <div className="space-y-6">
             <ManualTradePanel />
+            <VolatilityScoresPanel />
           </div>
         </div>
+
+        <SimulationPanel />
 
         <footer className="pt-8 pb-6 text-center text-sm text-muted-foreground/40 font-mono">
           Automated trading involves significant risk. Past performance does not guarantee future results.

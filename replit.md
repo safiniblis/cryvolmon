@@ -32,6 +32,9 @@ A full-stack cryptocurrency trading platform with two main features:
 - `POST /api/strategies/:id/stop` - Stop strategy
 - `GET /api/trades` - Trade history
 - `POST /api/trade` - Manual trade
+- `POST /api/grid/simulate` - Run grid strategy backtest on cached price history
+- `GET /api/volatility/scores` - Volatility scores (1-5% swings, risk gauge)
+- `GET /api/bitunix/pairs` - Available Bitunix USDT trading pairs
 
 ## Required Secrets
 - `BITUNIX_API_KEY` - Bitunix API key for futures trading
@@ -47,6 +50,18 @@ A full-stack cryptocurrency trading platform with two main features:
 - **Dynamic extension**: Lower bound extends when bot hits grids below start price (adjusts liquidation/leverage); upper extends when hitting grids above start price
 - **GridConfig interface**: Tracks startPrice, extensionsBelow, extensionsAbove, gapGrowthBelow, gapShrinkAbove for live range management
 
+## Pair Rotation Logic
+- Only count 1-5% hourly price swings as volatility score
+- Track >5% swings separately: up vs down as risk gauge
+- If current pair's score drops 2x below another pair AND risk gauge doesn't favor staying (i.e., more large drops than pumps), close grid and switch
+- Rotation check runs every 5 minutes during strategy cycle
+- Enable via `rotationEnabled: true` in strategy config
+
 ## Recent Changes
+- 2026-02-17: Added grid simulation/backtest engine using CoinGecko cached 25h price history
+- 2026-02-17: Added volatility scoring: 1-5% swing counter, >5% risk gauge (up/down ratio)
+- 2026-02-17: Added pair rotation controller: auto-switch when score drops 2x, considering risk
+- 2026-02-17: Dynamic Bitunix pairs fetching via /api/bitunix/pairs
+- 2026-02-17: Frontend: simulation panel, volatility scores panel, rotation toggle
 - 2026-02-17: Grid strategy: -10% to +2% range, 2.5x fee ratio, max leverage, dynamic extension
 - 2026-02-17: Built full trading agent with Bitunix integration, strategy engine, and trading dashboard

@@ -500,12 +500,336 @@ async function executeMomentumStrategy(strategy: Strategy) {
 
 const lastGridTrades = new Map<number, { price: number; time: number }>();
 
+export interface SimulationResult {
+  symbol: string;
+  startPrice: number;
+  endPrice: number;
+  totalTrades: number;
+  buys: number;
+  sells: number;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  totalPnl: number;
+  maxDrawdown: number;
+  leverage: number;
+  gridCount: number;
+  gridsBelow: number;
+  gridsAbove: number;
+  priceRange: string;
+  trades: { time: number; side: string; price: number; gridLevel: number; pnl: number }[];
+}
+
+export function simulateGridStrategy(
+  priceHistory: { timestamp: number; price: number }[],
+  feeRate: number = 0.0006,
+  amountPerGrid: number = 10
+): SimulationResult | null {
+  if (!priceHistory || priceHistory.length < 3) return null;
+
+  const startPrice = priceHistory[0].price;
+  const grid = calculateOptimizedGrid(startPrice, feeRate);
+  const levels = generateAllLevels(startPrice, grid.lowerPrice, grid.upperPrice, grid.gridRatio, grid.gapGrowthBelow, grid.gapShrinkAbove);
+
+  if (levels.length < 2) return null;
+
+  const roundTripFee = 2 * feeRate;
+  let position = 0;
+  let avgEntryPrice = 0;
+  let realizedPnl = 0;
+  let peakEquity = 0;
+  let maxDrawdown = 0;
+  let buys = 0;
+  let sells = 0;
+  const trades: SimulationResult["trades"] = [];
+
+  let lastGridIndex = findGridIndex(startPrice, levels);
+
+  for (let i = 1; i < priceHistory.length; i++) {
+    const price = priceHistory[i].price;
+    const time = priceHistory[i].timestamp;
+    const currentGridIndex = findGridIndex(price, levels);
+
+    if (currentGridIndex !== lastGridIndex && currentGridIndex >= 0) {
+      if (currentGridIndex < lastGridIndex && price < startPrice) {
+        const cost = amountPerGrid * price;
+        const fee = cost * feeRate;
+        const newPos = position + amountPerGrid;
+        avgEntryPrice = newPos > 0 ? ((avgEntryPrice * position) + cost) / newPos : price;
+        position = newPos;
+        realizedPnl -= fee;
+        buys++;
+        trades.push({ time, side: "BUY", price, gridLevel: currentGridIndex, pnl: -fee });
+      } else if (currentGridIndex > lastGridIndex && position > 0) {
+        const sellQty = Math.min(amountPerGrid, position);
+        const revenue = sellQty * price;
+        const fee = revenue * feeRate;
+        const pnl = sellQty * (price - avgEntryPrice) - fee;
+        position -= sellQty;
+        realizedPnl += pnl;
+        sells++;
+        trades.push({ time, side: "SELL", price, gridLevel: currentGridIndex, pnl });
+      }
+
+      lastGridIndex = currentGridIndex;
+    }
+
+    const equity = realizedPnl + (position * (price - avgEntryPrice));
+    peakEquity = Math.max(peakEquity, equity);
+    maxDrawdown = Math.max(maxDrawdown, peakEquity - equity);
+  }
+
+  const endPrice = priceHistory[priceHistory.length - 1].price;
+  const unrealizedPnl = position * (endPrice - avgEntryPrice);
+
+  return {
+    symbol: "",
+    startPrice,
+    endPrice,
+    totalTrades: buys + sells,
+    buys,
+    sells,
+    realizedPnl,
+    unrealizedPnl,
+    totalPnl: realizedPnl + unrealizedPnl,
+    maxDrawdown,
+    leverage: grid.leverage,
+    gridCount: grid.gridCount,
+    gridsBelow: grid.gridsBelow,
+    gridsAbove: grid.gridsAbove,
+    priceRange: `${grid.lowerPrice.toFixed(2)} - ${grid.upperPrice.toFixed(2)}`,
+    trades,
+  };
+}
+
+function generateAllLevels(
+  startPrice: number, lowerPrice: number, upperPrice: number,
+  gridRatio: number, gapGrowthBelow: number, gapShrinkAbove: number
+): number[] {
+  const baseGap = gridRatio - 1;
+  const belowLevels: number[] = [];
+  let price = startPrice;
+  let step = 0;
+  while (price > lowerPrice * 0.999) {
+    const gap = baseGap * Math.pow(gapGrowthBelow, step);
+    price = price / (1 + gap);
+    if (price >= lowerPrice * 0.999) belowLevels.push(price);
+    step++;
+    if (step > 500) break;
+  }
+
+  const aboveLevels: number[] = [];
+  price = startPrice;
+  step = 0;
+  while (price < upperPrice * 1.001) {
+    const gap = baseGap * Math.pow(gapShrinkAbove, step);
+    price = price * (1 + gap);
+    if (price <= upperPrice * 1.001) aboveLevels.push(price);
+    step++;
+    if (step > 500) break;
+  }
+
+  return [...belowLevels.reverse(), startPrice, ...aboveLevels];
+}
+
+function findGridIndex(price: number, levels: number[]): number {
+  for (let i = 0; i < levels.length - 1; i++) {
+    if (price >= levels[i] && price < levels[i + 1]) return i;
+  }
+  if (price >= levels[levels.length - 1]) return levels.length - 1;
+  return 0;
+}
+
+export interface VolatilityScore {
+  symbol: string;
+  name: string;
+  score: number;
+  swings1to5: number;
+  largeSwingsUp: number;
+  largeSwingsDown: number;
+  riskGauge: number;
+  currentPrice: number;
+  bitunixSymbol: string;
+}
+
+export function computeVolatilityScores(
+  cryptoStats: { symbol: string; name: string; currentPrice: number; priceHistory: { timestamp: number; price: number }[] | null }[]
+): VolatilityScore[] {
+  const scores: VolatilityScore[] = [];
+
+  for (const coin of cryptoStats) {
+    const history = coin.priceHistory;
+    if (!history || history.length < 2) continue;
+
+    let swings1to5 = 0;
+    let largeSwingsUp = 0;
+    let largeSwingsDown = 0;
+
+    for (let i = 1; i < history.length; i++) {
+      const prev = history[i - 1].price;
+      const curr = history[i].price;
+      if (!prev) continue;
+      const changePct = ((curr - prev) / prev) * 100;
+      const absChange = Math.abs(changePct);
+
+      if (absChange >= 1 && absChange <= 5) {
+        swings1to5++;
+      } else if (absChange > 5) {
+        if (changePct > 0) largeSwingsUp++;
+        else largeSwingsDown++;
+      }
+    }
+
+    const riskGauge = largeSwingsDown > 0
+      ? largeSwingsUp / largeSwingsDown
+      : (largeSwingsUp > 0 ? 10 : 1);
+
+    const sym = coin.symbol.toUpperCase();
+    const bitunixSymbol = sym + "USDT";
+
+    scores.push({
+      symbol: coin.symbol,
+      name: coin.name,
+      score: swings1to5,
+      swings1to5,
+      largeSwingsUp,
+      largeSwingsDown,
+      riskGauge,
+      currentPrice: coin.currentPrice || 0,
+      bitunixSymbol,
+    });
+  }
+
+  return scores.sort((a, b) => b.score - a.score);
+}
+
+export async function checkPairRotation(strategy: Strategy): Promise<{ shouldRotate: boolean; newSymbol?: string; reason?: string }> {
+  const config = strategy.config as GridConfig & { rotationEnabled?: boolean };
+  if (!config.rotationEnabled) return { shouldRotate: false };
+
+  const stats = await storage.getCryptoStats();
+  const scores = computeVolatilityScores(
+    stats.map(s => ({
+      symbol: s.symbol,
+      name: s.name,
+      currentPrice: s.currentPrice || 0,
+      priceHistory: s.priceHistory as any,
+    }))
+  );
+
+  const currentSymbolBase = strategy.symbol.replace("USDT", "").toLowerCase();
+  const currentScore = scores.find(s => s.symbol.toLowerCase() === currentSymbolBase);
+  if (!currentScore) return { shouldRotate: false };
+
+  const client = getBitunixClient();
+  let availablePairs: Set<string> = new Set();
+  if (client) {
+    try {
+      const pairsRes = await client.getTradingPairs();
+      if (pairsRes?.data) {
+        for (const p of pairsRes.data) {
+          availablePairs.add(p.symbol || p.pair || "");
+        }
+      }
+    } catch { }
+  }
+
+  for (const candidate of scores) {
+    if (candidate.symbol.toLowerCase() === currentSymbolBase) continue;
+    if (availablePairs.size > 0 && !availablePairs.has(candidate.bitunixSymbol)) continue;
+
+    if (candidate.score >= currentScore.score * 2) {
+      if (candidate.riskGauge < 1 && candidate.largeSwingsDown > candidate.largeSwingsUp) {
+        continue;
+      }
+
+      return {
+        shouldRotate: true,
+        newSymbol: candidate.bitunixSymbol,
+        reason: `${candidate.name} score ${candidate.score} vs current ${currentScore.score} (${currentScore.name}). Risk: ${candidate.riskGauge.toFixed(1)}`,
+      };
+    }
+  }
+
+  return { shouldRotate: false };
+}
+
+export async function executePairRotation(strategy: Strategy, newSymbol: string, reason: string) {
+  const client = getBitunixClient();
+  if (!client) return;
+
+  try {
+    await client.flashClose(strategy.symbol);
+    console.log(`[Rotation ${strategy.id}] Closed ${strategy.symbol}: ${reason}`);
+  } catch (e: any) {
+    console.error(`[Rotation ${strategy.id}] Failed to close ${strategy.symbol}:`, e.message);
+  }
+
+  const ticker = await getTickerPrice(newSymbol);
+  if (!ticker) {
+    console.error(`[Rotation ${strategy.id}] Cannot get price for ${newSymbol}`);
+    return;
+  }
+
+  const newGrid = calculateOptimizedGrid(ticker.lastPrice);
+  const oldConfig = strategy.config as GridConfig;
+
+  const newConfig: GridConfig = {
+    ...oldConfig,
+    upperPrice: newGrid.upperPrice,
+    lowerPrice: newGrid.lowerPrice,
+    liquidationPrice: newGrid.liquidationPrice,
+    gridCount: newGrid.gridCount,
+    leverage: newGrid.leverage,
+    gridRatio: newGrid.gridRatio,
+    gapGrowthBelow: newGrid.gapGrowthBelow,
+    gapShrinkAbove: newGrid.gapShrinkAbove,
+    startPrice: newGrid.startPrice,
+    gridsAbove: newGrid.gridsAbove,
+    gridsBelow: newGrid.gridsBelow,
+    extensionsBelow: 0,
+    extensionsAbove: 0,
+  };
+
+  await storage.updateStrategy(strategy.id, {
+    symbol: newSymbol,
+    config: newConfig,
+  });
+
+  await storage.createTradeLog({
+    strategyId: strategy.id,
+    symbol: newSymbol,
+    side: "BUY",
+    orderType: "MARKET",
+    quantity: 0,
+    price: ticker.lastPrice,
+    status: "filled",
+    orderId: null,
+    pnl: null,
+    errorMsg: `Rotation: ${reason}`,
+  });
+
+  console.log(`[Rotation ${strategy.id}] Switched to ${newSymbol} at ${ticker.lastPrice}`);
+}
+
+const lastRotationCheck = new Map<number, number>();
+
 async function guardedExecuteGridStrategy(strategy: Strategy) {
   const last = lastGridTrades.get(strategy.id);
   const now = Date.now();
   if (last && (now - last.time) < 60_000) {
     return;
   }
+
+  const lastRotation = lastRotationCheck.get(strategy.id) || 0;
+  if (now - lastRotation > 5 * 60 * 1000) {
+    lastRotationCheck.set(strategy.id, now);
+    const rotation = await checkPairRotation(strategy);
+    if (rotation.shouldRotate && rotation.newSymbol) {
+      await executePairRotation(strategy, rotation.newSymbol, rotation.reason || "Score-based rotation");
+      return;
+    }
+  }
+
   await executeGridStrategy(strategy);
 }
 

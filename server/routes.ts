@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores } from "./strategy-engine";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -315,6 +315,79 @@ export async function registerRoutes(
         return res.status(400).json({ message: e.errors[0].message });
       }
       res.status(500).json({ message: "Calculation failed" });
+    }
+  });
+
+  // === Simulation ===
+  app.post("/api/grid/simulate", async (req, res) => {
+    try {
+      const stats = await storage.getCryptoStats();
+      const { symbol, feeRate = 0.0006, amountPerGrid = 10 } = req.body;
+
+      if (symbol) {
+        const coin = stats.find(s => s.symbol?.toUpperCase() === symbol.replace("USDT", "").toUpperCase());
+        if (!coin || !coin.priceHistory) {
+          return res.status(404).json({ message: `No price history for ${symbol}` });
+        }
+        const result = simulateGridStrategy(coin.priceHistory as any, feeRate, amountPerGrid);
+        if (!result) return res.status(400).json({ message: "Not enough data to simulate" });
+        result.symbol = symbol;
+        return res.json(result);
+      }
+
+      const results = [];
+      for (const coin of stats) {
+        if (!coin.priceHistory || (coin.priceHistory as any).length < 3) continue;
+        const result = simulateGridStrategy(coin.priceHistory as any, feeRate, amountPerGrid);
+        if (result) {
+          result.symbol = (coin.symbol?.toUpperCase() || "") + "USDT";
+          results.push(result);
+        }
+      }
+      results.sort((a, b) => b.totalPnl - a.totalPnl);
+      res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // === Volatility Scores ===
+  app.get("/api/volatility/scores", async (_req, res) => {
+    try {
+      const stats = await storage.getCryptoStats();
+      const scores = computeVolatilityScores(
+        stats.map(s => ({
+          symbol: s.symbol,
+          name: s.name,
+          currentPrice: s.currentPrice || 0,
+          priceHistory: s.priceHistory as any,
+        }))
+      );
+      res.json(scores);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // === Bitunix Trading Pairs ===
+  app.get("/api/bitunix/pairs", async (_req, res) => {
+    const client = getBitunixClient();
+    if (!client) {
+      return res.json({ pairs: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "ADAUSDT", "DOGEUSDT", "LINKUSDT", "BCHUSDT"], source: "fallback" });
+    }
+    try {
+      const result = await client.getTradingPairs();
+      if (result?.data && Array.isArray(result.data)) {
+        const pairs = result.data
+          .map((p: any) => p.symbol || p.pair || "")
+          .filter((s: string) => s.endsWith("USDT"))
+          .sort();
+        res.json({ pairs, source: "bitunix" });
+      } else {
+        res.json({ pairs: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"], source: "fallback" });
+      }
+    } catch (e: any) {
+      res.json({ pairs: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"], source: "fallback" });
     }
   });
 

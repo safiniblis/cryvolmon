@@ -318,6 +318,107 @@ export async function registerRoutes(
     }
   });
 
+  // === Quick Start (auto-select best pair + create + start) ===
+  app.post("/api/strategies/quickstart", async (req, res) => {
+    try {
+      const { amount = 100 } = req.body;
+      const usdtAmount = parseFloat(amount);
+      if (isNaN(usdtAmount) || usdtAmount <= 0) {
+        return res.status(400).json({ message: "Invalid USDT amount" });
+      }
+
+      const client = getBitunixClient();
+      if (!client) {
+        return res.status(400).json({ message: "API keys not configured. Add your Bitunix API Key and Secret Key first." });
+      }
+
+      const stats = await storage.getCryptoStats();
+      const scores = computeVolatilityScores(
+        stats.map(s => ({
+          symbol: s.symbol,
+          name: s.name,
+          currentPrice: s.currentPrice || 0,
+          priceHistory: s.priceHistory as any,
+        }))
+      );
+
+      let availablePairs = new Set<string>();
+      try {
+        const pairsRes = await client.getTradingPairs();
+        if (pairsRes?.data && Array.isArray(pairsRes.data)) {
+          for (const p of pairsRes.data) {
+            availablePairs.add(p.symbol || p.pair || "");
+          }
+        }
+      } catch {}
+
+      let bestPair: typeof scores[0] | null = null;
+      for (const s of scores) {
+        if (availablePairs.size > 0 && !availablePairs.has(s.bitunixSymbol)) continue;
+        if (s.riskGauge < 0.5 && s.largeSwingsDown > s.largeSwingsUp) continue;
+        bestPair = s;
+        break;
+      }
+
+      if (!bestPair) {
+        bestPair = scores[0] || null;
+      }
+      if (!bestPair) {
+        return res.status(400).json({ message: "No volatility data available. Refresh the dashboard first." });
+      }
+
+      const symbol = bestPair.bitunixSymbol;
+      const feeRate = 0.0006;
+      const grid = calculateOptimizedGrid(bestPair.currentPrice, feeRate);
+
+      const amountPerGrid = Math.max(5, Math.floor(usdtAmount / grid.gridCount));
+
+      const strategy = await storage.createStrategy({
+        name: `Auto Grid ${symbol}`,
+        type: "grid",
+        symbol,
+        side: "LONG",
+        status: "running",
+        config: {
+          upperPrice: grid.upperPrice,
+          lowerPrice: grid.lowerPrice,
+          liquidationPrice: grid.liquidationPrice,
+          gridCount: grid.gridCount,
+          amountPerGrid,
+          leverage: grid.leverage,
+          geometric: true,
+          gridRatio: grid.gridRatio,
+          gapGrowthBelow: grid.gapGrowthBelow,
+          gapShrinkAbove: grid.gapShrinkAbove,
+          startPrice: grid.startPrice,
+          gridsAbove: grid.gridsAbove,
+          gridsBelow: grid.gridsBelow,
+          extensionsBelow: 0,
+          extensionsAbove: 0,
+          rotationEnabled: true,
+        },
+      });
+
+      startStrategyEngine();
+
+      res.status(201).json({
+        strategy,
+        selectedPair: symbol,
+        pairName: bestPair.name,
+        volatilityScore: bestPair.score,
+        riskGauge: bestPair.riskGauge,
+        gridInfo: {
+          gridCount: grid.gridCount,
+          leverage: grid.leverage,
+          amountPerGrid,
+          priceRange: `${grid.lowerPrice.toFixed(2)} - ${grid.upperPrice.toFixed(2)}`,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // === Simulation ===
   app.post("/api/grid/simulate", async (req, res) => {
     try {

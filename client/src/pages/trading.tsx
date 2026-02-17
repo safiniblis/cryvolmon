@@ -25,6 +25,7 @@ import {
   useBitunixPairs,
   useVolatilityScores,
   useSimulation,
+  useQuickStart,
 } from "@/hooks/use-trading";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -960,6 +961,103 @@ function SimulationPanel() {
   );
 }
 
+function QuickStartPanel() {
+  const [amount, setAmount] = useState("100");
+  const quickStart = useQuickStart();
+  const { data: scores } = useVolatilityScores();
+  const topPair = scores?.[0];
+
+  const result = quickStart.data;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      <Card className="bg-gradient-to-r from-purple-900/30 via-card/40 to-blue-900/30 border-purple-500/30">
+        <CardContent className="p-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Zap className="h-5 w-5 text-yellow-400" />
+                Quick Start Grid Bot
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Enter your USDT amount and we'll auto-select the best pair based on volatility scores
+                {topPair && (
+                  <span className="text-purple-300 ml-1">
+                    — currently favoring <span className="font-semibold uppercase">{topPair.symbol}</span> ({topPair.name}, score: {topPair.score})
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="relative">
+                <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  data-testid="input-quickstart-amount"
+                  type="number"
+                  min="5"
+                  step="10"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  className="pl-8 w-32 font-mono"
+                  placeholder="100"
+                />
+              </div>
+              <span className="text-sm text-muted-foreground font-medium">USDT</span>
+              <Button
+                data-testid="button-quickstart"
+                onClick={() => quickStart.mutate({ amount: parseFloat(amount) })}
+                disabled={quickStart.isPending || !amount || parseFloat(amount) <= 0}
+                className="bg-purple-600 border-purple-500"
+              >
+                {quickStart.isPending ? (
+                  <>
+                    <Activity className="h-4 w-4 mr-1 animate-spin" /> Starting...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-1" /> Start Bot
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {result && (
+            <div className="mt-4 p-3 rounded-lg border border-emerald-500/30 bg-emerald-900/10">
+              <div className="flex items-center gap-2 mb-2">
+                <Badge className="bg-emerald-600/50">Running</Badge>
+                <span className="text-sm font-semibold">{result.selectedPair}</span>
+                <span className="text-xs text-muted-foreground">({result.pairName})</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-muted-foreground">Volatility Score</span>
+                  <p className="font-mono font-bold text-purple-300" data-testid="text-qs-score">{result.volatilityScore}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Risk Gauge</span>
+                  <p className="font-mono font-bold" data-testid="text-qs-risk">{result.riskGauge.toFixed(1)}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Grids / Leverage</span>
+                  <p className="font-mono font-bold" data-testid="text-qs-grids">{result.gridInfo.gridCount} / {result.gridInfo.leverage}x</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Per Grid</span>
+                  <p className="font-mono font-bold" data-testid="text-qs-pergrid">${result.gridInfo.amountPerGrid}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
 export default function TradingPage() {
   return (
     <div className="min-h-screen w-full bg-[#0a0f1e] text-foreground p-4 md:p-8 relative overflow-hidden">
@@ -988,6 +1086,8 @@ export default function TradingPage() {
             </Link>
           </div>
         </header>
+
+        <QuickStartPanel />
 
         <AccountOverview />
 

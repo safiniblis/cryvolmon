@@ -12,7 +12,64 @@ interface TickerData {
   change24h: number;
 }
 
+export interface PairPrecision {
+  basePrecision: number;
+  quotePrecision: number;
+  minTradeVolume: number;
+  maxLeverage: number;
+}
+
+const precisionCache: Map<string, PairPrecision> = new Map();
+
+export async function getPairPrecision(symbol: string): Promise<PairPrecision> {
+  const cached = precisionCache.get(symbol);
+  if (cached) return cached;
+
+  const client = getBitunixClient();
+  if (!client) return { basePrecision: 2, quotePrecision: 3, minTradeVolume: 0.1, maxLeverage: 75 };
+
+  try {
+    const res = await client.getTradingPairs(symbol);
+    if (res?.code === 0 && res.data?.[0]) {
+      const p = res.data[0];
+      const precision: PairPrecision = {
+        basePrecision: parseInt(p.basePrecision || "2"),
+        quotePrecision: parseInt(p.quotePrecision || "3"),
+        minTradeVolume: parseFloat(p.minTradeVolume || "0.1"),
+        maxLeverage: parseInt(p.maxLeverage || "75"),
+      };
+      precisionCache.set(symbol, precision);
+      return precision;
+    }
+  } catch (e: any) {
+    console.error(`[Precision] Failed to fetch for ${symbol}:`, e.message);
+  }
+  return { basePrecision: 2, quotePrecision: 3, minTradeVolume: 0.1, maxLeverage: 75 };
+}
+
+function roundQty(qty: number, precision: number): string {
+  return qty.toFixed(precision);
+}
+
+function roundPrice(price: number, precision: number): string {
+  return price.toFixed(precision);
+}
+
+const activeGridOrders: Map<number, Map<string, { orderId: string; price: number; side: "BUY" | "SELL"; level: number }>> = new Map();
+
 async function getTickerPrice(symbol: string): Promise<TickerData | null> {
+  const wsPrice = priceFeed.getLastPrice(symbol);
+  if (wsPrice && wsPrice > 0) {
+    return {
+      symbol,
+      lastPrice: wsPrice,
+      high24h: 0,
+      low24h: 0,
+      volume24h: 0,
+      change24h: 0,
+    };
+  }
+
   const client = getBitunixClient();
   if (!client) return null;
 
@@ -289,177 +346,143 @@ async function executeGridStrategy(strategy: Strategy) {
     return;
   }
 
+  const precision = await getPairPrecision(strategy.symbol);
+
   const ticker = await getTickerPrice(strategy.symbol);
   if (!ticker) throw new Error(`Cannot get price for ${strategy.symbol}`);
 
   const currentPrice = ticker.lastPrice;
   const levels = getAsymmetricGridLevels(config);
-  const nearest = findNearestGeometricGrids(currentPrice, levels);
 
-  if (!nearest.below || !nearest.above) {
-    console.log(`[Grid ${strategy.id}] Price ${currentPrice} outside grid range [${config.lowerPrice.toFixed(4)} - ${config.upperPrice.toFixed(4)}]. No grid levels found.`);
-    return;
+  const bandPct = 0.03;
+  const bandLow = currentPrice * (1 - bandPct);
+  const bandHigh = currentPrice * (1 + bandPct);
+
+  const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow);
+  const sellLevels = levels.filter(l => l > currentPrice && l <= bandHigh);
+
+  const existingOrders = activeGridOrders.get(strategy.id) || new Map();
+
+  let openOrders: any[] = [];
+  try {
+    const res = await client.getOpenOrders(strategy.symbol);
+    if (res?.code === 0 && Array.isArray(res.data)) {
+      openOrders = res.data;
+    }
+  } catch (e: any) {
+    console.error(`[Grid ${strategy.id}] Failed to fetch open orders:`, e.message);
   }
 
-  const nearestBelow = nearest.below;
-  const nearestAbove = nearest.above;
-  const gridSpan = nearestAbove - nearestBelow;
-  const threshold = gridSpan * 0.1;
+  const liveOrderIds = new Set(openOrders.map((o: any) => o.orderId));
+  const liveOrderPrices = new Map<string, string>();
+  for (const o of openOrders) {
+    liveOrderPrices.set(o.orderId, `${o.side}_${parseFloat(o.price).toFixed(precision.quotePrecision)}`);
+  }
 
-  const distToBelow = currentPrice - nearestBelow;
-  const distToAbove = nearestAbove - currentPrice;
-  const isBelowStart = currentPrice < config.startPrice;
-  const isAboveStart = currentPrice > config.startPrice;
+  const desiredOrders = new Map<string, { price: number; side: "BUY" | "SELL"; tradeSide: "OPEN" | "CLOSE" }>();
 
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(4)}, Grid=[${nearestBelow.toFixed(4)}-${nearestAbove.toFixed(4)}], distBelow=${distToBelow.toFixed(4)}, distAbove=${distToAbove.toFixed(4)}, threshold=${threshold.toFixed(4)}`);
+  for (const level of buyLevels) {
+    const key = `BUY_${roundPrice(level, precision.quotePrecision)}`;
+    desiredOrders.set(key, { price: level, side: "BUY", tradeSide: "OPEN" });
+  }
+  for (const level of sellLevels) {
+    const key = `SELL_${roundPrice(level, precision.quotePrecision)}`;
+    desiredOrders.set(key, { price: level, side: "SELL", tradeSide: "CLOSE" });
+  }
 
-  let tradeLog: InsertTradeLog | null = null;
-  let shouldExtend = false;
-  let extendDirection: "below" | "above" | null = null;
+  const ordersToCancel: string[] = [];
+  for (const [key, info] of existingOrders) {
+    if (!liveOrderIds.has(info.orderId)) {
+      const filledSide = info.side;
+      const filledPrice = info.price;
+      console.log(`[Grid ${strategy.id}] Order ${info.orderId} filled: ${filledSide} @ ${filledPrice.toFixed(precision.quotePrecision)}`);
 
-  if (distToBelow < threshold && currentPrice > config.lowerPrice) {
-    const baseQty = (config.amountPerGrid / currentPrice).toFixed(6);
-    console.log(`[Grid ${strategy.id}] Near lower grid level - placing BUY order: ${config.amountPerGrid} USDT = ${baseQty} ${strategy.symbol}, leverage=${config.leverage}`);
-    try {
-      try {
-        await client.setMarginMode(strategy.symbol, "ISOLATION");
-      } catch (e: any) {
-        console.log(`[Grid ${strategy.id}] Margin mode set note:`, e.message);
-      }
-      try {
-        await client.setLeverage(strategy.symbol, config.leverage || 8);
-      } catch (e: any) {
-        console.log(`[Grid ${strategy.id}] Leverage set note:`, e.message);
-      }
-
-      const result = await client.placeOrder({
+      await storage.createTradeLog({
+        strategyId: strategy.id,
         symbol: strategy.symbol,
-        qty: baseQty,
-        side: "BUY",
-        tradeSide: "OPEN",
-        orderType: "MARKET",
+        side: filledSide,
+        orderType: "LIMIT",
+        quantity: config.amountPerGrid / filledPrice,
+        price: filledPrice,
+        status: "filled",
+        orderId: info.orderId,
+        pnl: null,
+        errorMsg: null,
+      });
+      await storage.updateStrategy(strategy.id, {
+        totalTrades: (strategy.totalTrades || 0) + 1,
       });
 
-      console.log(`[Grid ${strategy.id}] BUY order result:`, JSON.stringify(result));
-      tradeLog = {
-        strategyId: strategy.id,
-        symbol: strategy.symbol,
-        side: "BUY",
-        orderType: "MARKET",
-        quantity: config.amountPerGrid,
-        price: currentPrice,
-        status: result?.code === "0" ? "filled" : "error",
-        orderId: result?.data?.orderId || null,
-        pnl: null,
-        errorMsg: result?.code !== "0" ? (result?.msg || "Unknown error") : null,
-      };
-      lastGridTrades.set(strategy.id, { price: currentPrice, time: Date.now() });
-
-      if (isBelowStart && result?.code === "0") {
-        shouldExtend = true;
-        extendDirection = "below";
-      }
-    } catch (e: any) {
-      tradeLog = {
-        strategyId: strategy.id,
-        symbol: strategy.symbol,
-        side: "BUY",
-        orderType: "MARKET",
-        quantity: config.amountPerGrid,
-        price: currentPrice,
-        status: "error",
-        orderId: null,
-        pnl: null,
-        errorMsg: e.message,
-      };
+      existingOrders.delete(key);
+      continue;
     }
-  } else if (distToAbove < threshold && currentPrice < config.upperPrice) {
-    const baseQty = (config.amountPerGrid / currentPrice).toFixed(6);
-    console.log(`[Grid ${strategy.id}] Near upper grid level - placing SELL order: ${config.amountPerGrid} USDT = ${baseQty} ${strategy.symbol}`);
+
+    const priceKey = `${info.side}_${roundPrice(info.price, precision.quotePrecision)}`;
+    if (!desiredOrders.has(priceKey)) {
+      ordersToCancel.push(info.orderId);
+      existingOrders.delete(key);
+    }
+  }
+
+  if (ordersToCancel.length > 0) {
+    try {
+      await client.post("/api/v1/futures/trade/cancel_orders", {
+        symbol: strategy.symbol,
+        orderIds: ordersToCancel,
+      });
+      console.log(`[Grid ${strategy.id}] Cancelled ${ordersToCancel.length} out-of-range orders`);
+    } catch (e: any) {
+      console.error(`[Grid ${strategy.id}] Cancel error:`, e.message);
+    }
+  }
+
+  const existingPriceKeys = new Set<string>();
+  for (const [, info] of existingOrders) {
+    const pk = `${info.side}_${roundPrice(info.price, precision.quotePrecision)}`;
+    existingPriceKeys.add(pk);
+  }
+
+  let placed = 0;
+  for (const [key, order] of desiredOrders) {
+    if (existingPriceKeys.has(key)) continue;
+
+    const qtyBase = config.amountPerGrid / order.price;
+    const qty = Math.max(qtyBase, precision.minTradeVolume);
+    const qtyStr = roundQty(qty, precision.basePrecision);
+    const priceStr = roundPrice(order.price, precision.quotePrecision);
+
     try {
       const result = await client.placeOrder({
         symbol: strategy.symbol,
-        qty: baseQty,
-        side: "SELL",
-        tradeSide: "CLOSE",
-        orderType: "MARKET",
+        qty: qtyStr,
+        side: order.side,
+        tradeSide: order.tradeSide,
+        orderType: "LIMIT",
+        price: priceStr,
+        effect: "GTC",
       });
 
-      tradeLog = {
-        strategyId: strategy.id,
-        symbol: strategy.symbol,
-        side: "SELL",
-        orderType: "MARKET",
-        quantity: config.amountPerGrid,
-        price: currentPrice,
-        status: result?.code === "0" ? "filled" : "error",
-        orderId: result?.data?.orderId || null,
-        pnl: null,
-        errorMsg: result?.code !== "0" ? (result?.msg || "Unknown error") : null,
-      };
-      lastGridTrades.set(strategy.id, { price: currentPrice, time: Date.now() });
-
-      if (isAboveStart && result?.code === "0") {
-        shouldExtend = true;
-        extendDirection = "above";
+      if (result?.code === 0 && result.data?.orderId) {
+        existingOrders.set(key, {
+          orderId: result.data.orderId,
+          price: order.price,
+          side: order.side,
+          level: order.price,
+        });
+        placed++;
+      } else {
+        console.error(`[Grid ${strategy.id}] Order failed: ${order.side} ${qtyStr} @ ${priceStr}: ${result?.msg}`);
       }
     } catch (e: any) {
-      tradeLog = {
-        strategyId: strategy.id,
-        symbol: strategy.symbol,
-        side: "SELL",
-        orderType: "MARKET",
-        quantity: config.amountPerGrid,
-        price: currentPrice,
-        status: "error",
-        orderId: null,
-        pnl: null,
-        errorMsg: e.message,
-      };
+      console.error(`[Grid ${strategy.id}] Place error ${order.side} @ ${priceStr}:`, e.message);
     }
-  } else {
-    console.log(`[Grid ${strategy.id}] No trade needed. Price not near any grid boundary.`);
   }
 
-  if (tradeLog) {
-    await storage.createTradeLog(tradeLog);
-  }
+  activeGridOrders.set(strategy.id, existingOrders);
+
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | Band=[${bandLow.toFixed(precision.quotePrecision)}-${bandHigh.toFixed(precision.quotePrecision)}] | Buys=${buyLevels.length} Sells=${sellLevels.length} | Active=${existingOrders.size} Placed=${placed} Cancelled=${ordersToCancel.length}`);
 
   await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
-
-  if (shouldExtend && extendDirection) {
-    const updatedConfig = { ...config };
-
-    if (extendDirection === "below") {
-      const baseGap = config.gridRatio - 1;
-      const gapGrowth = config.gapGrowthBelow || 1.07;
-      const extStep = config.gridsBelow + (config.extensionsBelow || 0);
-      const gap = baseGap * Math.pow(gapGrowth, extStep);
-      const newLower = config.lowerPrice / (1 + gap);
-      const newLiquidation = newLower * 0.98;
-      const newLeverage = Math.floor(config.startPrice / (config.startPrice - newLiquidation));
-      updatedConfig.lowerPrice = newLower;
-      updatedConfig.liquidationPrice = newLiquidation;
-      updatedConfig.leverage = Math.min(Math.max(newLeverage, 2), 125);
-      updatedConfig.gridCount = updatedConfig.gridCount + 1;
-      updatedConfig.gridsBelow = (updatedConfig.gridsBelow || 0) + 1;
-      updatedConfig.extensionsBelow = (updatedConfig.extensionsBelow || 0) + 1;
-      console.log(`[Grid ${strategy.id}] Extended lower (gap×${gapGrowth}^${extStep}): ${config.lowerPrice.toFixed(2)} → ${newLower.toFixed(2)}, liq: ${newLiquidation.toFixed(2)}, leverage: ${updatedConfig.leverage}x`);
-    } else {
-      const baseGap = config.gridRatio - 1;
-      const gapShrink = config.gapShrinkAbove || 0.96;
-      const extStep = config.gridsAbove + (config.extensionsAbove || 0);
-      const gap = baseGap * Math.pow(gapShrink, extStep);
-      const newUpper = config.upperPrice * (1 + gap);
-      updatedConfig.upperPrice = newUpper;
-      updatedConfig.gridCount = updatedConfig.gridCount + 1;
-      updatedConfig.gridsAbove = (updatedConfig.gridsAbove || 0) + 1;
-      updatedConfig.extensionsAbove = (updatedConfig.extensionsAbove || 0) + 1;
-      console.log(`[Grid ${strategy.id}] Extended upper (gap×${gapShrink}^${extStep}): ${config.upperPrice.toFixed(2)} → ${newUpper.toFixed(2)}`);
-    }
-
-    await storage.updateStrategy(strategy.id, { config: updatedConfig });
-  }
 }
 
 async function executeDCAStrategy(strategy: Strategy) {
@@ -990,10 +1013,43 @@ export async function runStrategyCycle() {
   }
 }
 
+export async function cancelAllGridOrders(strategyId: number, symbol: string) {
+  const client = getBitunixClient();
+  if (!client) return;
+
+  const orders = activeGridOrders.get(strategyId);
+  if (orders && orders.size > 0) {
+    const orderIds = Array.from(orders.values()).map(o => o.orderId);
+    try {
+      await client.post("/api/v1/futures/trade/cancel_orders", {
+        symbol,
+        orderIds,
+      });
+      console.log(`[Grid ${strategyId}] Cancelled all ${orderIds.length} active grid orders`);
+    } catch (e: any) {
+      console.error(`[Grid ${strategyId}] Cancel all error:`, e.message);
+    }
+    orders.clear();
+  }
+  activeGridOrders.delete(strategyId);
+}
+
 export function startStrategyEngine() {
   if (intervalId) return;
-  console.log("Strategy engine started (5s cycle)");
+  console.log("Strategy engine started (5s cycle + WebSocket price feed)");
   intervalId = setInterval(runStrategyCycle, 5_000);
+
+  const strategies = storage.getStrategiesByStatus("running").then((strats) => {
+    for (const s of strats) {
+      if (s.type === "grid") {
+        priceFeed.subscribe(s.symbol);
+      }
+    }
+    if (strats.length > 0) {
+      priceFeed.connect();
+    }
+  });
+
   runStrategyCycle();
 }
 
@@ -1003,4 +1059,15 @@ export function stopStrategyEngine() {
     intervalId = null;
     console.log("Strategy engine stopped");
   }
+  priceFeed.disconnect();
+}
+
+export function getActiveGridOrders(strategyId: number): Array<{ orderId: string; price: number; side: string }> {
+  const orders = activeGridOrders.get(strategyId);
+  if (!orders) return [];
+  return Array.from(orders.values()).map(o => ({
+    orderId: o.orderId,
+    price: o.price,
+    side: o.side,
+  }));
 }

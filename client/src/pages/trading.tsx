@@ -26,13 +26,15 @@ import {
   useVolatilityScores,
   useSimulation,
   useQuickStart,
+  useAddMargin,
+  useRemoveMargin,
 } from "@/hooks/use-trading";
 import { Switch } from "@/components/ui/switch";
 import {
   Bot, Play, Square, Trash2, Plus, Wifi, WifiOff,
   TrendingUp, TrendingDown, DollarSign, Activity,
   AlertTriangle, ArrowRight, Calculator, Zap,
-  BarChart3, RotateCcw, Shield,
+  BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -536,6 +538,68 @@ function CreateStrategyDialog() {
   );
 }
 
+function MarginControls({ strategy }: { strategy: Strategy }) {
+  const [addAmount, setAddAmount] = useState("1");
+  const [removeCount, setRemoveCount] = useState("1");
+  const addMargin = useAddMargin();
+  const removeMargin = useRemoveMargin();
+
+  return (
+    <div className="mt-3 p-3 rounded border border-border/30 bg-card/10">
+      <p className="text-xs font-semibold text-muted-foreground mb-2">Margin Controls</p>
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex items-center gap-2 flex-1">
+          <Input
+            type="number"
+            min="0.1"
+            step="0.1"
+            value={addAmount}
+            onChange={(e) => setAddAmount(e.target.value)}
+            className="w-24 text-xs"
+            placeholder="USDT"
+            data-testid={`input-add-margin-${strategy.id}`}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={addMargin.isPending || !addAmount || parseFloat(addAmount) <= 0}
+            onClick={() => addMargin.mutate({ id: strategy.id, amount: parseFloat(addAmount) })}
+            data-testid={`button-add-margin-${strategy.id}`}
+          >
+            {addMargin.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <PlusCircle className="h-3 w-3 mr-1" />}
+            Add Margin
+          </Button>
+        </div>
+        <div className="flex items-center gap-2 flex-1">
+          <Input
+            type="number"
+            min="1"
+            step="1"
+            value={removeCount}
+            onChange={(e) => setRemoveCount(e.target.value)}
+            className="w-24 text-xs"
+            placeholder="# orders"
+            data-testid={`input-remove-margin-${strategy.id}`}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={removeMargin.isPending || !removeCount || parseInt(removeCount) < 1}
+            onClick={() => removeMargin.mutate({ id: strategy.id, count: parseInt(removeCount) })}
+            data-testid={`button-remove-margin-${strategy.id}`}
+          >
+            {removeMargin.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <MinusCircle className="h-3 w-3 mr-1" />}
+            Remove Bottom
+          </Button>
+        </div>
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-1.5">
+        Add: places extra buy orders within 1% band. Remove: cancels lowest orders {">"}1% below price.
+      </p>
+    </div>
+  );
+}
+
 function StrategyCard({ s }: { s: Strategy }) {
   const [expanded, setExpanded] = useState(false);
   const startStrategy = useStartStrategy();
@@ -652,6 +716,9 @@ function StrategyCard({ s }: { s: Strategy }) {
               </div>
             ))}
           </div>
+          {s.type === "grid" && s.status === "running" && (
+            <MarginControls strategy={s} />
+          )}
           <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
             <span>Created: {s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}</span>
             <span>Last run: {s.lastRunAt ? (() => {

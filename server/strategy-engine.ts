@@ -1233,6 +1233,136 @@ export function stopStrategyEngine() {
   priceFeed.disconnect();
 }
 
+export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): Promise<{ success: boolean; message: string; ordersPlaced: number }> {
+  const client = getBitunixClient();
+  if (!client) throw new Error("Bitunix client not configured");
+
+  const config = (strategy.config || {}) as GridConfig & Record<string, any>;
+  const precision = await getPairPrecision(strategy.symbol);
+  const ticker = await getTickerPrice(strategy.symbol);
+  if (!ticker) throw new Error("Could not get current price");
+  const currentPrice = ticker.lastPrice;
+
+  const openRes = await client.getOpenOrders(strategy.symbol);
+  let openOrders: any[] = [];
+  if (openRes?.code === 0) {
+    if (Array.isArray(openRes.data)) openOrders = openRes.data;
+    else if (openRes.data?.orderList) openOrders = openRes.data.orderList;
+  }
+
+  const existingBuyPrices = new Set(
+    openOrders
+      .filter((o: any) => o.side === "BUY")
+      .map((o: any) => roundPrice(parseFloat(o.price || "0"), precision.quotePrecision))
+  );
+
+  const allLevels = getAsymmetricGridLevels(config);
+  const bandLow = currentPrice * 0.99;
+  const lowerBound = config.lowerPrice || 0;
+  const buyLevels = allLevels
+    .filter(l => l < currentPrice && l >= bandLow && l >= lowerBound)
+    .filter(l => !existingBuyPrices.has(roundPrice(l, precision.quotePrecision)));
+
+  if (buyLevels.length === 0) {
+    return { success: true, message: "All buy levels already covered", ordersPlaced: 0 };
+  }
+
+  const marginPerOrder = amountUsdt / buyLevels.length;
+  let placed = 0;
+  for (const level of buyLevels) {
+    const notional = marginPerOrder * (config.leverage || 8) * 0.95;
+    const qtyBase = notional / level;
+    const qty = Math.max(qtyBase, precision.minTradeVolume);
+    const qtyStr = roundQty(qty, precision.basePrecision);
+    const priceStr = roundPrice(level, precision.quotePrecision);
+
+    try {
+      const result = await client.placeOrder({
+        symbol: strategy.symbol,
+        qty: qtyStr,
+        side: "BUY",
+        tradeSide: "OPEN",
+        orderType: "LIMIT",
+        price: priceStr,
+        effect: "GTC",
+      });
+      if (result?.code === 0 && result.data?.orderId) {
+        placed++;
+        console.log(`[AddMargin ${strategy.id}] Placed BUY ${qtyStr} @ ${priceStr}`);
+      } else {
+        console.error(`[AddMargin ${strategy.id}] BUY failed @ ${priceStr}: ${result?.msg}`);
+      }
+    } catch (e: any) {
+      console.error(`[AddMargin ${strategy.id}] BUY error @ ${priceStr}:`, e.message);
+    }
+  }
+
+  return { success: true, message: `Placed ${placed} additional buy orders`, ordersPlaced: placed };
+}
+
+export async function removeMarginFromGrid(strategy: Strategy, count: number): Promise<{ success: boolean; message: string; ordersCancelled: number; freedMargin: number }> {
+  const client = getBitunixClient();
+  if (!client) throw new Error("Bitunix client not configured");
+
+  const precision = await getPairPrecision(strategy.symbol);
+  const ticker = await getTickerPrice(strategy.symbol);
+  if (!ticker) throw new Error("Could not get current price");
+  const currentPrice = ticker.lastPrice;
+  const threshold = currentPrice * 0.99;
+
+  const openRes = await client.getOpenOrders(strategy.symbol);
+  let openOrders: any[] = [];
+  if (openRes?.code === 0) {
+    if (Array.isArray(openRes.data)) openOrders = openRes.data;
+    else if (openRes.data?.orderList) openOrders = openRes.data.orderList;
+  }
+
+  const config = (strategy.config || {}) as GridConfig & Record<string, any>;
+  const allLevels = getAsymmetricGridLevels(config);
+  const gridPriceSet = new Set(allLevels.map(l => roundPrice(l, precision.quotePrecision)));
+
+  const buyOrders = openOrders
+    .filter((o: any) => o.side === "BUY")
+    .map((o: any) => ({
+      orderId: o.orderId,
+      price: parseFloat(o.price || "0"),
+      qty: parseFloat(o.qty || "0"),
+      priceStr: roundPrice(parseFloat(o.price || "0"), precision.quotePrecision),
+    }))
+    .filter(o => o.price < threshold && gridPriceSet.has(o.priceStr))
+    .sort((a, b) => a.price - b.price);
+
+  if (buyOrders.length === 0) {
+    return { success: true, message: "No buy orders below -1% from current price to remove", ordersCancelled: 0, freedMargin: 0 };
+  }
+
+  const toCancel = buyOrders.slice(0, count);
+  let cancelled = 0;
+  let freedMargin = 0;
+
+  try {
+    const cancelRes = await client.post("/api/v1/futures/trade/cancel_orders", {
+      symbol: strategy.symbol,
+      orderList: toCancel.map(o => ({ orderId: o.orderId })),
+    });
+    if (cancelRes?.code === 0) {
+      cancelled = toCancel.length;
+      const leverage = ((strategy.config as any)?.leverage) || 8;
+      freedMargin = toCancel.reduce((sum, o) => sum + (o.price * o.qty / leverage), 0);
+      console.log(`[RemoveMargin ${strategy.id}] Cancelled ${cancelled} bottom orders, freed ~$${freedMargin.toFixed(2)}`);
+    }
+  } catch (e: any) {
+    console.error(`[RemoveMargin ${strategy.id}] Cancel error:`, e.message);
+  }
+
+  return {
+    success: true,
+    message: `Cancelled ${cancelled} bottom buy orders (below $${threshold.toFixed(precision.quotePrecision)})`,
+    ordersCancelled: cancelled,
+    freedMargin,
+  };
+}
+
 export function getActiveGridOrders(strategyId: number): Array<{ orderId: string; price: number; side: string }> {
   const orders = activeGridOrders.get(strategyId);
   if (!orders) return [];

@@ -88,7 +88,17 @@ A full-stack cryptocurrency trading platform with two main features:
 - Tracks `initialBuyDone` flag in config to avoid double-buying on restart
 - Strategy engine checks this flag each cycle and auto-places initial buy if missed
 
+## Key Routes (continued)
+- `POST /api/strategies/:id/add-margin` - Place additional buy orders within ±1% band
+- `POST /api/strategies/:id/remove-margin` - Cancel bottom buy orders >1% below price
+
+## Margin Adjustment Controls
+- **Add Margin**: Places additional BUY limit orders at uncovered grid levels within the ±1% band of current price, without cancelling existing orders (avoids fees). Splits provided USDT amount across available levels.
+- **Remove Margin**: Cancels the lowest N buy orders that are >1% below current price. Only cancels orders matching grid levels. Reports freed margin estimate.
+- Controls visible in expanded strategy card for running grid strategies only.
+
 ## Recent Changes
+- 2026-02-17: Added margin adjustment controls (add/remove margin) for grid strategies
 - 2026-02-17: Initial buy on grid start: max affordable position given leverage & liquidation
 - 2026-02-17: Fixed Bitunix API: correct order endpoint, qty in base coin, leverage via separate endpoint
 - 2026-02-17: Strategy engine auto-starts on server boot for running strategies

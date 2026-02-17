@@ -593,5 +593,51 @@ export async function registerRoutes(
     res.json(orders);
   });
 
+  app.post("/api/strategies/:id/add-margin", async (req, res) => {
+    const id = parseInt(req.params.id);
+    const schema = z.object({ amount: z.number().positive() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Amount must be a positive number" });
+
+    const strategy = await storage.getStrategy(id);
+    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
+    if (strategy.status !== "running") return res.status(400).json({ message: "Strategy must be running" });
+    if (strategy.type !== "grid") return res.status(400).json({ message: "Only grid strategies support margin adjustment" });
+
+    const client = getBitunixClient();
+    if (!client) return res.status(400).json({ message: "API keys not configured" });
+
+    try {
+      const { addMarginToGrid } = await import("./strategy-engine");
+      const result = await addMarginToGrid(strategy, parsed.data.amount);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/strategies/:id/remove-margin", async (req, res) => {
+    const id = parseInt(req.params.id);
+    const schema = z.object({ count: z.number().int().min(1).default(1) });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ message: "Count must be a positive integer" });
+
+    const strategy = await storage.getStrategy(id);
+    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
+    if (strategy.status !== "running") return res.status(400).json({ message: "Strategy must be running" });
+    if (strategy.type !== "grid") return res.status(400).json({ message: "Only grid strategies support margin adjustment" });
+
+    const client = getBitunixClient();
+    if (!client) return res.status(400).json({ message: "API keys not configured" });
+
+    try {
+      const { removeMarginFromGrid } = await import("./strategy-engine");
+      const result = await removeMarginFromGrid(strategy, parsed.data.count);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   return httpServer;
 }

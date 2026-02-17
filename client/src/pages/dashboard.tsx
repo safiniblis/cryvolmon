@@ -2,7 +2,7 @@ import { useCryptoStats, useRefreshStats } from "@/hooks/use-crypto-stats";
 import { VolatilityTable } from "@/components/dashboard/volatility-table";
 import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, TrendingUp, AlertTriangle, Zap } from "lucide-react";
+import { RefreshCw, TrendingUp, AlertTriangle, Zap, Activity } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { motion } from "framer-motion";
 

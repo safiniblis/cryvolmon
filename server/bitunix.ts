@@ -165,7 +165,7 @@ export class BitunixClient {
   }
 
   async getOpenOrders(symbol?: string) {
-    const params: Record<string, any> = {};
+    const params: Record<string, any> = { pageNum: 1, pageSize: 100 };
     if (symbol) params.symbol = symbol;
     return this.get("/api/v1/futures/trade/get_pending_orders", params);
   }

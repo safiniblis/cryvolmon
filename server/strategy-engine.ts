@@ -37,23 +37,28 @@ async function getTickerPrice(symbol: string): Promise<TickerData | null> {
 export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0.0006) {
   const roundTripFee = 2 * feeRate;
   const targetProfitFeeRatio = 2.5;
-  const gridRatio = 1 + targetProfitFeeRatio * roundTripFee;
+  const baseGridRatio = 1 + targetProfitFeeRatio * roundTripFee;
 
-  const lowerPrice = currentPrice * 0.90;
-  const upperPrice = currentPrice * 1.02;
-  const liquidationPrice = currentPrice * 0.88;
+  const gapGrowthBelow = 1.07;
+  const gapShrinkAbove = 0.96;
 
+  const lowerTarget = currentPrice * 0.90;
+  const upperTarget = currentPrice * 1.02;
+
+  const belowLevels = generateAsymmetricLevels(currentPrice, lowerTarget, baseGridRatio, gapGrowthBelow, "below");
+  const aboveLevels = generateAsymmetricLevels(currentPrice, upperTarget, baseGridRatio, gapShrinkAbove, "above");
+
+  const lowerPrice = belowLevels.length > 0 ? belowLevels[belowLevels.length - 1] : lowerTarget;
+  const upperPrice = aboveLevels.length > 0 ? aboveLevels[aboveLevels.length - 1] : upperTarget;
+  const gridsBelow = belowLevels.length;
+  const gridsAbove = aboveLevels.length;
+  const gridCount = gridsBelow + gridsAbove;
+
+  const liquidationPrice = lowerPrice * 0.98;
   const leverage = Math.floor(currentPrice / (currentPrice - liquidationPrice));
   const safeLeverage = Math.min(Math.max(leverage, 2), 125);
 
-  const totalRange = upperPrice / lowerPrice;
-  const gridCount = Math.floor(Math.log(totalRange) / Math.log(gridRatio));
-  const safeGridCount = Math.max(gridCount, 1);
-
-  const gridsBelow = Math.floor(Math.log(currentPrice / lowerPrice) / Math.log(gridRatio));
-  const gridsAbove = safeGridCount - gridsBelow;
-
-  const profitPerGrid = gridRatio - 1;
+  const profitPerGrid = baseGridRatio - 1;
   const feePerGrid = roundTripFee;
   const netProfitPerGrid = profitPerGrid - feePerGrid;
 
@@ -62,8 +67,11 @@ export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0
     lowerPrice,
     liquidationPrice,
     leverage: safeLeverage,
-    gridCount: safeGridCount,
-    gridRatio,
+    gridCount,
+    baseGridRatio,
+    gridRatio: baseGridRatio,
+    gapGrowthBelow,
+    gapShrinkAbove,
     profitPerGrid,
     feePerGrid,
     netProfitPerGrid,
@@ -75,14 +83,75 @@ export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0
   };
 }
 
-function getGeometricGridLevels(lower: number, upper: number, gridRatio: number): number[] {
+function generateAsymmetricLevels(
+  startPrice: number,
+  targetBound: number,
+  baseRatio: number,
+  scalingFactor: number,
+  direction: "above" | "below"
+): number[] {
   const levels: number[] = [];
-  let price = lower;
-  while (price <= upper * 1.0001) {
-    levels.push(price);
-    price *= gridRatio;
+  const baseGap = baseRatio - 1;
+  let price = startPrice;
+  let step = 0;
+
+  if (direction === "below") {
+    while (price > targetBound) {
+      const gap = baseGap * Math.pow(scalingFactor, step);
+      price = price / (1 + gap);
+      if (price >= targetBound * 0.999) {
+        levels.push(price);
+      }
+      step++;
+      if (step > 500) break;
+    }
+  } else {
+    while (price < targetBound) {
+      const gap = baseGap * Math.pow(scalingFactor, step);
+      price = price * (1 + gap);
+      if (price <= targetBound * 1.001) {
+        levels.push(price);
+      }
+      step++;
+      if (step > 500) break;
+    }
   }
   return levels;
+}
+
+function getAsymmetricGridLevels(config: GridConfig): number[] {
+  const baseGap = config.gridRatio - 1;
+  const gapGrowth = config.gapGrowthBelow || 1.07;
+  const gapShrink = config.gapShrinkAbove || 0.96;
+
+  const belowLevels: number[] = [];
+  let price = config.startPrice;
+  let step = 0;
+  while (price > config.lowerPrice * 0.999) {
+    const gap = baseGap * Math.pow(gapGrowth, step);
+    price = price / (1 + gap);
+    if (price >= config.lowerPrice * 0.999) {
+      belowLevels.push(price);
+    }
+    step++;
+    if (step > 500) break;
+  }
+
+  const aboveLevels: number[] = [];
+  price = config.startPrice;
+  step = 0;
+  while (price < config.upperPrice * 1.001) {
+    const gap = baseGap * Math.pow(gapShrink, step);
+    price = price * (1 + gap);
+    if (price <= config.upperPrice * 1.001) {
+      aboveLevels.push(price);
+    }
+    step++;
+    if (step > 500) break;
+  }
+
+  const allLevels = [...belowLevels.reverse(), config.startPrice, ...aboveLevels];
+  return allLevels;
 }
 
 function findNearestGeometricGrids(price: number, levels: number[]): { below: number | null; above: number | null; index: number } {
@@ -110,6 +179,8 @@ export interface GridConfig {
   leverage: number;
   geometric: boolean;
   gridRatio: number;
+  gapGrowthBelow: number;
+  gapShrinkAbove: number;
   startPrice: number;
   gridsAbove: number;
   gridsBelow: number;
@@ -127,7 +198,7 @@ async function executeGridStrategy(strategy: Strategy) {
   if (!ticker) throw new Error(`Cannot get price for ${strategy.symbol}`);
 
   const currentPrice = ticker.lastPrice;
-  const levels = getGeometricGridLevels(config.lowerPrice, config.upperPrice, config.gridRatio);
+  const levels = getAsymmetricGridLevels(config);
   const nearest = findNearestGeometricGrids(currentPrice, levels);
 
   if (!nearest.below || !nearest.above) return;
@@ -244,9 +315,12 @@ async function executeGridStrategy(strategy: Strategy) {
     const updatedConfig = { ...config };
 
     if (extendDirection === "below") {
-      const newLower = config.lowerPrice / config.gridRatio;
-      const liqRatio = config.startPrice > 0 ? config.liquidationPrice / config.lowerPrice : 0.98;
-      const newLiquidation = newLower * liqRatio;
+      const baseGap = config.gridRatio - 1;
+      const gapGrowth = config.gapGrowthBelow || 1.07;
+      const extStep = config.gridsBelow + (config.extensionsBelow || 0);
+      const gap = baseGap * Math.pow(gapGrowth, extStep);
+      const newLower = config.lowerPrice / (1 + gap);
+      const newLiquidation = newLower * 0.98;
       const newLeverage = Math.floor(config.startPrice / (config.startPrice - newLiquidation));
       updatedConfig.lowerPrice = newLower;
       updatedConfig.liquidationPrice = newLiquidation;
@@ -254,14 +328,18 @@ async function executeGridStrategy(strategy: Strategy) {
       updatedConfig.gridCount = updatedConfig.gridCount + 1;
       updatedConfig.gridsBelow = (updatedConfig.gridsBelow || 0) + 1;
       updatedConfig.extensionsBelow = (updatedConfig.extensionsBelow || 0) + 1;
-      console.log(`[Grid ${strategy.id}] Extended lower: ${config.lowerPrice.toFixed(2)} → ${newLower.toFixed(2)}, liq: ${newLiquidation.toFixed(2)}, leverage: ${updatedConfig.leverage}x`);
+      console.log(`[Grid ${strategy.id}] Extended lower (gap×${gapGrowth}^${extStep}): ${config.lowerPrice.toFixed(2)} → ${newLower.toFixed(2)}, liq: ${newLiquidation.toFixed(2)}, leverage: ${updatedConfig.leverage}x`);
     } else {
-      const newUpper = config.upperPrice * config.gridRatio;
+      const baseGap = config.gridRatio - 1;
+      const gapShrink = config.gapShrinkAbove || 0.96;
+      const extStep = config.gridsAbove + (config.extensionsAbove || 0);
+      const gap = baseGap * Math.pow(gapShrink, extStep);
+      const newUpper = config.upperPrice * (1 + gap);
       updatedConfig.upperPrice = newUpper;
       updatedConfig.gridCount = updatedConfig.gridCount + 1;
       updatedConfig.gridsAbove = (updatedConfig.gridsAbove || 0) + 1;
       updatedConfig.extensionsAbove = (updatedConfig.extensionsAbove || 0) + 1;
-      console.log(`[Grid ${strategy.id}] Extended upper: ${config.upperPrice.toFixed(2)} → ${newUpper.toFixed(2)}`);
+      console.log(`[Grid ${strategy.id}] Extended upper (gap×${gapShrink}^${extStep}): ${config.upperPrice.toFixed(2)} → ${newUpper.toFixed(2)}`);
     }
 
     await storage.updateStrategy(strategy.id, { config: updatedConfig });

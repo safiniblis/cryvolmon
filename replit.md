@@ -43,8 +43,9 @@ A full-stack cryptocurrency trading platform with two main features:
 - **Liquidation**: -12% from current price (2% buffer below lower)
 - **Leverage**: Maximized (~8x), derived from liquidation distance
 - **Grid ratio**: 1 + 2.5 * roundTripFee (geometric spacing, 2.5x fee profit per grid)
+- **Asymmetric spacing**: Below grids grow wider (1.07x per step), above grids shrink tighter (0.96x per step)
 - **Dynamic extension**: Lower bound extends when bot hits grids below start price (adjusts liquidation/leverage); upper extends when hitting grids above start price
-- **GridConfig interface**: Tracks startPrice, extensionsBelow, extensionsAbove for live range management
+- **GridConfig interface**: Tracks startPrice, extensionsBelow, extensionsAbove, gapGrowthBelow, gapShrinkAbove for live range management
 
 ## Recent Changes
 - 2026-02-17: Grid strategy: -10% to +2% range, 2.5x fee ratio, max leverage, dynamic extension

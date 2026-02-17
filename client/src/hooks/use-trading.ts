@@ -192,6 +192,48 @@ export function useGridCalculator() {
   });
 }
 
+export function useMarginInfo(strategyId: number, enabled: boolean) {
+  return useQuery<{
+    removableOrders: number;
+    removableMargin: number;
+    currentPrice: number;
+    lowestBuyPrice: number | null;
+    bandLow: number;
+    needsExtension: boolean;
+    uncoveredLevels: number;
+  }>({
+    queryKey: ["/api/strategies", strategyId, "margin-info"],
+    queryFn: async () => {
+      const res = await fetch(`/api/strategies/${strategyId}/margin-info`);
+      if (!res.ok) throw new Error("Failed to fetch margin info");
+      return res.json();
+    },
+    enabled,
+    refetchInterval: 10000,
+  });
+}
+
+export function useExtendOrders() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/strategies/${id}/extend-orders`);
+      return res.json();
+    },
+    onSuccess: (data, id) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies", id, "margin-info"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account"] });
+      toast({ title: "Orders Extended", description: data.message });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Extend Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useAddMargin() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -201,8 +243,9 @@ export function useAddMargin() {
       const res = await apiRequest("POST", `/api/strategies/${id}/add-margin`, { amount });
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: (data, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies", id, "margin-info"] });
       queryClient.invalidateQueries({ queryKey: ["/api/account"] });
       toast({ title: "Margin Added", description: data.message });
     },
@@ -221,8 +264,9 @@ export function useRemoveMargin() {
       const res = await apiRequest("POST", `/api/strategies/${id}/remove-margin`, { count });
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: (data, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies", id, "margin-info"] });
       queryClient.invalidateQueries({ queryKey: ["/api/account"] });
       toast({ title: "Margin Removed", description: data.message });
     },

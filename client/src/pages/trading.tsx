@@ -28,13 +28,15 @@ import {
   useQuickStart,
   useAddMargin,
   useRemoveMargin,
+  useMarginInfo,
+  useExtendOrders,
 } from "@/hooks/use-trading";
 import { Switch } from "@/components/ui/switch";
 import {
   Bot, Play, Square, Trash2, Plus, Wifi, WifiOff,
   TrendingUp, TrendingDown, DollarSign, Activity,
   AlertTriangle, ArrowRight, Calculator, Zap,
-  BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2,
+  BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, ArrowDownToLine,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -543,12 +545,24 @@ function MarginControls({ strategy }: { strategy: Strategy }) {
   const [removeCount, setRemoveCount] = useState("1");
   const addMargin = useAddMargin();
   const removeMargin = useRemoveMargin();
+  const extendOrders = useExtendOrders();
+  const { data: marginInfo } = useMarginInfo(strategy.id, strategy.status === "running" && strategy.type === "grid");
 
   return (
     <div className="mt-3 p-3 rounded border border-border/30 bg-card/10">
       <p className="text-xs font-semibold text-muted-foreground mb-2">Margin Controls</p>
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="flex items-center gap-2 flex-1">
+      {marginInfo && (
+        <div className="flex items-center gap-3 mb-2 text-[10px] text-muted-foreground flex-wrap">
+          <span>Price: ${marginInfo.currentPrice.toFixed(3)}</span>
+          <span>Band: ${marginInfo.bandLow.toFixed(2)}</span>
+          {marginInfo.lowestBuyPrice && <span>Lowest: ${marginInfo.lowestBuyPrice.toFixed(3)}</span>}
+          {marginInfo.uncoveredLevels > 0 && (
+            <span className="text-yellow-400">{marginInfo.uncoveredLevels} uncovered</span>
+          )}
+        </div>
+      )}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           <Input
             type="number"
             min="0.1"
@@ -569,18 +583,41 @@ function MarginControls({ strategy }: { strategy: Strategy }) {
             {addMargin.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <PlusCircle className="h-3 w-3 mr-1" />}
             Add Margin
           </Button>
+          {marginInfo?.needsExtension && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={extendOrders.isPending}
+              onClick={() => extendOrders.mutate(strategy.id)}
+              data-testid={`button-extend-orders-${strategy.id}`}
+            >
+              {extendOrders.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <ArrowDownToLine className="h-3 w-3 mr-1" />}
+              Extend to -1%
+            </Button>
+          )}
         </div>
-        <div className="flex items-center gap-2 flex-1">
-          <Input
-            type="number"
-            min="1"
-            step="1"
-            value={removeCount}
-            onChange={(e) => setRemoveCount(e.target.value)}
-            className="w-24 text-xs"
-            placeholder="# orders"
-            data-testid={`input-remove-margin-${strategy.id}`}
-          />
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative w-28">
+            <Input
+              type="number"
+              min="1"
+              step="1"
+              value={removeCount}
+              onChange={(e) => setRemoveCount(e.target.value)}
+              className="text-xs pr-12"
+              placeholder={marginInfo && marginInfo.removableOrders > 0 ? `~$${marginInfo.removableMargin.toFixed(2)}` : "0"}
+              data-testid={`input-remove-margin-${strategy.id}`}
+            />
+            {marginInfo && marginInfo.removableOrders > 0 && (
+              <button
+                className="absolute right-1 top-1/2 -translate-y-1/2 text-[9px] text-muted-foreground px-1 rounded"
+                onClick={() => setRemoveCount(String(marginInfo.removableOrders))}
+                data-testid={`button-max-remove-${strategy.id}`}
+              >
+                MAX
+              </button>
+            )}
+          </div>
           <Button
             size="sm"
             variant="outline"
@@ -591,6 +628,11 @@ function MarginControls({ strategy }: { strategy: Strategy }) {
             {removeMargin.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <MinusCircle className="h-3 w-3 mr-1" />}
             Remove Bottom
           </Button>
+          {marginInfo && marginInfo.removableOrders > 0 && (
+            <span className="text-[10px] text-muted-foreground">
+              {marginInfo.removableOrders} removable (~${marginInfo.removableMargin.toFixed(2)})
+            </span>
+          )}
         </div>
       </div>
       <p className="text-[10px] text-muted-foreground mt-1.5">

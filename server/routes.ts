@@ -224,13 +224,14 @@ export async function registerRoutes(
     if (!strategy) return res.status(404).json({ message: "Strategy not found" });
 
     const updated = await storage.updateStrategy(id, { status: "running" });
-    startStrategyEngine();
 
     let initialBuy = null;
     const config = strategy.config as any;
     if (strategy.type === "grid" && !config?.initialBuyDone) {
       initialBuy = await placeInitialGridBuy({ ...strategy, status: "running" });
     }
+
+    startStrategyEngine();
 
     res.json({ ...updated, initialBuy });
   });
@@ -304,6 +305,18 @@ export async function registerRoutes(
       });
 
       res.json({ order: result, trade: log });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/flash-close", async (req, res) => {
+    const client = getBitunixClient();
+    if (!client) return res.status(400).json({ message: "API keys not configured" });
+    try {
+      const { symbol, positionId } = req.body;
+      const result = await client.flashClose(symbol, positionId);
+      res.json(result);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }

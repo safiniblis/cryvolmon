@@ -172,11 +172,20 @@ export class BitunixClient {
     return this.get("/api/v1/futures/trade/get_history_orders", params);
   }
 
-  // === Flash Close (close entire position) ===
   async flashClose(symbol: string, positionId?: string) {
-    const body: Record<string, any> = { symbol };
-    if (positionId) body.positionId = positionId;
-    return this.post("/api/v1/futures/trade/flash_close", body);
+    if (positionId) {
+      return this.post("/api/v1/futures/trade/flash_close_position", { positionId });
+    }
+    const posRes = await this.getPositions(symbol);
+    if (posRes?.code === 0 && Array.isArray(posRes.data)) {
+      const results = [];
+      for (const pos of posRes.data) {
+        const r = await this.post("/api/v1/futures/trade/flash_close_position", { positionId: pos.positionId });
+        results.push(r);
+      }
+      return { code: 0, data: results, msg: `Closed ${results.length} positions` };
+    }
+    return { code: -1, data: null, msg: "No positions found" };
   }
 }
 

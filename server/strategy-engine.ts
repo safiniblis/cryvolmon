@@ -56,6 +56,7 @@ function roundPrice(price: number, precision: number): string {
 }
 
 const activeGridOrders: Map<number, Map<string, { orderId: string; price: number; side: "BUY" | "SELL"; level: number }>> = new Map();
+const initialBuyLocks: Set<number> = new Set();
 
 async function getTickerPrice(symbol: string): Promise<TickerData | null> {
   const wsPrice = priceFeed.getLastPrice(symbol);
@@ -251,11 +252,13 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
   if (!client) return { success: false, message: "Bitunix client not configured" };
 
   const config = strategy.config as GridConfig;
+  const precision = await getPairPrecision(strategy.symbol);
   const ticker = await getTickerPrice(strategy.symbol);
   if (!ticker) return { success: false, message: `Cannot get price for ${strategy.symbol}` };
 
   const currentPrice = ticker.lastPrice;
   const leverage = config.leverage || 8;
+  const bandPct = 0.01;
 
   try {
     const accountRes = await client.getAccount();
@@ -263,8 +266,8 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       return { success: false, message: "Cannot fetch account balance" };
     }
     const available = parseFloat(accountRes.data.available || "0");
-    if (available < 5) {
-      return { success: false, message: `Insufficient balance: ${available.toFixed(2)} USDT. Need at least 5 USDT.` };
+    if (available < 1) {
+      return { success: false, message: `Insufficient balance: ${available.toFixed(2)} USDT. Need at least 1 USDT.` };
     }
 
     try {
@@ -278,15 +281,22 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       console.log(`[InitialBuy ${strategy.id}] Leverage note:`, e.message);
     }
 
-    const maxNotional = available * leverage;
-    const usableNotional = maxNotional * 0.95;
-    const baseQty = (usableNotional / currentPrice).toFixed(6);
+    const levels = getAsymmetricGridLevels(config);
+    const buyLevelsIn1Pct = levels.filter(l => l < currentPrice && l >= currentPrice * (1 - bandPct));
+    const gridBuyCount = buyLevelsIn1Pct.length;
 
-    console.log(`[InitialBuy ${strategy.id}] Balance=${available.toFixed(2)} USDT, leverage=${leverage}x, maxNotional=${maxNotional.toFixed(2)}, usable=${usableNotional.toFixed(2)}, qty=${baseQty} ${strategy.symbol} @ ${currentPrice}`);
+    const totalMarginSlots = 1 + gridBuyCount;
+    const marginPerSlot = available / totalMarginSlots;
+    const initialMargin = marginPerSlot;
+    const initialNotional = initialMargin * leverage * 0.95;
+    const baseQty = Math.max(initialNotional / currentPrice, precision.minTradeVolume);
+    const qtyStr = roundQty(baseQty, precision.basePrecision);
+
+    console.log(`[InitialBuy ${strategy.id}] Balance=${available.toFixed(2)} USDT, leverage=${leverage}x, gridBuysIn1%=${gridBuyCount}, marginPerSlot=${marginPerSlot.toFixed(2)}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}`);
 
     const result = await client.placeOrder({
       symbol: strategy.symbol,
-      qty: baseQty,
+      qty: qtyStr,
       side: "BUY",
       tradeSide: "OPEN",
       orderType: "MARKET",
@@ -302,7 +312,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       symbol: strategy.symbol,
       side: "BUY",
       orderType: "MARKET",
-      quantity: usableNotional / currentPrice,
+      quantity: baseQty,
       price: currentPrice,
       status: success ? "filled" : "error",
       orderId: orderId || null,
@@ -313,14 +323,66 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     if (success) {
       await storage.updateStrategy(strategy.id, {
         totalTrades: (strategy.totalTrades || 0) + 1,
-        config: { ...config, initialBuyDone: true },
+        config: { ...config, initialBuyDone: true, startPrice: currentPrice },
       });
+
+      let remainingBalance = 0;
+      try {
+        const postBuyAccount = await client.getAccount();
+        if (postBuyAccount?.code === 0 && postBuyAccount?.data) {
+          remainingBalance = parseFloat(postBuyAccount.data.available || "0");
+        }
+      } catch {}
+
+      console.log(`[InitialBuy ${strategy.id}] Now placing ${gridBuyCount} limit BUY orders within 1% below entry... (remaining=${remainingBalance.toFixed(2)} USDT)`);
+      const gridMarginEach = gridBuyCount > 0 ? remainingBalance / gridBuyCount : 0;
+      let placed = 0;
+      for (const level of buyLevelsIn1Pct) {
+        if (gridMarginEach < 0.5) {
+          console.log(`[InitialBuy ${strategy.id}] Skipping grid buys: insufficient margin (${gridMarginEach.toFixed(2)} per order)`);
+          break;
+        }
+        const gridNotional = gridMarginEach * leverage * 0.95;
+        const gridQty = Math.max(gridNotional / level, precision.minTradeVolume);
+        const gridQtyStr = roundQty(gridQty, precision.basePrecision);
+        const priceStr = roundPrice(level, precision.quotePrecision);
+
+        try {
+          const gridResult = await client.placeOrder({
+            symbol: strategy.symbol,
+            qty: gridQtyStr,
+            side: "BUY",
+            tradeSide: "OPEN",
+            orderType: "LIMIT",
+            price: priceStr,
+            effect: "GTC",
+          });
+
+          if (gridResult?.code === 0 && gridResult.data?.orderId) {
+            const orders = activeGridOrders.get(strategy.id) || new Map();
+            orders.set(`BUY_${priceStr}`, {
+              orderId: gridResult.data.orderId,
+              price: level,
+              side: "BUY",
+              level,
+            });
+            activeGridOrders.set(strategy.id, orders);
+            placed++;
+            console.log(`[InitialBuy ${strategy.id}] Placed BUY ${gridQtyStr} @ ${priceStr}`);
+          } else {
+            console.error(`[InitialBuy ${strategy.id}] Grid BUY failed @ ${priceStr}: ${gridResult?.msg}`);
+          }
+        } catch (e: any) {
+          console.error(`[InitialBuy ${strategy.id}] Grid BUY error @ ${priceStr}:`, e.message);
+        }
+      }
+      console.log(`[InitialBuy ${strategy.id}] Placed ${placed}/${gridBuyCount} grid BUY orders`);
     }
 
     return {
       success,
       message: success
-        ? `Bought ${baseQty} ${strategy.symbol} at ~$${currentPrice.toFixed(2)} (${usableNotional.toFixed(2)} USDT notional, ${leverage}x leverage)`
+        ? `Bought ${qtyStr} ${strategy.symbol} at ~$${currentPrice.toFixed(2)} (${initialNotional.toFixed(2)} USDT notional, ${leverage}x, ${gridBuyCount} grid buys reserved)`
         : (result?.msg || "Order placement failed"),
       orderId,
     };
@@ -337,11 +399,20 @@ async function executeGridStrategy(strategy: Strategy) {
   const config = strategy.config as GridConfig & { initialBuyDone?: boolean };
 
   if (!config.initialBuyDone) {
-    console.log(`[Grid ${strategy.id}] No initial buy yet, placing initial position...`);
-    const result = await placeInitialGridBuy(strategy);
-    console.log(`[Grid ${strategy.id}] Initial buy result: ${result.message}`);
-    if (!result.success) {
-      console.error(`[Grid ${strategy.id}] Initial buy failed: ${result.message}`);
+    if (initialBuyLocks.has(strategy.id)) {
+      console.log(`[Grid ${strategy.id}] Initial buy already in progress, skipping...`);
+      return;
+    }
+    initialBuyLocks.add(strategy.id);
+    try {
+      console.log(`[Grid ${strategy.id}] No initial buy yet, placing initial position...`);
+      const result = await placeInitialGridBuy(strategy);
+      console.log(`[Grid ${strategy.id}] Initial buy result: ${result.message}`);
+      if (!result.success) {
+        console.error(`[Grid ${strategy.id}] Initial buy failed: ${result.message}`);
+      }
+    } finally {
+      initialBuyLocks.delete(strategy.id);
     }
     return;
   }
@@ -354,7 +425,7 @@ async function executeGridStrategy(strategy: Strategy) {
   const currentPrice = ticker.lastPrice;
   const levels = getAsymmetricGridLevels(config);
 
-  const bandPct = 0.03;
+  const bandPct = 0.01;
   const bandLow = currentPrice * (1 - bandPct);
   const bandHigh = currentPrice * (1 + bandPct);
 
@@ -373,11 +444,22 @@ async function executeGridStrategy(strategy: Strategy) {
     console.error(`[Grid ${strategy.id}] Failed to fetch open orders:`, e.message);
   }
 
-  const liveOrderIds = new Set(openOrders.map((o: any) => o.orderId));
-  const liveOrderPrices = new Map<string, string>();
-  for (const o of openOrders) {
-    liveOrderPrices.set(o.orderId, `${o.side}_${parseFloat(o.price).toFixed(precision.quotePrecision)}`);
+  let positionId: string | null = null;
+  let positionQty = 0;
+  try {
+    const posRes = await client.getPositions(strategy.symbol);
+    if (posRes?.code === 0 && Array.isArray(posRes.data) && posRes.data.length > 0) {
+      const pos = posRes.data.find((p: any) => p.side === "BUY");
+      if (pos) {
+        positionId = pos.positionId;
+        positionQty = parseFloat(pos.qty || "0");
+      }
+    }
+  } catch (e: any) {
+    console.error(`[Grid ${strategy.id}] Failed to fetch positions:`, e.message);
   }
+
+  const liveOrderIds = new Set(openOrders.map((o: any) => o.orderId));
 
   const desiredOrders = new Map<string, { price: number; side: "BUY" | "SELL"; tradeSide: "OPEN" | "CLOSE" }>();
 
@@ -385,9 +467,11 @@ async function executeGridStrategy(strategy: Strategy) {
     const key = `BUY_${roundPrice(level, precision.quotePrecision)}`;
     desiredOrders.set(key, { price: level, side: "BUY", tradeSide: "OPEN" });
   }
-  for (const level of sellLevels) {
-    const key = `SELL_${roundPrice(level, precision.quotePrecision)}`;
-    desiredOrders.set(key, { price: level, side: "SELL", tradeSide: "CLOSE" });
+  if (positionId && positionQty > 0) {
+    for (const level of sellLevels) {
+      const key = `SELL_${roundPrice(level, precision.quotePrecision)}`;
+      desiredOrders.set(key, { price: level, side: "SELL", tradeSide: "CLOSE" });
+    }
   }
 
   const ordersToCancel: string[] = [];
@@ -442,17 +526,43 @@ async function executeGridStrategy(strategy: Strategy) {
     existingPriceKeys.add(pk);
   }
 
+  const sellQtyPerLevel = sellLevels.length > 0 ? positionQty / sellLevels.length : 0;
+
+  let availableBalance = 0;
+  try {
+    const accountRes = await client.getAccount();
+    if (accountRes?.code === 0 && accountRes?.data) {
+      availableBalance = parseFloat(accountRes.data.available || "0");
+    }
+  } catch {}
+
+  const newBuyOrders = Array.from(desiredOrders.entries()).filter(
+    ([key, o]) => o.side === "BUY" && !existingPriceKeys.has(key)
+  );
+  const marginPerBuy = newBuyOrders.length > 0 ? availableBalance / newBuyOrders.length : 0;
+
   let placed = 0;
   for (const [key, order] of desiredOrders) {
     if (existingPriceKeys.has(key)) continue;
 
-    const qtyBase = config.amountPerGrid / order.price;
-    const qty = Math.max(qtyBase, precision.minTradeVolume);
-    const qtyStr = roundQty(qty, precision.basePrecision);
+    let qtyStr: string;
     const priceStr = roundPrice(order.price, precision.quotePrecision);
 
+    if (order.side === "SELL") {
+      const qty = Math.max(sellQtyPerLevel, precision.minTradeVolume);
+      qtyStr = roundQty(qty, precision.basePrecision);
+    } else {
+      if (marginPerBuy < 0.5) {
+        continue;
+      }
+      const notional = marginPerBuy * (config.leverage || 8) * 0.95;
+      const qtyBase = notional / order.price;
+      const qty = Math.max(qtyBase, precision.minTradeVolume);
+      qtyStr = roundQty(qty, precision.basePrecision);
+    }
+
     try {
-      const result = await client.placeOrder({
+      const orderParams: any = {
         symbol: strategy.symbol,
         qty: qtyStr,
         side: order.side,
@@ -460,7 +570,13 @@ async function executeGridStrategy(strategy: Strategy) {
         orderType: "LIMIT",
         price: priceStr,
         effect: "GTC",
-      });
+      };
+
+      if (order.tradeSide === "CLOSE" && positionId) {
+        orderParams.positionId = positionId;
+      }
+
+      const result = await client.placeOrder(orderParams);
 
       if (result?.code === 0 && result.data?.orderId) {
         existingOrders.set(key, {
@@ -480,7 +596,7 @@ async function executeGridStrategy(strategy: Strategy) {
 
   activeGridOrders.set(strategy.id, existingOrders);
 
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | Band=[${bandLow.toFixed(precision.quotePrecision)}-${bandHigh.toFixed(precision.quotePrecision)}] | Buys=${buyLevels.length} Sells=${sellLevels.length} | Active=${existingOrders.size} Placed=${placed} Cancelled=${ordersToCancel.length}`);
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | Band \u00b11%=[${bandLow.toFixed(precision.quotePrecision)}-${bandHigh.toFixed(precision.quotePrecision)}] | Buys=${buyLevels.length} Sells=${sellLevels.length} | Active=${existingOrders.size} Placed=${placed} Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}`);
 
   await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 }

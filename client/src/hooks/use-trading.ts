@@ -40,6 +40,27 @@ export function useSimulation() {
   });
 }
 
+export function useQuickStart() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { amount: number }) => {
+      const res = await apiRequest("POST", "/api/strategies/quickstart", data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      toast({
+        title: "Strategy Started",
+        description: `Auto-selected ${data.selectedPair} (${data.pairName}) with volatility score ${data.volatilityScore}`,
+      });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Quick Start Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useConnectionStatus() {
   return useQuery<{ connected: boolean; message: string }>({
     queryKey: ["/api/connection"],

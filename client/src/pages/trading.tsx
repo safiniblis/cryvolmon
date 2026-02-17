@@ -189,6 +189,8 @@ function CreateStrategyDialog() {
         leverage: gridCalc.leverage,
         geometric: true,
         gridRatio: gridCalc.gridRatio,
+        gapGrowthBelow: gridCalc.gapGrowthBelow,
+        gapShrinkAbove: gridCalc.gapShrinkAbove,
         startPrice: gridCalc.startPrice,
         gridsAbove: gridCalc.gridsAbove,
         gridsBelow: gridCalc.gridsBelow,
@@ -339,7 +341,7 @@ function CreateStrategyDialog() {
                 </h4>
               </div>
               <p className="text-xs text-muted-foreground -mt-2">
-                Range: -10% to +2%, liquidation = -12%, max leverage (~8x), 2.5x fee profit per grid. Range extends dynamically.
+                Range: -10% to +2%. Wider grids below (1.07x growth), tighter above (0.96x shrink). Max leverage, 2.5x fee profit.
               </p>
 
               <div className="grid grid-cols-2 gap-4">
@@ -442,7 +444,7 @@ function CreateStrategyDialog() {
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground border-t border-border/30 pt-2 mt-2">
-                    Geometric spacing: -10% to +2% range, 2.5x fee profit per grid, ~8x leverage. Range auto-extends when grids are hit beyond start price.
+                    Asymmetric spacing: wider gaps below (1.07x), tighter above (0.96x). Fewer positions at lows = higher leverage. Extensions follow same scaling.
                   </p>
                 </motion.div>
               )}

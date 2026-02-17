@@ -450,13 +450,16 @@ async function executeGridStrategy(strategy: Strategy) {
   const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow);
   const sellLevels = levels.filter(l => l > currentPrice && l <= bandHigh);
 
-  const existingBuyOrders = activeGridOrders.get(strategy.id) || new Map();
-
   let openOrders: any[] = [];
   try {
     const res = await client.getOpenOrders(strategy.symbol);
-    if (res?.code === 0 && Array.isArray(res.data)) {
-      openOrders = res.data;
+    if (res?.code === 0) {
+      if (Array.isArray(res.data)) {
+        openOrders = res.data;
+      } else if (res.data?.orderList && Array.isArray(res.data.orderList)) {
+        openOrders = res.data.orderList;
+      }
+      console.log(`[Grid ${strategy.id}] Open orders on exchange: ${openOrders.length} (sides: ${openOrders.map((o: any) => `${o.side}@${o.price}`).join(', ')})`);
     }
   } catch (e: any) {
     console.error(`[Grid ${strategy.id}] Failed to fetch open orders:`, e.message);
@@ -477,40 +480,28 @@ async function executeGridStrategy(strategy: Strategy) {
     console.error(`[Grid ${strategy.id}] Failed to fetch positions:`, e.message);
   }
 
-  const liveOrderIds = new Set(openOrders.map((o: any) => o.orderId));
-
-  const desiredBuys = new Map<string, number>();
-  for (const level of buyLevels) {
-    const key = `BUY_${roundPrice(level, precision.quotePrecision)}`;
-    desiredBuys.set(key, level);
-  }
+  const desiredBuyPrices = new Set(buyLevels.map(l => roundPrice(l, precision.quotePrecision)));
 
   const ordersToCancel: string[] = [];
-  for (const [key, info] of existingBuyOrders) {
-    if (!liveOrderIds.has(info.orderId)) {
-      console.log(`[Grid ${strategy.id}] BUY order ${info.orderId} filled @ ${info.price.toFixed(precision.quotePrecision)}`);
-      await storage.createTradeLog({
-        strategyId: strategy.id,
-        symbol: strategy.symbol,
-        side: "BUY",
-        orderType: "LIMIT",
-        quantity: info.qty || config.amountPerGrid / info.price,
-        price: info.price,
-        status: "filled",
-        orderId: info.orderId,
-        pnl: null,
-        errorMsg: null,
-      });
-      await storage.updateStrategy(strategy.id, {
-        totalTrades: (strategy.totalTrades || 0) + 1,
-      });
-      existingBuyOrders.delete(key);
+  const coveredBuyPrices = new Set<string>();
+
+  for (const order of openOrders) {
+    const orderPrice = roundPrice(parseFloat(order.price || "0"), precision.quotePrecision);
+    const orderSide = order.side;
+
+    if (orderSide === "SELL") {
+      ordersToCancel.push(order.orderId);
       continue;
     }
 
-    if (!desiredBuys.has(key)) {
-      ordersToCancel.push(info.orderId);
-      existingBuyOrders.delete(key);
+    if (orderSide === "BUY" && desiredBuyPrices.has(orderPrice)) {
+      if (coveredBuyPrices.has(orderPrice)) {
+        ordersToCancel.push(order.orderId);
+      } else {
+        coveredBuyPrices.add(orderPrice);
+      }
+    } else {
+      ordersToCancel.push(order.orderId);
     }
   }
 
@@ -520,15 +511,10 @@ async function executeGridStrategy(strategy: Strategy) {
         symbol: strategy.symbol,
         orderList: ordersToCancel.map(id => ({ orderId: id })),
       });
-      console.log(`[Grid ${strategy.id}] Cancelled ${ordersToCancel.length} out-of-range BUY orders`);
+      console.log(`[Grid ${strategy.id}] Cancelled ${ordersToCancel.length} unwanted orders (dupes/sells/out-of-range)`);
     } catch (e: any) {
-      console.error(`[Grid ${strategy.id}] Cancel BUY error:`, e.message);
+      console.error(`[Grid ${strategy.id}] Cancel error:`, e.message);
     }
-  }
-
-  const existingBuyKeys = new Set<string>();
-  for (const [key] of existingBuyOrders) {
-    existingBuyKeys.add(key);
   }
 
   let availableBalance = 0;
@@ -539,12 +525,11 @@ async function executeGridStrategy(strategy: Strategy) {
     }
   } catch {}
 
-  const newBuyKeys = Array.from(desiredBuys.keys()).filter(k => !existingBuyKeys.has(k));
-  const marginPerBuy = newBuyKeys.length > 0 ? availableBalance / newBuyKeys.length : 0;
+  const missingBuyLevels = buyLevels.filter(l => !coveredBuyPrices.has(roundPrice(l, precision.quotePrecision)));
+  const marginPerBuy = missingBuyLevels.length > 0 ? availableBalance / missingBuyLevels.length : 0;
 
   let placedBuys = 0;
-  for (const key of newBuyKeys) {
-    const level = desiredBuys.get(key)!;
+  for (const level of missingBuyLevels) {
     if (marginPerBuy < 0.5) continue;
     const notional = marginPerBuy * (config.leverage || 8) * 0.95;
     const qtyBase = notional / level;
@@ -564,13 +549,6 @@ async function executeGridStrategy(strategy: Strategy) {
       });
 
       if (result?.code === 0 && result.data?.orderId) {
-        existingBuyOrders.set(key, {
-          orderId: result.data.orderId,
-          price: level,
-          side: "BUY",
-          level,
-          qty: parseFloat(qtyStr),
-        });
         placedBuys++;
       } else {
         console.error(`[Grid ${strategy.id}] BUY failed @ ${priceStr}: ${result?.msg}`);
@@ -579,8 +557,6 @@ async function executeGridStrategy(strategy: Strategy) {
       console.error(`[Grid ${strategy.id}] BUY error @ ${priceStr}:`, e.message);
     }
   }
-
-  activeGridOrders.set(strategy.id, existingBuyOrders);
 
   let placedTps = 0;
   let cancelledTps = 0;
@@ -660,7 +636,7 @@ async function executeGridStrategy(strategy: Strategy) {
     } // close remainingQtyForTp check
   }
 
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | Band \u00b11%=[${bandLow.toFixed(precision.quotePrecision)}-${bandHigh.toFixed(precision.quotePrecision)}] | Buys=${buyLevels.length} TPs=${sellLevels.length} | BuyOrders=${existingBuyOrders.size}(+${placedBuys}) | TPs placed=${placedTps} cancelled=${cancelledTps} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}`);
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | Band=[${bandLow.toFixed(precision.quotePrecision)}-${bandHigh.toFixed(precision.quotePrecision)}] | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}`);
 
   await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 }

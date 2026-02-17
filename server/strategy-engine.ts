@@ -449,8 +449,15 @@ async function executeGridStrategy(strategy: Strategy) {
   const bandLow = currentPrice * (1 - bandPct);
   const bandHigh = currentPrice * (1 + bandPct);
 
+  const feeRate = 0.0006;
+  const roundTripFee = 2 * feeRate;
+  const minProfitableGap = roundTripFee * 2.5;
+  const minTpPrice = currentPrice * (1 + minProfitableGap);
+
   const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow);
-  const sellLevels = levels.filter(l => l > currentPrice && l <= (config.upperPrice || bandHigh));
+  const sellLevels = levels.filter(l => l >= minTpPrice && l <= (config.upperPrice || bandHigh));
+
+  console.log(`[Grid ${strategy.id}] Price: ${currentPrice.toFixed(4)} | minTpPrice: ${minTpPrice.toFixed(4)} (gap: ${(minProfitableGap * 100).toFixed(3)}%) | TP levels: ${sellLevels.length} | Buy levels: ${buyLevels.length}`);
 
   let openOrders: any[] = [];
   try {

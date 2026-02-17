@@ -78,7 +78,7 @@ A full-stack cryptocurrency trading platform with two main features:
 - Grid sell levels are NOT separate SELL CLOSE limit orders (those fail with "Insufficient amount")
 - Instead, sell levels use the TP/SL API: `place_tpsl_order` with `tpPrice`, `tpQty`, `tpStopType: "LAST_PRICE"`, `tpOrderType: "MARKET"`
 - Each TP order is attached to the position via `positionId`
-- Position qty is split equally across all TP levels within the ±1% band
+- Position qty is split equally across all TP levels up to upperPrice (full channel)
 - On strategy stop, both limit orders AND TP/SL orders are cancelled
 
 ## Initial Buy Logic
@@ -98,6 +98,9 @@ A full-stack cryptocurrency trading platform with two main features:
 - Controls visible in expanded strategy card for running grid strategies only.
 
 ## Recent Changes
+- 2026-02-17: Fixed buy order sizing to use fixed amountPerGrid (uniform orders)
+- 2026-02-17: Widened TP channel: sell/TP levels cover all grid levels above price up to upperPrice (not just +1%)
+- 2026-02-17: Added margin info endpoint, extend-to-1% button, MAX remove, withdrawable margin display
 - 2026-02-17: Added margin adjustment controls (add/remove margin) for grid strategies
 - 2026-02-17: Initial buy on grid start: max affordable position given leverage & liquidation
 - 2026-02-17: Fixed Bitunix API: correct order endpoint, qty in base coin, leverage via separate endpoint

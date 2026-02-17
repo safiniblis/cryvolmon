@@ -526,12 +526,12 @@ async function executeGridStrategy(strategy: Strategy) {
   } catch {}
 
   const missingBuyLevels = buyLevels.filter(l => !coveredBuyPrices.has(roundPrice(l, precision.quotePrecision)));
-  const marginPerBuy = missingBuyLevels.length > 0 ? availableBalance / missingBuyLevels.length : 0;
+  const amountPerGrid = config.amountPerGrid || 5;
 
   let placedBuys = 0;
   for (const level of missingBuyLevels) {
-    if (marginPerBuy < 0.5) continue;
-    const notional = marginPerBuy * (config.leverage || 8) * 0.95;
+    if (availableBalance < 0.5) continue;
+    const notional = amountPerGrid * (config.leverage || 8) * 0.95;
     const qtyBase = notional / level;
     const qty = Math.max(qtyBase, precision.minTradeVolume);
     const qtyStr = roundQty(qty, precision.basePrecision);
@@ -598,42 +598,34 @@ async function executeGridStrategy(strategy: Strategy) {
     const remainingQtyForTp = Math.max(positionQty - existingTpQty, 0);
     const newTpLevels = sellLevels.filter(l => !existingTpPrices.has(roundPrice(l, precision.quotePrecision)));
 
-    if (remainingQtyForTp <= 0 || newTpLevels.length === 0) {
-      // nothing to place
-    } else {
-    const tpQtyPerLevel = remainingQtyForTp / newTpLevels.length;
-    if (tpQtyPerLevel < precision.minTradeVolume) {
-      // not enough position to split across all levels
-    }
-    const tpQtyStr = roundQty(Math.max(tpQtyPerLevel, precision.minTradeVolume), precision.basePrecision);
-    const totalNewTpQty = parseFloat(tpQtyStr) * newTpLevels.length;
-    if (totalNewTpQty > remainingQtyForTp * 1.01) {
-      // would over-allocate, skip
-    } else {
+    if (remainingQtyForTp > 0 && newTpLevels.length > 0) {
+      const tpQtyPerLevel = remainingQtyForTp / newTpLevels.length;
+      const tpQtyStr = roundQty(Math.max(tpQtyPerLevel, precision.minTradeVolume), precision.basePrecision);
+      const totalNewTpQty = parseFloat(tpQtyStr) * newTpLevels.length;
 
-    for (const level of newTpLevels) {
-      const priceStr = roundPrice(level, precision.quotePrecision);
-
-      try {
-        const result = await client.placeTpslOrder({
-          symbol: strategy.symbol,
-          positionId,
-          tpPrice: priceStr,
-          tpStopType: "LAST_PRICE",
-          tpOrderType: "MARKET",
-          tpQty: tpQtyStr,
-        });
-        if (result?.code === 0) {
-          placedTps++;
-        } else {
-          console.error(`[Grid ${strategy.id}] TP failed @ ${priceStr}: ${result?.msg}`);
+      if (totalNewTpQty <= remainingQtyForTp * 1.01) {
+        for (const level of newTpLevels) {
+          const priceStr = roundPrice(level, precision.quotePrecision);
+          try {
+            const result = await client.placeTpslOrder({
+              symbol: strategy.symbol,
+              positionId,
+              tpPrice: priceStr,
+              tpStopType: "LAST_PRICE",
+              tpOrderType: "MARKET",
+              tpQty: tpQtyStr,
+            });
+            if (result?.code === 0) {
+              placedTps++;
+            } else {
+              console.error(`[Grid ${strategy.id}] TP failed @ ${priceStr}: ${result?.msg}`);
+            }
+          } catch (e: any) {
+            console.error(`[Grid ${strategy.id}] TP error @ ${priceStr}:`, e.message);
+          }
         }
-      } catch (e: any) {
-        console.error(`[Grid ${strategy.id}] TP error @ ${priceStr}:`, e.message);
       }
     }
-    } // close over-allocate check
-    } // close remainingQtyForTp check
   }
 
   console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | Band=[${bandLow.toFixed(precision.quotePrecision)}-${bandHigh.toFixed(precision.quotePrecision)}] | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}`);

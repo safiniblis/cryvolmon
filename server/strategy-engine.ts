@@ -1,6 +1,7 @@
 import { getBitunixClient } from "./bitunix";
 import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
+import { priceFeed } from "./ws-price-feed";
 
 interface TickerData {
   symbol: string;

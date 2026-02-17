@@ -8,22 +8,19 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
 import { Link } from "wouter";
 import {
   useConnectionStatus,
   useAccount,
   useStrategies,
-  useCreateStrategy,
   useStartStrategy,
   useStopStrategy,
   useDeleteStrategy,
   useTradeLogs,
-  useGridCalculator,
   useBitunixPairs,
   useVolatilityScores,
   useSimulation,
+  useQuickStart,
   useAddMargin,
   useRemoveMargin,
   useMarginInfo,
@@ -33,7 +30,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Bot, Play, Square, Trash2, Plus, Wifi, WifiOff,
   TrendingUp, TrendingDown, DollarSign, Activity,
-  AlertTriangle, ArrowRight, Calculator, Zap,
+  AlertTriangle, ArrowRight, Zap,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, ArrowDownToLine,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
@@ -154,387 +151,6 @@ function PositionsTable() {
         ))}
       </TableBody>
     </Table>
-  );
-}
-
-function CreateStrategyDialog() {
-  const [open, setOpen] = useState(false);
-  const createStrategy = useCreateStrategy();
-  const gridCalculator = useGridCalculator();
-  const { data: pairsData } = useBitunixPairs();
-  const [type, setType] = useState("grid");
-  const [name, setName] = useState("");
-  const [symbol, setSymbol] = useState("BTCUSDT");
-  const [side, setSide] = useState("LONG");
-  const [rotationEnabled, setRotationEnabled] = useState(false);
-
-  // DCA config
-  const [buyAmount, setBuyAmount] = useState("10");
-  const [intervalMinutes, setIntervalMinutes] = useState("60");
-  const [maxBuys, setMaxBuys] = useState("100");
-  const [leverage, setLeverage] = useState("1");
-
-  // Grid config
-  const [amountPerGrid, setAmountPerGrid] = useState("10");
-  const [feeRate, setFeeRate] = useState("0.06");
-  const [gridCalc, setGridCalc] = useState<any>(null);
-
-  // Momentum config
-  const [threshold, setThreshold] = useState("2");
-  const [amount, setAmount] = useState("10");
-  const [cooldown, setCooldown] = useState("15");
-
-  const availablePairs = pairsData?.pairs || ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
-
-  const handleCalculateGrid = () => {
-    gridCalculator.mutate(
-      { symbol, feeRate: parseFloat(feeRate) / 100 },
-      { onSuccess: (data) => setGridCalc(data) }
-    );
-  };
-
-  const handleSubmit = () => {
-    let config: Record<string, any> = {};
-
-    if (type === "dca") {
-      config = {
-        buyAmount: parseFloat(buyAmount),
-        intervalMinutes: parseInt(intervalMinutes),
-        maxBuys: parseInt(maxBuys),
-        leverage: parseInt(leverage),
-      };
-    } else if (type === "grid") {
-      if (!gridCalc) return;
-      config = {
-        upperPrice: gridCalc.upperPrice,
-        lowerPrice: gridCalc.lowerPrice,
-        liquidationPrice: gridCalc.liquidationPrice,
-        gridCount: gridCalc.gridCount,
-        amountPerGrid: parseFloat(amountPerGrid),
-        leverage: gridCalc.leverage,
-        geometric: true,
-        gridRatio: gridCalc.gridRatio,
-        gapGrowthBelow: gridCalc.gapGrowthBelow,
-        gapShrinkAbove: gridCalc.gapShrinkAbove,
-        startPrice: gridCalc.startPrice,
-        gridsAbove: gridCalc.gridsAbove,
-        gridsBelow: gridCalc.gridsBelow,
-        extensionsBelow: 0,
-        extensionsAbove: 0,
-        rotationEnabled,
-      };
-    } else if (type === "momentum") {
-      config = {
-        threshold: parseFloat(threshold),
-        amount: parseFloat(amount),
-        leverage: parseInt(leverage),
-        cooldownMinutes: parseInt(cooldown),
-      };
-    }
-
-    createStrategy.mutate(
-      { name: name || `${type.toUpperCase()} ${symbol}`, type, symbol, side, status: "stopped", config },
-      { onSuccess: () => { setOpen(false); setGridCalc(null); } }
-    );
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button data-testid="button-create-strategy">
-          <Plus className="h-4 w-4 mr-2" /> New Strategy
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-lg bg-[#0d1226] border-border/50 max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Create Trading Strategy</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 mt-4">
-          <div className="space-y-2">
-            <Label>Strategy Name</Label>
-            <Input
-              data-testid="input-strategy-name"
-              placeholder="My Strategy"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Type</Label>
-              <Select value={type} onValueChange={setType}>
-                <SelectTrigger data-testid="select-strategy-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="dca">DCA (Dollar Cost Avg)</SelectItem>
-                  <SelectItem value="grid">Grid Trading</SelectItem>
-                  <SelectItem value="momentum">Momentum</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Symbol</Label>
-              <Select value={symbol} onValueChange={setSymbol}>
-                <SelectTrigger data-testid="select-symbol">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {availablePairs.map(p => (
-                    <SelectItem key={p} value={p}>{p.replace("USDT", "/USDT")}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Side</Label>
-              <Select value={side} onValueChange={setSide}>
-                <SelectTrigger data-testid="select-side">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="LONG">Long</SelectItem>
-                  <SelectItem value="SHORT">Short</SelectItem>
-                  <SelectItem value="BOTH">Both</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {type !== "grid" && (
-              <div className="space-y-2">
-                <Label>Leverage</Label>
-                <Input
-                  data-testid="input-leverage"
-                  type="number"
-                  value={leverage}
-                  onChange={(e) => setLeverage(e.target.value)}
-                  min="1"
-                  max="125"
-                />
-              </div>
-            )}
-          </div>
-
-          <Separator />
-
-          {type === "dca" && (
-            <div className="space-y-4">
-              <h4 className="text-sm font-semibold text-muted-foreground">DCA Settings</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Buy Amount (USDT)</Label>
-                  <Input
-                    data-testid="input-buy-amount"
-                    type="number"
-                    value={buyAmount}
-                    onChange={(e) => setBuyAmount(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Interval (minutes)</Label>
-                  <Input
-                    data-testid="input-interval"
-                    type="number"
-                    value={intervalMinutes}
-                    onChange={(e) => setIntervalMinutes(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Max Buys</Label>
-                <Input
-                  data-testid="input-max-buys"
-                  type="number"
-                  value={maxBuys}
-                  onChange={(e) => setMaxBuys(e.target.value)}
-                />
-              </div>
-            </div>
-          )}
-
-          {type === "grid" && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
-                  <Zap className="h-3.5 w-3.5 text-yellow-400" />
-                  Optimized Geometric Grid
-                </h4>
-              </div>
-              <p className="text-xs text-muted-foreground -mt-2">
-                Range: -10% to +2%. Wider grids below (1.07x growth), tighter above (0.96x shrink). Max leverage, 2.5x fee profit.
-              </p>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Fee Rate (%)</Label>
-                  <Input
-                    data-testid="input-fee-rate"
-                    type="number"
-                    step="0.01"
-                    value={feeRate}
-                    onChange={(e) => { setFeeRate(e.target.value); setGridCalc(null); }}
-                  />
-                  <p className="text-[10px] text-muted-foreground">Taker fee per side (e.g. 0.06%)</p>
-                </div>
-                <div className="space-y-2">
-                  <Label>Amount per Grid (USDT)</Label>
-                  <Input
-                    data-testid="input-amount-per-grid"
-                    type="number"
-                    value={amountPerGrid}
-                    onChange={(e) => setAmountPerGrid(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-3 rounded-lg border border-border/30 bg-card/20">
-                <div className="flex items-center gap-2">
-                  <RotateCcw className="h-3.5 w-3.5 text-blue-400" />
-                  <div>
-                    <span className="text-sm font-medium">Auto Pair Rotation</span>
-                    <p className="text-[10px] text-muted-foreground">Switch to higher-volatility pair when current score drops 2x below best</p>
-                  </div>
-                </div>
-                <Switch
-                  checked={rotationEnabled}
-                  onCheckedChange={setRotationEnabled}
-                  data-testid="switch-rotation"
-                />
-              </div>
-
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full border-yellow-500/30 text-yellow-300 hover:text-yellow-200"
-                onClick={handleCalculateGrid}
-                disabled={gridCalculator.isPending}
-                data-testid="button-calculate-grid"
-              >
-                <Calculator className="h-4 w-4 mr-2" />
-                {gridCalculator.isPending ? "Calculating..." : "Calculate Optimal Grid"}
-              </Button>
-
-              {gridCalc && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4 space-y-3"
-                >
-                  <div className="flex items-center gap-2 mb-2">
-                    <Zap className="h-4 w-4 text-yellow-400" />
-                    <span className="text-sm font-bold text-yellow-300">Grid Parameters</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Current Price</span>
-                      <span className="font-mono font-bold">{formatCurrency(gridCalc.currentPrice)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Leverage</span>
-                      <span className="font-mono font-bold text-yellow-300">{gridCalc.leverage}x</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Upper (+2%)</span>
-                      <span className="font-mono">{formatCurrency(gridCalc.upperPrice)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Lower (-10%)</span>
-                      <span className="font-mono text-orange-400">{formatCurrency(gridCalc.lowerPrice)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Liquidation (-12%)</span>
-                      <span className="font-mono text-red-400">{formatCurrency(gridCalc.liquidationPrice)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Grid Count</span>
-                      <span className="font-mono font-bold">{gridCalc.gridCount}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Grid Ratio</span>
-                      <span className="font-mono">{((gridCalc.gridRatio - 1) * 100).toFixed(4)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Profit / Grid</span>
-                      <span className="font-mono text-emerald-400">{(gridCalc.profitPerGrid * 100).toFixed(4)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Fee / Grid</span>
-                      <span className="font-mono text-red-400">{(gridCalc.feePerGrid * 100).toFixed(4)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Net Profit / Grid</span>
-                      <span className="font-mono text-emerald-400 font-bold">{(gridCalc.netProfitPerGrid * 100).toFixed(4)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Profit:Fee Ratio</span>
-                      <span className="font-mono font-bold text-yellow-300">{gridCalc.profitToFeeRatio.toFixed(1)}x</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Grids Above Price</span>
-                      <span className="font-mono">{gridCalc.gridsAbove}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Grids Below Price</span>
-                      <span className="font-mono">{gridCalc.gridsBelow}</span>
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground border-t border-border/30 pt-2 mt-2">
-                    Asymmetric spacing: wider gaps below (1.07x), tighter above (0.96x). Fewer positions at lows = higher leverage. Extensions follow same scaling.
-                  </p>
-                </motion.div>
-              )}
-            </div>
-          )}
-
-          {type === "momentum" && (
-            <div className="space-y-4">
-              <h4 className="text-sm font-semibold text-muted-foreground">Momentum Settings</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Threshold (%)</Label>
-                  <Input
-                    data-testid="input-threshold"
-                    type="number"
-                    value={threshold}
-                    onChange={(e) => setThreshold(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Trade Amount (USDT)</Label>
-                  <Input
-                    data-testid="input-momentum-amount"
-                    type="number"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Cooldown (minutes)</Label>
-                <Input
-                  data-testid="input-cooldown"
-                  type="number"
-                  value={cooldown}
-                  onChange={(e) => setCooldown(e.target.value)}
-                />
-              </div>
-            </div>
-          )}
-
-          <Button
-            data-testid="button-submit-strategy"
-            className="w-full"
-            onClick={handleSubmit}
-            disabled={createStrategy.isPending || (type === "grid" && !gridCalc)}
-          >
-            {createStrategy.isPending ? "Creating..." : type === "grid" && !gridCalc ? "Calculate Grid First" : "Create Strategy"}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -1074,6 +690,103 @@ function SimulationPanel() {
   );
 }
 
+function QuickStartPanel() {
+  const [amount, setAmount] = useState("100");
+  const quickStart = useQuickStart();
+  const { data: scores } = useVolatilityScores();
+  const topPair = scores?.[0];
+
+  const result = quickStart.data;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      <Card className="bg-gradient-to-r from-purple-900/30 via-card/40 to-blue-900/30 border-purple-500/30">
+        <CardContent className="p-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Zap className="h-5 w-5 text-yellow-400" />
+                Quick Start Grid Bot
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Enter your USDT amount and we'll auto-select the best pair based on volatility scores
+                {topPair && (
+                  <span className="text-purple-300 ml-1">
+                    — currently favoring <span className="font-semibold uppercase">{topPair.symbol}</span> ({topPair.name}, score: {topPair.score})
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="relative">
+                <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  data-testid="input-quickstart-amount"
+                  type="number"
+                  min="5"
+                  step="10"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  className="pl-8 w-32 font-mono"
+                  placeholder="100"
+                />
+              </div>
+              <span className="text-sm text-muted-foreground font-medium">USDT</span>
+              <Button
+                data-testid="button-quickstart"
+                onClick={() => quickStart.mutate({ amount: parseFloat(amount) })}
+                disabled={quickStart.isPending || !amount || parseFloat(amount) <= 0}
+                className="bg-purple-600 border-purple-500"
+              >
+                {quickStart.isPending ? (
+                  <>
+                    <Activity className="h-4 w-4 mr-1 animate-spin" /> Starting...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-1" /> Start Bot
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {result && (
+            <div className="mt-4 p-3 rounded-lg border border-emerald-500/30 bg-emerald-900/10">
+              <div className="flex items-center gap-2 mb-2">
+                <Badge className="bg-emerald-600/50">Running</Badge>
+                <span className="text-sm font-semibold">{result.selectedPair}</span>
+                <span className="text-xs text-muted-foreground">({result.pairName})</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-muted-foreground">Volatility Score</span>
+                  <p className="font-mono font-bold text-purple-300" data-testid="text-qs-score">{result.volatilityScore}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Risk Gauge</span>
+                  <p className="font-mono font-bold" data-testid="text-qs-risk">{result.riskGauge.toFixed(1)}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Grids / Leverage</span>
+                  <p className="font-mono font-bold" data-testid="text-qs-grids">{result.gridInfo.gridCount} / {result.gridInfo.leverage}x</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Per Grid</span>
+                  <p className="font-mono font-bold" data-testid="text-qs-pergrid">${result.gridInfo.amountPerGrid}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
 export default function TradingPage() {
   return (
     <div className="min-h-screen w-full bg-[#0a0f1e] text-foreground p-4 md:p-8 relative overflow-hidden">
@@ -1103,6 +816,8 @@ export default function TradingPage() {
           </div>
         </header>
 
+        <QuickStartPanel />
+
         <AccountOverview />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1120,7 +835,6 @@ export default function TradingPage() {
                     <span className="w-1 h-5 bg-purple-500 rounded-full block" />
                     My Strategies
                   </h2>
-                  <CreateStrategyDialog />
                 </div>
                 <StrategiesList />
               </TabsContent>

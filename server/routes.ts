@@ -251,6 +251,32 @@ export async function registerRoutes(
     res.json(updated);
   });
 
+  app.post("/api/cancel-all-orders", async (req, res) => {
+    const client = getBitunixClient();
+    if (!client) return res.status(400).json({ message: "API keys not configured" });
+
+    const { symbol } = req.body;
+    if (!symbol) return res.status(400).json({ message: "Symbol required" });
+
+    try {
+      const pendingRes = await client.get("/api/v1/futures/trade/get_pending_orders", {
+        symbol,
+        pageNum: 1,
+        pageSize: 100,
+      });
+
+      const cancelRes = await client.cancelAllOrders(symbol);
+      const count = pendingRes?.data?.orderList?.length || 0;
+      if (cancelRes?.code === 0) {
+        res.json({ cancelled: count, message: `Cancelled all ${count} pending orders for ${symbol}` });
+      } else {
+        res.json({ cancelled: 0, total: count, message: `Cancel failed`, cancelResult: cancelRes });
+      }
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // === Trade Logs ===
   app.get("/api/trades", async (req, res) => {
     const strategyId = req.query.strategyId ? parseInt(req.query.strategyId as string) : undefined;

@@ -192,6 +192,46 @@ export function useGridCalculator() {
   });
 }
 
+export function useAddMargin() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ id, amount }: { id: number; amount: number }) => {
+      const res = await apiRequest("POST", `/api/strategies/${id}/add-margin`, { amount });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account"] });
+      toast({ title: "Margin Added", description: data.message });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Add Margin Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useRemoveMargin() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ id, count }: { id: number; count: number }) => {
+      const res = await apiRequest("POST", `/api/strategies/${id}/remove-margin`, { count });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account"] });
+      toast({ title: "Margin Removed", description: data.message });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Remove Margin Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useManualTrade() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

@@ -448,7 +448,7 @@ async function executeGridStrategy(strategy: Strategy) {
   const bandHigh = currentPrice * (1 + bandPct);
 
   const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow);
-  const sellLevels = levels.filter(l => l > currentPrice && l <= bandHigh);
+  const sellLevels = levels.filter(l => l > currentPrice && l <= (config.upperPrice || bandHigh));
 
   let openOrders: any[] = [];
   try {

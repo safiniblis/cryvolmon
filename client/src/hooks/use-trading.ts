@@ -3,6 +3,43 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Strategy, TradeLogEntry } from "@shared/schema";
 
+export function useBitunixPairs() {
+  return useQuery<{ pairs: string[]; source: string }>({
+    queryKey: ["/api/bitunix/pairs"],
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useVolatilityScores() {
+  return useQuery<{
+    symbol: string;
+    name: string;
+    score: number;
+    swings1to5: number;
+    largeSwingsUp: number;
+    largeSwingsDown: number;
+    riskGauge: number;
+    currentPrice: number;
+    bitunixSymbol: string;
+  }[]>({
+    queryKey: ["/api/volatility/scores"],
+    refetchInterval: 60000,
+  });
+}
+
+export function useSimulation() {
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { symbol?: string; feeRate?: number; amountPerGrid?: number }) => {
+      const res = await apiRequest("POST", "/api/grid/simulate", data);
+      return res.json();
+    },
+    onError: (e: Error) => {
+      toast({ title: "Simulation Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useConnectionStatus() {
   return useQuery<{ connected: boolean; message: string }>({
     queryKey: ["/api/connection"],

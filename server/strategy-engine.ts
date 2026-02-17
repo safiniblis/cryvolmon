@@ -201,7 +201,10 @@ async function executeGridStrategy(strategy: Strategy) {
   const levels = getAsymmetricGridLevels(config);
   const nearest = findNearestGeometricGrids(currentPrice, levels);
 
-  if (!nearest.below || !nearest.above) return;
+  if (!nearest.below || !nearest.above) {
+    console.log(`[Grid ${strategy.id}] Price ${currentPrice} outside grid range [${config.lowerPrice.toFixed(4)} - ${config.upperPrice.toFixed(4)}]. No grid levels found.`);
+    return;
+  }
 
   const nearestBelow = nearest.below;
   const nearestAbove = nearest.above;
@@ -213,22 +216,36 @@ async function executeGridStrategy(strategy: Strategy) {
   const isBelowStart = currentPrice < config.startPrice;
   const isAboveStart = currentPrice > config.startPrice;
 
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(4)}, Grid=[${nearestBelow.toFixed(4)}-${nearestAbove.toFixed(4)}], distBelow=${distToBelow.toFixed(4)}, distAbove=${distToAbove.toFixed(4)}, threshold=${threshold.toFixed(4)}`);
+
   let tradeLog: InsertTradeLog | null = null;
   let shouldExtend = false;
   let extendDirection: "below" | "above" | null = null;
 
   if (distToBelow < threshold && currentPrice > config.lowerPrice) {
+    const baseQty = (config.amountPerGrid / currentPrice).toFixed(6);
+    console.log(`[Grid ${strategy.id}] Near lower grid level - placing BUY order: ${config.amountPerGrid} USDT = ${baseQty} ${strategy.symbol}, leverage=${config.leverage}`);
     try {
+      try {
+        await client.setMarginMode(strategy.symbol, "ISOLATION");
+      } catch (e: any) {
+        console.log(`[Grid ${strategy.id}] Margin mode set note:`, e.message);
+      }
+      try {
+        await client.setLeverage(strategy.symbol, config.leverage || 8);
+      } catch (e: any) {
+        console.log(`[Grid ${strategy.id}] Leverage set note:`, e.message);
+      }
+
       const result = await client.placeOrder({
         symbol: strategy.symbol,
-        qty: String(config.amountPerGrid),
+        qty: baseQty,
         side: "BUY",
         tradeSide: "OPEN",
         orderType: "MARKET",
-        leverage: config.leverage || 1,
-        positionType: 2,
       });
 
+      console.log(`[Grid ${strategy.id}] BUY order result:`, JSON.stringify(result));
       tradeLog = {
         strategyId: strategy.id,
         symbol: strategy.symbol,
@@ -262,15 +279,15 @@ async function executeGridStrategy(strategy: Strategy) {
       };
     }
   } else if (distToAbove < threshold && currentPrice < config.upperPrice) {
+    const baseQty = (config.amountPerGrid / currentPrice).toFixed(6);
+    console.log(`[Grid ${strategy.id}] Near upper grid level - placing SELL order: ${config.amountPerGrid} USDT = ${baseQty} ${strategy.symbol}`);
     try {
       const result = await client.placeOrder({
         symbol: strategy.symbol,
-        qty: String(config.amountPerGrid),
+        qty: baseQty,
         side: "SELL",
         tradeSide: "CLOSE",
         orderType: "MARKET",
-        leverage: config.leverage || 1,
-        positionType: 2,
       });
 
       tradeLog = {
@@ -305,11 +322,15 @@ async function executeGridStrategy(strategy: Strategy) {
         errorMsg: e.message,
       };
     }
+  } else {
+    console.log(`[Grid ${strategy.id}] No trade needed. Price not near any grid boundary.`);
   }
 
   if (tradeLog) {
     await storage.createTradeLog(tradeLog);
   }
+
+  await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 
   if (shouldExtend && extendDirection) {
     const updatedConfig = { ...config };
@@ -843,6 +864,7 @@ let intervalId: NodeJS.Timeout | null = null;
 
 export async function runStrategyCycle() {
   const activeStrategies = await storage.getStrategiesByStatus("running");
+  console.log(`[Strategy Cycle] Found ${activeStrategies.length} running strategies`);
 
   for (const strategy of activeStrategies) {
     const executor = strategyExecutors[strategy.type];
@@ -852,6 +874,7 @@ export async function runStrategyCycle() {
     }
 
     try {
+      console.log(`[Strategy ${strategy.id}] Executing ${strategy.name} (${strategy.symbol})`);
       await executor(strategy);
     } catch (e: any) {
       console.error(`Error executing strategy ${strategy.id} (${strategy.name}):`, e.message);

@@ -64,15 +64,18 @@ async function syncBitunixAccount() {
 
   try {
     const accountRes = await client.getAccount();
-    if (accountRes?.data) {
+    console.log("[Bitunix] Account response:", JSON.stringify(accountRes));
+    if (accountRes?.code === 0 && accountRes?.data) {
       const balances = Array.isArray(accountRes.data) ? accountRes.data : [accountRes.data];
       const mapped = balances.map((b: any) => ({
-        currency: b.coin || b.currency || "USDT",
-        available: parseFloat(b.available || b.equity || "0"),
-        frozen: parseFloat(b.frozen || b.locked || "0"),
-        total: parseFloat(b.total || b.equity || "0"),
+        currency: b.marginCoin || b.coin || "USDT",
+        available: parseFloat(b.available || "0"),
+        frozen: parseFloat(b.frozen || "0"),
+        total: parseFloat(b.available || "0") + parseFloat(b.frozen || "0") + parseFloat(b.margin || "0"),
       }));
       await storage.updateAccountBalances(mapped);
+    } else if (accountRes?.code !== 0) {
+      console.error("[Bitunix] Account error:", accountRes?.msg);
     }
   } catch (e) {
     console.error("Failed to sync account:", e);
@@ -80,15 +83,16 @@ async function syncBitunixAccount() {
 
   try {
     const posRes = await client.getPositions();
-    if (posRes?.data) {
+    console.log("[Bitunix] Positions response:", JSON.stringify(posRes));
+    if (posRes?.code === 0 && posRes?.data) {
       const posList = Array.isArray(posRes.data) ? posRes.data : [];
       const mapped = posList.map((p: any) => ({
         symbol: p.symbol,
-        side: p.side || (parseFloat(p.qty || "0") > 0 ? "LONG" : "SHORT"),
-        quantity: Math.abs(parseFloat(p.qty || p.positionSize || "0")),
-        entryPrice: parseFloat(p.avgOpenPrice || p.entryPrice || "0"),
+        side: p.side || "LONG",
+        quantity: Math.abs(parseFloat(p.qty || "0")),
+        entryPrice: parseFloat(p.avgOpenPrice || "0"),
         markPrice: parseFloat(p.markPrice || "0"),
-        unrealizedPnl: parseFloat(p.unrealizedPnl || p.pnl || "0"),
+        unrealizedPnl: parseFloat(p.unrealizedPNL || p.unrealizedPnl || "0"),
         leverage: parseInt(p.leverage || "1"),
       }));
       await storage.updatePositions(mapped);
@@ -108,6 +112,14 @@ export async function registerRoutes(
     if (data.length > 0) {
       console.log(`Fetched data for ${data.length} coins`);
       await storage.updateCryptoStats(data);
+    }
+  }).catch(console.error);
+
+  // === Auto-start strategy engine if there are running strategies ===
+  storage.getStrategiesByStatus("running").then((running) => {
+    if (running.length > 0) {
+      console.log(`[Boot] Found ${running.length} running strategies, starting engine...`);
+      startStrategyEngine();
     }
   }).catch(console.error);
 
@@ -248,6 +260,14 @@ export async function registerRoutes(
     });
     try {
       const { symbol, side, quantity, orderType, price, leverage } = tradeSchema.parse(req.body);
+
+      try {
+        await client.setMarginMode(symbol, "ISOLATION");
+      } catch (e: any) { /* may already be set */ }
+      try {
+        await client.setLeverage(symbol, leverage || 1);
+      } catch (e: any) { /* may already be set */ }
+
       const result = await client.placeOrder({
         symbol,
         qty: String(quantity),
@@ -255,8 +275,6 @@ export async function registerRoutes(
         tradeSide: "OPEN",
         orderType: orderType || "MARKET",
         price: price ? String(price) : undefined,
-        leverage: leverage || 1,
-        positionType: 2,
       });
 
       const log = await storage.createTradeLog({

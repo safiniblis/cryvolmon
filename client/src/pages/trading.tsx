@@ -85,8 +85,21 @@ function AccountOverview() {
       ))}
       {data.balances.length === 0 && (
         <Card className="bg-card/40 border-border/50 col-span-3">
-          <CardContent className="p-6 text-center text-muted-foreground">
-            No balance data available yet
+          <CardContent className="p-6 text-center">
+            <AlertTriangle className="h-6 w-6 mx-auto text-yellow-400 mb-2" />
+            <p className="text-muted-foreground">No balance found in your Bitunix futures wallet.</p>
+            <p className="text-xs text-muted-foreground mt-1">Transfer USDT from your spot wallet to your futures wallet on Bitunix to start trading.</p>
+          </CardContent>
+        </Card>
+      )}
+      {data.balances.length > 0 && data.balances[0]?.available < 10 && (
+        <Card className="bg-yellow-500/5 border-yellow-500/20 col-span-3">
+          <CardContent className="p-4 flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-yellow-400 flex-shrink-0" />
+            <div>
+              <p className="text-sm text-yellow-400 font-medium">Low balance warning</p>
+              <p className="text-xs text-muted-foreground">You have {formatCurrency(data.balances[0]?.available)} USDT available. Grid strategies need at least 10 USDT (ideally 50+) to place orders reliably.</p>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -641,7 +654,12 @@ function StrategyCard({ s }: { s: Strategy }) {
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
             <span>Created: {s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}</span>
-            <span>Last run: {s.lastRunAt ? new Date(s.lastRunAt).toLocaleString() : "Never"}</span>
+            <span>Last run: {s.lastRunAt ? (() => {
+              const ago = Math.round((Date.now() - new Date(s.lastRunAt).getTime()) / 1000);
+              if (ago < 60) return `${ago}s ago`;
+              if (ago < 3600) return `${Math.round(ago / 60)}m ago`;
+              return new Date(s.lastRunAt).toLocaleString();
+            })() : "Never"}</span>
             <Badge variant={s.status === "running" ? "default" : s.status === "error" ? "destructive" : "outline"}>
               {s.status}
             </Badge>

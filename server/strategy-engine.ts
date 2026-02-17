@@ -36,19 +36,22 @@ async function getTickerPrice(symbol: string): Promise<TickerData | null> {
 
 export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0.0006) {
   const roundTripFee = 2 * feeRate;
-  const targetProfitFeeRatio = 3;
+  const targetProfitFeeRatio = 2.5;
   const gridRatio = 1 + targetProfitFeeRatio * roundTripFee;
 
   const lowerPrice = currentPrice * 0.90;
+  const upperPrice = currentPrice * 1.02;
   const liquidationPrice = currentPrice * 0.88;
 
   const leverage = Math.floor(currentPrice / (currentPrice - liquidationPrice));
   const safeLeverage = Math.min(Math.max(leverage, 2), 125);
 
+  const totalRange = upperPrice / lowerPrice;
+  const gridCount = Math.floor(Math.log(totalRange) / Math.log(gridRatio));
+  const safeGridCount = Math.max(gridCount, 1);
+
   const gridsBelow = Math.floor(Math.log(currentPrice / lowerPrice) / Math.log(gridRatio));
-  const gridsAbove = gridsBelow;
-  const gridCount = gridsBelow + gridsAbove;
-  const upperPrice = currentPrice * Math.pow(gridRatio, gridsAbove);
+  const gridsAbove = safeGridCount - gridsBelow;
 
   const profitPerGrid = gridRatio - 1;
   const feePerGrid = roundTripFee;
@@ -57,9 +60,9 @@ export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0
   return {
     upperPrice,
     lowerPrice,
-    liquidationPrice: liquidationPrice,
+    liquidationPrice,
     leverage: safeLeverage,
-    gridCount,
+    gridCount: safeGridCount,
     gridRatio,
     profitPerGrid,
     feePerGrid,

@@ -339,7 +339,7 @@ function CreateStrategyDialog() {
                 </h4>
               </div>
               <p className="text-xs text-muted-foreground -mt-2">
-                Lower bound = -10%, liquidation = -12%, max leverage, upper auto-calculated. Range extends as grids are hit.
+                Range: -10% to +2%, liquidation = -12%, max leverage (~8x), 2.5x fee profit per grid. Range extends dynamically.
               </p>
 
               <div className="grid grid-cols-2 gap-4">
@@ -397,7 +397,7 @@ function CreateStrategyDialog() {
                       <span className="font-mono font-bold text-yellow-300">{gridCalc.leverage}x</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Upper (auto-fit)</span>
+                      <span className="text-muted-foreground">Upper (+2%)</span>
                       <span className="font-mono">{formatCurrency(gridCalc.upperPrice)}</span>
                     </div>
                     <div className="flex justify-between">
@@ -442,7 +442,7 @@ function CreateStrategyDialog() {
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground border-t border-border/30 pt-2 mt-2">
-                    Geometric spacing with equal % profit per grid. Liquidation 2% below lower bound. Range auto-extends when grids are hit beyond start price.
+                    Geometric spacing: -10% to +2% range, 2.5x fee profit per grid, ~8x leverage. Range auto-extends when grids are hit beyond start price.
                   </p>
                 </motion.div>
               )}

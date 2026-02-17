@@ -20,12 +20,10 @@ import {
   useStopStrategy,
   useDeleteStrategy,
   useTradeLogs,
-  useManualTrade,
   useGridCalculator,
   useBitunixPairs,
   useVolatilityScores,
   useSimulation,
-  useQuickStart,
   useAddMargin,
   useRemoveMargin,
   useMarginInfo,
@@ -35,7 +33,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Bot, Play, Square, Trash2, Plus, Wifi, WifiOff,
   TrendingUp, TrendingDown, DollarSign, Activity,
-  AlertTriangle, ArrowRight, Calculator, Zap,
+  AlertTriangle, ArrowRight, Calculator,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, ArrowDownToLine,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
@@ -647,7 +645,16 @@ function StrategyCard({ s }: { s: Strategy }) {
   const startStrategy = useStartStrategy();
   const stopStrategy = useStopStrategy();
   const deleteStrategy = useDeleteStrategy();
+  const { data: accountData } = useAccount();
   const cfg = (s.config || {}) as Record<string, any>;
+
+  const position = accountData?.positions?.find((p: any) => p.symbol === s.symbol && p.side?.toUpperCase() === s.side?.toUpperCase());
+  const unrealizedPnl = position?.unrealizedPnl || 0;
+  const posLeverage = position?.leverage || cfg.leverage || 1;
+  const margin = position?.entryPrice && position?.quantity
+    ? (position.entryPrice * position.quantity) / posLeverage
+    : 0;
+  const pnlPercent = margin > 0 ? (unrealizedPnl / margin) * 100 : 0;
 
   const gridParams = s.type === "grid" ? [
     { label: "Start Price", value: `$${Number(cfg.startPrice || 0).toFixed(2)}` },
@@ -710,7 +717,17 @@ function StrategyCard({ s }: { s: Strategy }) {
                   {formatCurrency(s.totalPnl || 0)}
                 </span>
               </div>
-              <div className="text-xs text-muted-foreground">{s.totalTrades || 0} trades</div>
+              {s.status === "running" && position && (
+                <div className="text-xs font-mono" data-testid={`text-pnl-pct-${s.id}`}>
+                  <span className={`font-bold ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {unrealizedPnl >= 0 ? "+" : ""}{pnlPercent.toFixed(2)}%
+                  </span>
+                  <span className="text-muted-foreground ml-1">uPnL</span>
+                </div>
+              )}
+              {!(s.status === "running" && position) && (
+                <div className="text-xs text-muted-foreground">{s.totalTrades || 0} trades</div>
+              )}
             </div>
             <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
               {s.status === "running" ? (
@@ -863,93 +880,6 @@ function TradeHistory() {
         </TableBody>
       </Table>
     </div>
-  );
-}
-
-function ManualTradePanel() {
-  const manualTrade = useManualTrade();
-  const { data: pairsData } = useBitunixPairs();
-  const [symbol, setSymbol] = useState("BTCUSDT");
-  const [side, setSide] = useState("BUY");
-  const [quantity, setQuantity] = useState("10");
-  const [leverage, setLeverage] = useState("1");
-  const manualPairs = pairsData?.pairs || ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
-
-  const handleTrade = () => {
-    manualTrade.mutate({
-      symbol,
-      side,
-      quantity: parseFloat(quantity),
-      orderType: "MARKET",
-      leverage: parseInt(leverage),
-    });
-  };
-
-  return (
-    <Card className="bg-card/40 border-border/50">
-      <CardHeader>
-        <CardTitle className="text-lg">Quick Trade</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label className="text-xs">Symbol</Label>
-            <Select value={symbol} onValueChange={setSymbol}>
-              <SelectTrigger data-testid="select-manual-symbol">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {manualPairs.map(p => (
-                  <SelectItem key={p} value={p}>{p.replace("USDT", "/USDT")}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Leverage</Label>
-            <Input
-              data-testid="input-manual-leverage"
-              type="number"
-              value={leverage}
-              onChange={(e) => setLeverage(e.target.value)}
-              min="1"
-              max="125"
-            />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Amount (USDT)</Label>
-          <Input
-            data-testid="input-manual-quantity"
-            type="number"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Button
-            data-testid="button-buy"
-            className="bg-emerald-600 hover:bg-emerald-700 text-white"
-            onClick={() => { setSide("BUY"); handleTrade(); }}
-            disabled={manualTrade.isPending}
-          >
-            <TrendingUp className="h-4 w-4 mr-1" /> Long
-          </Button>
-          <Button
-            data-testid="button-sell"
-            variant="destructive"
-            onClick={() => { setSide("SELL"); handleTrade(); }}
-            disabled={manualTrade.isPending}
-          >
-            <TrendingDown className="h-4 w-4 mr-1" /> Short
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground text-center">
-          <AlertTriangle className="h-3 w-3 inline mr-1" />
-          Trading involves risk. Only trade what you can afford to lose.
-        </p>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -1144,103 +1074,6 @@ function SimulationPanel() {
   );
 }
 
-function QuickStartPanel() {
-  const [amount, setAmount] = useState("100");
-  const quickStart = useQuickStart();
-  const { data: scores } = useVolatilityScores();
-  const topPair = scores?.[0];
-
-  const result = quickStart.data;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-    >
-      <Card className="bg-gradient-to-r from-purple-900/30 via-card/40 to-blue-900/30 border-purple-500/30">
-        <CardContent className="p-5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <h2 className="text-lg font-bold flex items-center gap-2">
-                <Zap className="h-5 w-5 text-yellow-400" />
-                Quick Start Grid Bot
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Enter your USDT amount and we'll auto-select the best pair based on volatility scores
-                {topPair && (
-                  <span className="text-purple-300 ml-1">
-                    — currently favoring <span className="font-semibold uppercase">{topPair.symbol}</span> ({topPair.name}, score: {topPair.score})
-                  </span>
-                )}
-              </p>
-            </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="relative">
-                <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  data-testid="input-quickstart-amount"
-                  type="number"
-                  min="5"
-                  step="10"
-                  value={amount}
-                  onChange={e => setAmount(e.target.value)}
-                  className="pl-8 w-32 font-mono"
-                  placeholder="100"
-                />
-              </div>
-              <span className="text-sm text-muted-foreground font-medium">USDT</span>
-              <Button
-                data-testid="button-quickstart"
-                onClick={() => quickStart.mutate({ amount: parseFloat(amount) })}
-                disabled={quickStart.isPending || !amount || parseFloat(amount) <= 0}
-                className="bg-purple-600 border-purple-500"
-              >
-                {quickStart.isPending ? (
-                  <>
-                    <Activity className="h-4 w-4 mr-1 animate-spin" /> Starting...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-1" /> Start Bot
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-
-          {result && (
-            <div className="mt-4 p-3 rounded-lg border border-emerald-500/30 bg-emerald-900/10">
-              <div className="flex items-center gap-2 mb-2">
-                <Badge className="bg-emerald-600/50">Running</Badge>
-                <span className="text-sm font-semibold">{result.selectedPair}</span>
-                <span className="text-xs text-muted-foreground">({result.pairName})</span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                <div>
-                  <span className="text-muted-foreground">Volatility Score</span>
-                  <p className="font-mono font-bold text-purple-300" data-testid="text-qs-score">{result.volatilityScore}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Risk Gauge</span>
-                  <p className="font-mono font-bold" data-testid="text-qs-risk">{result.riskGauge.toFixed(1)}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Grids / Leverage</span>
-                  <p className="font-mono font-bold" data-testid="text-qs-grids">{result.gridInfo.gridCount} / {result.gridInfo.leverage}x</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Per Grid</span>
-                  <p className="font-mono font-bold" data-testid="text-qs-pergrid">${result.gridInfo.amountPerGrid}</p>
-                </div>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
-}
-
 export default function TradingPage() {
   return (
     <div className="min-h-screen w-full bg-[#0a0f1e] text-foreground p-4 md:p-8 relative overflow-hidden">
@@ -1269,8 +1102,6 @@ export default function TradingPage() {
             </Link>
           </div>
         </header>
-
-        <QuickStartPanel />
 
         <AccountOverview />
 
@@ -1319,7 +1150,6 @@ export default function TradingPage() {
           </div>
 
           <div className="space-y-6">
-            <ManualTradePanel />
             <VolatilityScoresPanel />
           </div>
         </div>

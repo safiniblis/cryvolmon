@@ -2,9 +2,10 @@ import { useCryptoStats, useRefreshStats } from "@/hooks/use-crypto-stats";
 import { VolatilityTable } from "@/components/dashboard/volatility-table";
 import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, TrendingUp, AlertTriangle, Zap, Activity } from "lucide-react";
+import { RefreshCw, TrendingUp, AlertTriangle, Zap, Activity, Bot } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { Link } from "wouter";
 
 export default function Dashboard() {
   const { data: stats, isLoading, isError } = useCryptoStats();
@@ -57,7 +58,16 @@ export default function Dashboard() {
             </motion.p>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
+            <Link href="/trading" data-testid="link-trading">
+              <Button
+                variant="outline"
+                className="border-purple-500/30 text-purple-300 hover:text-purple-200"
+              >
+                <Bot className="h-4 w-4 mr-2" /> Trading Agent
+              </Button>
+            </Link>
+
             <div className="hidden md:flex flex-col items-end text-right">
               <span className="text-xs text-muted-foreground font-mono">
                 LAST UPDATED

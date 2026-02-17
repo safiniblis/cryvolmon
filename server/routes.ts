@@ -210,6 +210,27 @@ export async function registerRoutes(
 
   app.delete("/api/strategies/:id", async (req, res) => {
     const id = parseInt(req.params.id);
+    const strategy = await storage.getStrategy(id);
+
+    if (strategy) {
+      const client = getBitunixClient();
+      if (client) {
+        try {
+          const { cancelAllGridOrders } = await import("./strategy-engine");
+          await cancelAllGridOrders(id, strategy.symbol);
+        } catch (e: any) {
+          console.error(`[Delete ${id}] Cancel orders error:`, e.message);
+        }
+
+        try {
+          const closeRes = await client.flashClose(strategy.symbol);
+          console.log(`[Delete ${id}] Flash close positions for ${strategy.symbol}: code=${closeRes?.code}, msg=${closeRes?.msg}`);
+        } catch (e: any) {
+          console.error(`[Delete ${id}] Close position error:`, e.message);
+        }
+      }
+    }
+
     await storage.deleteStrategy(id);
     res.status(204).send();
   });

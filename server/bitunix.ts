@@ -103,15 +103,28 @@ export class BitunixClient {
   }
 
   // === Account (Private) ===
-  async getAccount() {
-    return this.get("/api/v1/futures/account");
+  async getAccount(marginCoin: string = "USDT") {
+    return this.get("/api/v1/futures/account", { marginCoin });
   }
 
   // === Positions (Private) ===
   async getPositions(symbol?: string) {
-    const body: Record<string, any> = {};
-    if (symbol) body.symbol = symbol;
-    return this.post("/api/v1/futures/position/get_pending_positions", body);
+    const params: Record<string, any> = {};
+    if (symbol) params.symbol = symbol;
+    return this.get("/api/v1/futures/position/get_pending_positions", params);
+  }
+
+  // === Leverage & Margin Mode (Private) ===
+  async setLeverage(symbol: string, leverage: number, marginCoin: string = "USDT") {
+    return this.post("/api/v1/futures/account/change_leverage", { symbol, leverage, marginCoin });
+  }
+
+  async setMarginMode(symbol: string, marginMode: "ISOLATION" | "CROSS", marginCoin: string = "USDT") {
+    return this.post("/api/v1/futures/account/change_margin_mode", { marginMode, symbol, marginCoin });
+  }
+
+  async getLeverageMarginMode(symbol: string, marginCoin: string = "USDT") {
+    return this.get("/api/v1/futures/account/get_leverage_margin_mode", { symbol, marginCoin });
   }
 
   // === Orders (Private) ===
@@ -122,10 +135,10 @@ export class BitunixClient {
     tradeSide: "OPEN" | "CLOSE";
     orderType: "MARKET" | "LIMIT";
     price?: string;
-    positionType?: number; // 1=cross, 2=isolated
-    leverage?: number;
     effect?: string;
     clientId?: string;
+    positionId?: string;
+    reduceOnly?: boolean;
   }) {
     const body: Record<string, any> = {
       symbol: params.symbol,
@@ -135,34 +148,35 @@ export class BitunixClient {
       orderType: params.orderType,
     };
     if (params.price) body.price = params.price;
-    if (params.positionType) body.positionType = params.positionType;
-    if (params.leverage) body.leverage = params.leverage;
+    if (params.effect) body.effect = params.effect;
     if (params.clientId) body.clientId = params.clientId;
+    if (params.positionId) body.positionId = params.positionId;
+    if (params.reduceOnly !== undefined) body.reduceOnly = params.reduceOnly;
 
-    return this.post("/api/v1/futures/order/create", body);
+    return this.post("/api/v1/futures/trade/place_order", body);
   }
 
   async cancelOrder(orderId: string, symbol: string) {
-    return this.post("/api/v1/futures/order/cancel", { orderId, symbol });
+    return this.post("/api/v1/futures/trade/cancel_orders", { orderIds: [orderId], symbol });
   }
 
   async getOpenOrders(symbol?: string) {
-    const body: Record<string, any> = {};
-    if (symbol) body.symbol = symbol;
-    return this.post("/api/v1/futures/order/get_pending_orders", body);
+    const params: Record<string, any> = {};
+    if (symbol) params.symbol = symbol;
+    return this.get("/api/v1/futures/trade/get_pending_orders", params);
   }
 
   async getOrderHistory(symbol?: string) {
-    const body: Record<string, any> = {};
-    if (symbol) body.symbol = symbol;
-    return this.post("/api/v1/futures/order/get_history_orders", body);
+    const params: Record<string, any> = {};
+    if (symbol) params.symbol = symbol;
+    return this.get("/api/v1/futures/trade/get_history_orders", params);
   }
 
   // === Flash Close (close entire position) ===
   async flashClose(symbol: string, positionId?: string) {
     const body: Record<string, any> = { symbol };
     if (positionId) body.positionId = positionId;
-    return this.post("/api/v1/futures/order/flash_close", body);
+    return this.post("/api/v1/futures/trade/flash_close", body);
   }
 }
 

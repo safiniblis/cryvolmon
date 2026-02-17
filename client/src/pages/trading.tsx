@@ -183,11 +183,17 @@ function CreateStrategyDialog() {
       config = {
         upperPrice: gridCalc.upperPrice,
         lowerPrice: gridCalc.lowerPrice,
+        liquidationPrice: gridCalc.liquidationPrice,
         gridCount: gridCalc.gridCount,
         amountPerGrid: parseFloat(amountPerGrid),
         leverage: gridCalc.leverage,
         geometric: true,
         gridRatio: gridCalc.gridRatio,
+        startPrice: gridCalc.startPrice,
+        gridsAbove: gridCalc.gridsAbove,
+        gridsBelow: gridCalc.gridsBelow,
+        extensionsBelow: 0,
+        extensionsAbove: 0,
       };
     } else if (type === "momentum") {
       config = {
@@ -333,7 +339,7 @@ function CreateStrategyDialog() {
                 </h4>
               </div>
               <p className="text-xs text-muted-foreground -mt-2">
-                Auto-calculates leverage (liquidation = lower bound), upper = price +10%, grids sized for 3x fee profit
+                Lower bound = -10%, liquidation = -12%, max leverage, upper auto-calculated. Range extends as grids are hit.
               </p>
 
               <div className="grid grid-cols-2 gap-4">
@@ -391,12 +397,16 @@ function CreateStrategyDialog() {
                       <span className="font-mono font-bold text-yellow-300">{gridCalc.leverage}x</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Upper (Price+10%)</span>
+                      <span className="text-muted-foreground">Upper (auto-fit)</span>
                       <span className="font-mono">{formatCurrency(gridCalc.upperPrice)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Lower (Liq. Price)</span>
-                      <span className="font-mono text-red-400">{formatCurrency(gridCalc.lowerPrice)}</span>
+                      <span className="text-muted-foreground">Lower (-10%)</span>
+                      <span className="font-mono text-orange-400">{formatCurrency(gridCalc.lowerPrice)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Liquidation (-12%)</span>
+                      <span className="font-mono text-red-400">{formatCurrency(gridCalc.liquidationPrice)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Grid Count</span>
@@ -432,7 +442,7 @@ function CreateStrategyDialog() {
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground border-t border-border/30 pt-2 mt-2">
-                    Geometric spacing ensures equal % profit at every grid level. Leverage set so liquidation = lower boundary.
+                    Geometric spacing with equal % profit per grid. Liquidation 2% below lower bound. Range auto-extends when grids are hit beyond start price.
                   </p>
                 </motion.div>
               )}
@@ -522,10 +532,18 @@ function StrategiesList() {
               <div className={`w-2 h-2 rounded-full ${s.status === "running" ? "bg-emerald-400 animate-pulse" : s.status === "error" ? "bg-red-400" : "bg-muted-foreground"}`} />
               <div>
                 <h3 className="font-bold text-foreground">{s.name}</h3>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <Badge variant="outline" className="text-xs">{s.type.toUpperCase()}</Badge>
                   <span className="text-xs text-muted-foreground">{s.symbol}</span>
                   <span className="text-xs text-muted-foreground">{s.side}</span>
+                  {s.type === "grid" && (s.config as any)?.leverage && (
+                    <span className="text-xs text-yellow-300 font-mono">{(s.config as any).leverage}x</span>
+                  )}
+                  {s.type === "grid" && ((s.config as any)?.extensionsBelow > 0 || (s.config as any)?.extensionsAbove > 0) && (
+                    <Badge variant="secondary" className="text-[10px] bg-blue-500/20 text-blue-300 border-blue-500/30">
+                      Ext: {(s.config as any).extensionsBelow || 0}↓ {(s.config as any).extensionsAbove || 0}↑
+                    </Badge>
+                  )}
                 </div>
               </div>
             </div>

@@ -37,5 +37,15 @@ A full-stack cryptocurrency trading platform with two main features:
 - `BITUNIX_API_KEY` - Bitunix API key for futures trading
 - `BITUNIX_SECRET_KEY` - Bitunix API secret key
 
+## Grid Strategy Design
+- **Lower bound**: -10% from current price (fixed)
+- **Liquidation**: -12% from current price (2% buffer below lower)
+- **Leverage**: Maximized (~8x), derived from liquidation distance
+- **Upper bound**: Auto-calculated (variable) to fit 3x fee profit ratio
+- **Grid ratio**: 1 + 3 * roundTripFee (geometric spacing)
+- **Dynamic extension**: Lower bound extends when bot hits grids below start price (adjusts liquidation/leverage); upper extends when hitting grids above start price
+- **GridConfig interface**: Tracks startPrice, extensionsBelow, extensionsAbove for live range management
+
 ## Recent Changes
+- 2026-02-17: Optimized grid strategy: lower=-10%, liquidation=-12%, max leverage, auto-fit upper, dynamic range extension
 - 2026-02-17: Built full trading agent with Bitunix integration, strategy engine, and trading dashboard

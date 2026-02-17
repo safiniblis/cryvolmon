@@ -37,48 +37,47 @@ async function getTickerPrice(symbol: string): Promise<TickerData | null> {
 export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0.0006) {
   const roundTripFee = 2 * feeRate;
   const targetProfitFeeRatio = 3;
-  const minGridRatio = 1 + targetProfitFeeRatio * roundTripFee;
+  const gridRatio = 1 + targetProfitFeeRatio * roundTripFee;
 
-  const upperPrice = currentPrice * 1.10;
-  const lowerPrice = currentPrice / 1.10;
+  const lowerPrice = currentPrice * 0.90;
+  const liquidationPrice = currentPrice * 0.88;
 
-  const leverage = Math.floor(currentPrice / (currentPrice - lowerPrice));
-  const safeLeverage = Math.min(Math.max(leverage, 1), 125);
-  const actualLowerPrice = currentPrice * (1 - 1 / safeLeverage);
+  const leverage = Math.floor(currentPrice / (currentPrice - liquidationPrice));
+  const safeLeverage = Math.min(Math.max(leverage, 2), 125);
 
-  const priceRange = upperPrice / actualLowerPrice;
-  const gridCount = Math.floor(Math.log(priceRange) / Math.log(minGridRatio));
+  const gridsBelow = Math.floor(Math.log(currentPrice / lowerPrice) / Math.log(gridRatio));
+  const gridsAbove = gridsBelow;
+  const gridCount = gridsBelow + gridsAbove;
+  const upperPrice = currentPrice * Math.pow(gridRatio, gridsAbove);
 
-  const safeGridCount = Math.max(gridCount, 1);
-  const actualGridRatio = Math.pow(priceRange, 1 / safeGridCount);
-  const profitPerGrid = actualGridRatio - 1;
+  const profitPerGrid = gridRatio - 1;
   const feePerGrid = roundTripFee;
   const netProfitPerGrid = profitPerGrid - feePerGrid;
 
-  const gridsAbove = Math.floor(Math.log(upperPrice / currentPrice) / Math.log(actualGridRatio));
-  const gridsBelow = safeGridCount - gridsAbove;
-
   return {
     upperPrice,
-    lowerPrice: actualLowerPrice,
+    lowerPrice,
+    liquidationPrice: liquidationPrice,
     leverage: safeLeverage,
-    gridCount: safeGridCount,
-    gridRatio: actualGridRatio,
+    gridCount,
+    gridRatio,
     profitPerGrid,
     feePerGrid,
     netProfitPerGrid,
     profitToFeeRatio: profitPerGrid / feePerGrid,
     gridsAbove,
     gridsBelow,
+    startPrice: currentPrice,
     geometric: true,
   };
 }
 
-function getGeometricGridLevels(lower: number, upper: number, count: number): number[] {
+function getGeometricGridLevels(lower: number, upper: number, gridRatio: number): number[] {
   const levels: number[] = [];
-  const ratio = Math.pow(upper / lower, 1 / count);
-  for (let i = 0; i <= count; i++) {
-    levels.push(lower * Math.pow(ratio, i));
+  let price = lower;
+  while (price <= upper * 1.0001) {
+    levels.push(price);
+    price *= gridRatio;
   }
   return levels;
 }
@@ -99,48 +98,50 @@ function findNearestGeometricGrids(price: number, levels: number[]): { below: nu
   return { below, above, index };
 }
 
+export interface GridConfig {
+  upperPrice: number;
+  lowerPrice: number;
+  liquidationPrice: number;
+  gridCount: number;
+  amountPerGrid: number;
+  leverage: number;
+  geometric: boolean;
+  gridRatio: number;
+  startPrice: number;
+  gridsAbove: number;
+  gridsBelow: number;
+  extensionsBelow: number;
+  extensionsAbove: number;
+}
+
 async function executeGridStrategy(strategy: Strategy) {
   const client = getBitunixClient();
   if (!client) throw new Error("Bitunix client not configured");
 
-  const config = strategy.config as {
-    upperPrice: number;
-    lowerPrice: number;
-    gridCount: number;
-    amountPerGrid: number;
-    leverage: number;
-    geometric?: boolean;
-    gridRatio?: number;
-  };
+  const config = strategy.config as GridConfig;
 
   const ticker = await getTickerPrice(strategy.symbol);
   if (!ticker) throw new Error(`Cannot get price for ${strategy.symbol}`);
 
   const currentPrice = ticker.lastPrice;
-  const isGeometric = config.geometric !== false;
+  const levels = getGeometricGridLevels(config.lowerPrice, config.upperPrice, config.gridRatio);
+  const nearest = findNearestGeometricGrids(currentPrice, levels);
 
-  let nearestBelow: number;
-  let nearestAbove: number;
-  let threshold: number;
+  if (!nearest.below || !nearest.above) return;
 
-  if (isGeometric) {
-    const levels = getGeometricGridLevels(config.lowerPrice, config.upperPrice, config.gridCount);
-    const nearest = findNearestGeometricGrids(currentPrice, levels);
-    if (!nearest.below || !nearest.above) return;
-    nearestBelow = nearest.below;
-    nearestAbove = nearest.above;
-    threshold = (nearestAbove - nearestBelow) * 0.1;
-  } else {
-    const gridSize = (config.upperPrice - config.lowerPrice) / config.gridCount;
-    nearestBelow = config.lowerPrice + Math.floor((currentPrice - config.lowerPrice) / gridSize) * gridSize;
-    nearestAbove = nearestBelow + gridSize;
-    threshold = gridSize * 0.1;
-  }
+  const nearestBelow = nearest.below;
+  const nearestAbove = nearest.above;
+  const gridSpan = nearestAbove - nearestBelow;
+  const threshold = gridSpan * 0.1;
 
   const distToBelow = currentPrice - nearestBelow;
   const distToAbove = nearestAbove - currentPrice;
+  const isBelowStart = currentPrice < config.startPrice;
+  const isAboveStart = currentPrice > config.startPrice;
 
   let tradeLog: InsertTradeLog | null = null;
+  let shouldExtend = false;
+  let extendDirection: "below" | "above" | null = null;
 
   if (distToBelow < threshold && currentPrice > config.lowerPrice) {
     try {
@@ -167,6 +168,11 @@ async function executeGridStrategy(strategy: Strategy) {
         errorMsg: result?.code !== "0" ? (result?.msg || "Unknown error") : null,
       };
       lastGridTrades.set(strategy.id, { price: currentPrice, time: Date.now() });
+
+      if (isBelowStart && result?.code === "0") {
+        shouldExtend = true;
+        extendDirection = "below";
+      }
     } catch (e: any) {
       tradeLog = {
         strategyId: strategy.id,
@@ -206,6 +212,11 @@ async function executeGridStrategy(strategy: Strategy) {
         errorMsg: result?.code !== "0" ? (result?.msg || "Unknown error") : null,
       };
       lastGridTrades.set(strategy.id, { price: currentPrice, time: Date.now() });
+
+      if (isAboveStart && result?.code === "0") {
+        shouldExtend = true;
+        extendDirection = "above";
+      }
     } catch (e: any) {
       tradeLog = {
         strategyId: strategy.id,
@@ -224,6 +235,33 @@ async function executeGridStrategy(strategy: Strategy) {
 
   if (tradeLog) {
     await storage.createTradeLog(tradeLog);
+  }
+
+  if (shouldExtend && extendDirection) {
+    const updatedConfig = { ...config };
+
+    if (extendDirection === "below") {
+      const newLower = config.lowerPrice / config.gridRatio;
+      const liqRatio = config.startPrice > 0 ? config.liquidationPrice / config.lowerPrice : 0.98;
+      const newLiquidation = newLower * liqRatio;
+      const newLeverage = Math.floor(config.startPrice / (config.startPrice - newLiquidation));
+      updatedConfig.lowerPrice = newLower;
+      updatedConfig.liquidationPrice = newLiquidation;
+      updatedConfig.leverage = Math.min(Math.max(newLeverage, 2), 125);
+      updatedConfig.gridCount = updatedConfig.gridCount + 1;
+      updatedConfig.gridsBelow = (updatedConfig.gridsBelow || 0) + 1;
+      updatedConfig.extensionsBelow = (updatedConfig.extensionsBelow || 0) + 1;
+      console.log(`[Grid ${strategy.id}] Extended lower: ${config.lowerPrice.toFixed(2)} → ${newLower.toFixed(2)}, liq: ${newLiquidation.toFixed(2)}, leverage: ${updatedConfig.leverage}x`);
+    } else {
+      const newUpper = config.upperPrice * config.gridRatio;
+      updatedConfig.upperPrice = newUpper;
+      updatedConfig.gridCount = updatedConfig.gridCount + 1;
+      updatedConfig.gridsAbove = (updatedConfig.gridsAbove || 0) + 1;
+      updatedConfig.extensionsAbove = (updatedConfig.extensionsAbove || 0) + 1;
+      console.log(`[Grid ${strategy.id}] Extended upper: ${config.upperPrice.toFixed(2)} → ${newUpper.toFixed(2)}`);
+    }
+
+    await storage.updateStrategy(strategy.id, { config: updatedConfig });
   }
 }
 

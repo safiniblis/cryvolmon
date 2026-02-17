@@ -466,7 +466,7 @@ export async function registerRoutes(
       const amountPerGrid = Math.max(5, Math.floor(usdtAmount / grid.gridCount));
 
       if (usdtAmount < 10) {
-        return res.status(400).json({ message: "Minimum amount is 10 USDT. Most exchanges require at least $5 per order." });
+        return res.status(400).json({ message: "Minimum amount is 10 USDT." });
       }
 
       const strategy = await storage.createStrategy({

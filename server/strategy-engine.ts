@@ -991,8 +991,8 @@ export async function runStrategyCycle() {
 
 export function startStrategyEngine() {
   if (intervalId) return;
-  console.log("Strategy engine started (30s cycle)");
-  intervalId = setInterval(runStrategyCycle, 30_000);
+  console.log("Strategy engine started (5s cycle)");
+  intervalId = setInterval(runStrategyCycle, 5_000);
   runStrategyCycle();
 }
 

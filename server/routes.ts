@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, getActiveGridOrders } from "./strategy-engine";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -237,9 +237,14 @@ export async function registerRoutes(
 
   app.post("/api/strategies/:id/stop", async (req, res) => {
     const id = parseInt(req.params.id);
-    const updated = await storage.updateStrategy(id, { status: "stopped" });
-    if (!updated) return res.status(404).json({ message: "Strategy not found" });
+    const strategy = await storage.getStrategy(id);
+    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
 
+    if (strategy.type === "grid") {
+      await cancelAllGridOrders(id, strategy.symbol);
+    }
+
+    const updated = await storage.updateStrategy(id, { status: "stopped" });
     const running = await storage.getStrategiesByStatus("running");
     if (running.length === 0) stopStrategyEngine();
     res.json(updated);
@@ -541,6 +546,12 @@ export async function registerRoutes(
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
+  });
+
+  app.get("/api/strategies/:id/orders", async (req, res) => {
+    const id = parseInt(req.params.id);
+    const orders = getActiveGridOrders(id);
+    res.json(orders);
   });
 
   return httpServer;

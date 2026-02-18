@@ -580,9 +580,11 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const tpRefPrice = positionEntryPrice > 0 ? positionEntryPrice : config.startPrice;
   const minTpPrice = tpRefPrice * (1 + minProfitableGap);
-  const sellLevels = levels.filter(l => l >= minTpPrice && l <= (config.upperPrice || tpRefPrice * 1.02));
+  const maxTpLevels = 6;
+  const allSellLevels = levels.filter(l => l >= minTpPrice && l <= (config.upperPrice || tpRefPrice * 1.02));
+  const sellLevels = allSellLevels.slice(0, maxTpLevels);
 
-  console.log(`[Grid ${strategy.id}] Price: ${currentPrice.toFixed(4)} | Entry: ${tpRefPrice.toFixed(4)} | minTp: ${minTpPrice.toFixed(4)} | TP levels: ${sellLevels.length} | Buy levels: ${buyLevels.length}`);
+  console.log(`[Grid ${strategy.id}] Price: ${currentPrice.toFixed(4)} | Entry: ${tpRefPrice.toFixed(4)} | minTp: ${minTpPrice.toFixed(4)} | TP levels: ${sellLevels.length}/${allSellLevels.length} | Buy levels: ${buyLevels.length}`);
 
   if (positionId && positionQty > 0 && sellLevels.length > 0) {
     let existingTpsl: any[] = [];
@@ -602,55 +604,24 @@ async function executeGridStrategy(strategy: Strategy) {
     }
 
     const totalExistingTpQty = existingTpsl.reduce((s: number, t: any) => s + parseFloat(t.tpQty || t.qty || "0"), 0);
-    console.log(`[Grid ${strategy.id}] Existing TPs: ${existingTpsl.length}, coveredQty: ${totalExistingTpQty.toFixed(precision.basePrecision)}, posQty: ${positionQty}`);
 
     if (existingTpsl.length > 0) {
-      const uncoveredQty = positionQty - totalExistingTpQty;
-      if (uncoveredQty > precision.minTradeVolume * 2) {
-        const existingTpPrices = new Set(existingTpsl.map((t: any) =>
-          roundPrice(parseFloat(t.tpPrice || t.price || "0"), precision.quotePrecision)
-        ));
-        const newLevels = sellLevels.filter(l => !existingTpPrices.has(roundPrice(l, precision.quotePrecision)));
-
-        if (newLevels.length > 0) {
-          const qtyPerNew = Math.floor((uncoveredQty / newLevels.length) * Math.pow(10, precision.basePrecision)) / Math.pow(10, precision.basePrecision);
-          const newQtyStr = Math.max(qtyPerNew, precision.minTradeVolume).toFixed(precision.basePrecision);
-          console.log(`[Grid ${strategy.id}] Adding ${newLevels.length} new TP levels for uncovered qty ${uncoveredQty.toFixed(precision.basePrecision)}, ${newQtyStr} each`);
-
-          for (const level of newLevels) {
-            const priceStr = roundPrice(level, precision.quotePrecision);
-            try {
-              const result = await client.placeTpslOrder({
-                symbol: strategy.symbol,
-                positionId,
-                tpPrice: priceStr,
-                tpStopType: "LAST_PRICE",
-                tpOrderType: "MARKET",
-                tpQty: newQtyStr,
-              });
-              if (result?.code === 0) placedTps++;
-              else console.error(`[Grid ${strategy.id}] TP failed @ ${priceStr}: ${result?.msg}`);
-            } catch (e: any) {
-              console.error(`[Grid ${strategy.id}] TP error @ ${priceStr}:`, e.message);
-            }
-          }
-        }
-      }
+      console.log(`[Grid ${strategy.id}] TPs OK: ${existingTpsl.length} orders covering ${totalExistingTpQty.toFixed(precision.basePrecision)} of ${positionQty} qty — no changes`);
     } else {
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);
-      const targetQtyPerLevel = positionQty / sellLevels.length;
-      const flooredQty = Math.floor(targetQtyPerLevel * basePrecisionMultiplier) / basePrecisionMultiplier;
-      const tpQtyPerLevel = Math.max(flooredQty, precision.minTradeVolume);
+      const tpQtyPerLevel = Math.max(
+        Math.floor((positionQty / sellLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
+        precision.minTradeVolume
+      );
       const targetQtyStr = tpQtyPerLevel.toFixed(precision.basePrecision);
-      const totalPlannedQty = tpQtyPerLevel * sellLevels.length;
 
       let levelsToPlace = sellLevels;
-      if (totalPlannedQty > positionQty * 1.02) {
+      if (tpQtyPerLevel * sellLevels.length > positionQty * 1.02) {
         const maxLevels = Math.floor(positionQty / tpQtyPerLevel);
-        levelsToPlace = sellLevels.slice(0, maxLevels);
+        levelsToPlace = sellLevels.slice(0, Math.max(maxLevels, 1));
       }
 
-      console.log(`[Grid ${strategy.id}] Placing initial ${levelsToPlace.length} TP orders, ${targetQtyStr} each`);
+      console.log(`[Grid ${strategy.id}] No TPs found — placing ${levelsToPlace.length} TP orders, ${targetQtyStr} each (posQty: ${positionQty})`);
 
       for (const level of levelsToPlace) {
         const priceStr = roundPrice(level, precision.quotePrecision);

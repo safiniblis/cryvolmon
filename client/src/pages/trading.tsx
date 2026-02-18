@@ -157,18 +157,18 @@ function PositionsTable() {
 
 function GapModifiers({ strategy }: { strategy: Strategy }) {
   const cfg = (strategy.config || {}) as Record<string, any>;
-  const [gapBelow, setGapBelow] = useState(String(cfg.gapGrowthBelow || 1.07));
-  const [gapAbove, setGapAbove] = useState(String(cfg.gapShrinkAbove || 0.96));
+  const [gapBelow, setGapBelow] = useState(String(cfg.gapGrowthBelow || 1.05));
+  const [gapAbove, setGapAbove] = useState(String(cfg.gapShrinkAbove || 1.05));
   const updateConfig = useUpdateStrategyConfig();
 
   const handleSave = () => {
     const below = parseFloat(gapBelow);
     const above = parseFloat(gapAbove);
-    if (isNaN(below) || isNaN(above) || below < 1 || above > 1 || above <= 0) return;
+    if (isNaN(below) || isNaN(above) || below < 0.5 || below > 2 || above < 0.5 || above > 2) return;
     updateConfig.mutate({ id: strategy.id, config: { gapGrowthBelow: below, gapShrinkAbove: above } });
   };
 
-  const changed = parseFloat(gapBelow) !== (cfg.gapGrowthBelow || 1.07) || parseFloat(gapAbove) !== (cfg.gapShrinkAbove || 0.96);
+  const changed = parseFloat(gapBelow) !== (cfg.gapGrowthBelow || 1.05) || parseFloat(gapAbove) !== (cfg.gapShrinkAbove || 1.05);
 
   return (
     <div className="mt-3 p-3 rounded border border-border/30 bg-card/10">
@@ -178,7 +178,7 @@ function GapModifiers({ strategy }: { strategy: Strategy }) {
           <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Gap Below</Label>
           <Input
             type="number"
-            min="1.00"
+            min="0.50"
             max="2.00"
             step="0.01"
             value={gapBelow}
@@ -192,7 +192,7 @@ function GapModifiers({ strategy }: { strategy: Strategy }) {
           <Input
             type="number"
             min="0.50"
-            max="1.00"
+            max="2.00"
             step="0.01"
             value={gapAbove}
             onChange={(e) => setGapAbove(e.target.value)}
@@ -214,7 +214,7 @@ function GapModifiers({ strategy }: { strategy: Strategy }) {
         )}
       </div>
       <p className="text-[10px] text-muted-foreground mt-1.5">
-        Below: wider grids downward ({">"} 1.0). Above: tighter grids upward ({"<"} 1.0). Applied next cycle.
+        Gap multiplier per step. 1.05 = 5% wider each level. Applied next cycle.
       </p>
     </div>
   );
@@ -351,8 +351,8 @@ function StrategyCard({ s }: { s: Strategy }) {
     { label: "Leverage", value: `${cfg.leverage || 1}x` },
     { label: "Grid Ratio", value: `${Number(cfg.gridRatio || 0).toFixed(4)}` },
     { label: "Per Grid", value: `$${cfg.amountPerGrid || 0}` },
-    { label: "Gap Growth Below", value: `${cfg.gapGrowthBelow || 1}x` },
-    { label: "Gap Shrink Above", value: `${cfg.gapShrinkAbove || 1}x` },
+    { label: "Gap Growth", value: `${cfg.gapGrowthBelow || 1}x / ${cfg.gapShrinkAbove || 1}x` },
+    { label: "TP Reserve", value: `${((cfg.tpReservePct ?? 0.10) * 100).toFixed(0)}%` },
     { label: "Extensions", value: `${cfg.extensionsBelow || 0} below / ${cfg.extensionsAbove || 0} above` },
     { label: "Pair Rotation", value: cfg.rotationEnabled ? "Enabled" : "Disabled" },
     ...(cfg.allocatedBudget ? [{ label: "Budget Cap", value: `$${Number(cfg.allocatedBudget).toFixed(2)}` }] : []),

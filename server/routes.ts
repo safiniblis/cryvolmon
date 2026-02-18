@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, getActiveGridOrders } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, getActiveGridOrders, optimizeGapSettings } from "./strategy-engine";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -527,6 +527,34 @@ export async function registerRoutes(
   });
 
   // === Simulation ===
+  app.post("/api/grid/optimize-gaps", async (req, res) => {
+    try {
+      const stats = await storage.getCryptoStats();
+      const { symbol, feeRate = 0.0006, amountPerGrid = 10 } = req.body;
+
+      const targetSymbols = symbol
+        ? [symbol.replace("USDT", "").toUpperCase()]
+        : stats
+            .filter(s => s.priceHistory && (s.priceHistory as any).length >= 5)
+            .filter(s => !["USDT", "USDC", "USDS", "USDE"].includes(s.symbol?.toUpperCase() || ""))
+            .sort((a, b) => (b.hourlySwings || 0) - (a.hourlySwings || 0))
+            .slice(0, 5)
+            .map(s => s.symbol?.toUpperCase() || "");
+
+      const allResults: Record<string, any[]> = {};
+      for (const sym of targetSymbols) {
+        const coin = stats.find(s => s.symbol?.toUpperCase() === sym);
+        if (!coin?.priceHistory) continue;
+        const results = optimizeGapSettings(coin.priceHistory as any, feeRate, amountPerGrid);
+        allResults[sym + "USDT"] = results;
+      }
+
+      res.json(allResults);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.post("/api/grid/simulate", async (req, res) => {
     try {
       const stats = await storage.getCryptoStats();

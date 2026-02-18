@@ -98,8 +98,8 @@ export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0
   const targetProfitFeeRatio = 2.5;
   const baseGridRatio = 1 + targetProfitFeeRatio * roundTripFee;
 
-  const gapGrowthBelow = 1.07;
-  const gapShrinkAbove = 0.96;
+  const gapGrowthBelow = 1.05;
+  const gapShrinkAbove = 1.05;
 
   const lowerTarget = currentPrice * 0.90;
   const upperTarget = currentPrice * 1.02;
@@ -180,8 +180,8 @@ function generateAsymmetricLevels(
 
 function getAsymmetricGridLevels(config: GridConfig): number[] {
   const baseGap = config.gridRatio - 1;
-  const gapGrowth = config.gapGrowthBelow || 1.07;
-  const gapShrink = config.gapShrinkAbove || 0.96;
+  const gapGrowth = config.gapGrowthBelow || 1.05;
+  const gapShrink = config.gapShrinkAbove || 1.05;
 
   const belowLevels: number[] = [];
   let price = config.startPrice;
@@ -252,6 +252,7 @@ export interface GridConfig {
   lastTpPositionQty?: number;
   lastTpPlacedAt?: number;
   lastTpCount?: number;
+  tpReservePct?: number;
 }
 
 export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
@@ -732,24 +733,28 @@ async function executeGridStrategy(strategy: Strategy) {
         console.log(`[Grid ${strategy.id}] Cancelled ${cancelledTps}/${liveTpOrders.length} existing TPs`);
       }
 
+      const tpReservePct = Math.min(Math.max(config.tpReservePct ?? 0.10, 0), 0.5);
+      const sellableQty = positionQty * (1 - tpReservePct);
+      const reservedQty = positionQty - sellableQty;
+
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);
       const tpQtyPerLevel = Math.max(
-        Math.floor((positionQty / sellLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
+        Math.floor((sellableQty / sellLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
         precision.minTradeVolume
       );
 
       let levelsToPlace = sellLevels;
-      if (tpQtyPerLevel * sellLevels.length > positionQty * 1.02) {
-        const maxLevels = Math.floor(positionQty / tpQtyPerLevel);
+      if (tpQtyPerLevel * sellLevels.length > sellableQty * 1.02) {
+        const maxLevels = Math.floor(sellableQty / tpQtyPerLevel);
         levelsToPlace = sellLevels.slice(0, Math.max(maxLevels, 1));
       }
 
       const lastLevelQty = Math.max(
-        Math.round((positionQty - tpQtyPerLevel * (levelsToPlace.length - 1)) * basePrecisionMultiplier) / basePrecisionMultiplier,
+        Math.round((sellableQty - tpQtyPerLevel * (levelsToPlace.length - 1)) * basePrecisionMultiplier) / basePrecisionMultiplier,
         precision.minTradeVolume
       );
 
-      console.log(`[Grid ${strategy.id}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (last=${lastLevelQty.toFixed(precision.basePrecision)}) (posQty: ${positionQty}, entry: ${tpRefPrice.toFixed(4)})`);
+      console.log(`[Grid ${strategy.id}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (last=${lastLevelQty.toFixed(precision.basePrecision)}) (posQty: ${positionQty}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, reserved: ${reservedQty.toFixed(precision.basePrecision)} [${(tpReservePct*100).toFixed(0)}%], entry: ${tpRefPrice.toFixed(4)})`);
 
       for (let i = 0; i < levelsToPlace.length; i++) {
         const level = levelsToPlace[i];
@@ -1116,6 +1121,201 @@ function findGridIndex(price: number, levels: number[]): number {
   }
   if (price >= levels[levels.length - 1]) return levels.length - 1;
   return 0;
+}
+
+export function simulateGridWithGaps(
+  priceHistory: { timestamp: number; price: number }[],
+  feeRate: number,
+  marginPerGrid: number,
+  gapGrowthBelow: number,
+  gapShrinkAbove: number,
+  tpReservePct: number = 0
+): SimulationResult | null {
+  if (!priceHistory || priceHistory.length < 3) return null;
+
+  const startPrice = priceHistory[0].price;
+  const roundTripFee = 2 * feeRate;
+  const gridRatio = 1 + 2.5 * roundTripFee;
+  const lowerTarget = startPrice * 0.90;
+  const upperTarget = startPrice * 1.02;
+
+  const belowLevels = generateAsymmetricLevels(startPrice, lowerTarget, gridRatio, gapGrowthBelow, "below");
+  const aboveLevels = generateAsymmetricLevels(startPrice, upperTarget, gridRatio, gapShrinkAbove, "above");
+
+  const lowerPrice = belowLevels.length > 0 ? belowLevels[belowLevels.length - 1] : lowerTarget;
+  const upperPrice = aboveLevels.length > 0 ? aboveLevels[aboveLevels.length - 1] : upperTarget;
+  const gridsBelow = belowLevels.length;
+  const gridsAbove = aboveLevels.length;
+
+  const liquidationPrice = lowerPrice * 0.98;
+  const leverage = Math.min(Math.max(Math.floor(startPrice / (startPrice - liquidationPrice)), 2), 125);
+
+  const levels = generateAllLevels(startPrice, lowerPrice, upperPrice, gridRatio, gapGrowthBelow, gapShrinkAbove);
+  if (levels.length < 2) return null;
+
+  let position = 0;
+  let realizedPnl = 0;
+  let peakEquity = 0;
+  let maxDrawdown = 0;
+  let buys = 0;
+  let sells = 0;
+  const trades: SimulationResult["trades"] = [];
+  const levelLots = new Map<number, { qty: number; price: number }>();
+  let lastGridIndex = findGridIndex(startPrice, levels);
+
+  for (let i = 1; i < priceHistory.length; i++) {
+    const price = priceHistory[i].price;
+    const time = priceHistory[i].timestamp;
+    const currentGridIndex = findGridIndex(price, levels);
+    if (currentGridIndex === lastGridIndex || currentGridIndex < 0) continue;
+
+    if (currentGridIndex < lastGridIndex) {
+      for (let gi = lastGridIndex - 1; gi >= currentGridIndex; gi--) {
+        if (gi < 0 || gi >= levels.length) continue;
+        if (levelLots.has(gi)) continue;
+        const buyPrice = levels[gi];
+        const notional = marginPerGrid * leverage;
+        const qty = notional / buyPrice;
+        const fee = notional * feeRate;
+        position += qty;
+        realizedPnl -= fee;
+        buys++;
+        levelLots.set(gi, { qty, price: buyPrice });
+        trades.push({ time, side: "BUY", price: buyPrice, gridLevel: gi, pnl: -fee });
+      }
+    } else if (currentGridIndex > lastGridIndex) {
+      for (let gi = lastGridIndex + 1; gi <= currentGridIndex; gi++) {
+        if (gi < 0 || gi >= levels.length) continue;
+        if (position <= 0) break;
+
+        const sellPrice = levels[gi];
+        const belowKeys = Array.from(levelLots.keys()).filter(k => k < gi).sort((a, b) => b - a);
+        if (belowKeys.length === 0) continue;
+
+        const lotKey = belowKeys[0];
+        const lot = levelLots.get(lotKey)!;
+        const sellQty = lot.qty * (1 - tpReservePct);
+        const soldCost = sellQty * lot.price;
+        const revenue = sellQty * sellPrice;
+        const fee = revenue * feeRate;
+        const pnl = (revenue - soldCost) - fee;
+        position -= sellQty;
+        realizedPnl += pnl;
+        sells++;
+
+        if (tpReservePct > 0) {
+          const remaining = lot.qty * tpReservePct;
+          levelLots.set(lotKey, { qty: remaining, price: lot.price });
+        } else {
+          levelLots.delete(lotKey);
+        }
+
+        trades.push({ time, side: "SELL", price: sellPrice, gridLevel: gi, pnl });
+      }
+    }
+
+    lastGridIndex = currentGridIndex;
+    let totalCost = 0;
+    for (const lot of levelLots.values()) totalCost += lot.qty * lot.price;
+    const avgEntry = position > 0 ? totalCost / position : 0;
+    const equity = realizedPnl + (position * (price - avgEntry));
+    peakEquity = Math.max(peakEquity, equity);
+    maxDrawdown = Math.max(maxDrawdown, peakEquity - equity);
+  }
+
+  const endPrice = priceHistory[priceHistory.length - 1].price;
+  let totalCostEnd = 0;
+  for (const lot of levelLots.values()) totalCostEnd += lot.qty * lot.price;
+  const avgEntryEnd = position > 0 ? totalCostEnd / position : endPrice;
+  const unrealizedPnl = position * (endPrice - avgEntryEnd);
+
+  return {
+    symbol: "",
+    startPrice,
+    endPrice,
+    totalTrades: buys + sells,
+    buys,
+    sells,
+    realizedPnl,
+    unrealizedPnl,
+    totalPnl: realizedPnl + unrealizedPnl,
+    maxDrawdown,
+    leverage,
+    gridCount: gridsBelow + gridsAbove,
+    gridsBelow,
+    gridsAbove,
+    priceRange: `${lowerPrice.toFixed(2)} - ${upperPrice.toFixed(2)}`,
+    trades,
+  };
+}
+
+export function optimizeGapSettings(
+  priceHistory: { timestamp: number; price: number }[],
+  feeRate: number = 0.0006,
+  marginPerGrid: number = 10
+) {
+  const configs = [
+    { name: "symmetric_1.00", below: 1.00, above: 1.00 },
+    { name: "symmetric_1.02", below: 1.02, above: 1.02 },
+    { name: "symmetric_1.04", below: 1.04, above: 1.04 },
+    { name: "symmetric_1.06", below: 1.06, above: 1.06 },
+    { name: "current_asym", below: 1.07, above: 0.96 },
+    { name: "mild_grow_1.03_1.00", below: 1.03, above: 1.00 },
+    { name: "mild_grow_1.05_1.00", below: 1.05, above: 1.00 },
+    { name: "grow_both_1.03", below: 1.03, above: 1.03 },
+    { name: "grow_both_1.05", below: 1.05, above: 1.05 },
+    { name: "shrink_above_0.98", below: 1.00, above: 0.98 },
+    { name: "slight_asym_1.03_0.99", below: 1.03, above: 0.99 },
+    { name: "moderate_asym_1.05_0.98", below: 1.05, above: 0.98 },
+  ];
+
+  const tpReserveOptions = [0, 0.05, 0.10, 0.15];
+
+  const results: {
+    config: string;
+    gapBelow: number;
+    gapAbove: number;
+    tpReserve: number;
+    totalPnl: number;
+    realizedPnl: number;
+    unrealizedPnl: number;
+    maxDrawdown: number;
+    trades: number;
+    buys: number;
+    sells: number;
+    gridsBelow: number;
+    gridsAbove: number;
+    score: number;
+  }[] = [];
+
+  for (const cfg of configs) {
+    for (const reserve of tpReserveOptions) {
+      const sim = simulateGridWithGaps(priceHistory, feeRate, marginPerGrid, cfg.below, cfg.above, reserve);
+      if (!sim) continue;
+
+      const score = sim.totalPnl - sim.maxDrawdown * 0.5;
+
+      results.push({
+        config: cfg.name,
+        gapBelow: cfg.below,
+        gapAbove: cfg.above,
+        tpReserve: reserve,
+        totalPnl: sim.totalPnl,
+        realizedPnl: sim.realizedPnl,
+        unrealizedPnl: sim.unrealizedPnl,
+        maxDrawdown: sim.maxDrawdown,
+        trades: sim.totalTrades,
+        buys: sim.buys,
+        sells: sim.sells,
+        gridsBelow: sim.gridsBelow,
+        gridsAbove: sim.gridsAbove,
+        score,
+      });
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return results;
 }
 
 export interface VolatilityScore {

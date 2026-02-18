@@ -1708,6 +1708,10 @@ export interface TandemConfig {
   lastActionAt: number;
   rotationEnabled?: boolean;
   capitalPerSide?: number;
+  lastRebalanceAt?: number;
+  rebalanceCount?: number;
+  consecutiveRebalances?: number;
+  lastRebalancePriceRef?: number;
 }
 
 const tandemEntryLocks: Set<number> = new Set();
@@ -1874,6 +1878,9 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
       survivingPositionId: null,
       cycleCount: (config.cycleCount || 0) + 1,
       lastActionAt: Date.now(),
+      lastRebalancePriceRef: currentPrice,
+      consecutiveRebalances: 0,
+      rebalanceCount: 0,
     };
 
     await storage.updateStrategy(strategy.id, { config: updatedConfig });
@@ -1968,11 +1975,106 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
 
   if (longAlive && shortAlive) {
     const ticker = await getTickerPrice(strategy.symbol);
-    if (ticker) {
-      const liqDist = 1 / config.leverage;
-      const longLiqPrice = config.entryPrice * (1 - liqDist);
-      const shortLiqPrice = config.entryPrice * (1 + liqDist);
-      console.log(`[Tandem ${strategy.id}] Both grids alive @ ${ticker.lastPrice.toFixed(4)} | LongLiq=${longLiqPrice.toFixed(4)} ShortLiq=${shortLiqPrice.toFixed(4)}`);
+    const longQty = parseFloat(longPos.qty || "0");
+    const shortQty = parseFloat(shortPos.qty || "0");
+    const longLiqPrice = parseFloat(longPos.liqPrice || "0");
+    const shortLiqPrice = parseFloat(shortPos.liqPrice || "0");
+    const currentPrice = ticker?.lastPrice || config.entryPrice;
+
+    const longLiqDist = currentPrice > 0 && longLiqPrice > 0 ? (currentPrice - longLiqPrice) / currentPrice : 1;
+    const shortLiqDist = currentPrice > 0 && shortLiqPrice > 0 ? (shortLiqPrice - currentPrice) / currentPrice : 1;
+
+    console.log(`[Tandem ${strategy.id}] Both alive @ ${currentPrice.toFixed(4)} | L=${longQty} liq=${longLiqPrice.toFixed(4)}(${(longLiqDist * 100).toFixed(1)}%) S=${shortQty} liq=${shortLiqPrice.toFixed(4)}(${(shortLiqDist * 100).toFixed(1)}%)`);
+
+    const consecutiveRebalances = config.consecutiveRebalances || 0;
+    const BASE_COOLDOWN_MS = 120_000;
+    const MAX_COOLDOWN_MS = 900_000;
+    const cooldownMs = Math.min(MAX_COOLDOWN_MS, BASE_COOLDOWN_MS * Math.pow(2, consecutiveRebalances));
+    const lastRebalance = config.lastRebalanceAt || 0;
+    const timeSinceRebalance = Date.now() - lastRebalance;
+
+    if (timeSinceRebalance >= cooldownMs && longQty > 0 && shortQty > 0) {
+      const maxQty = Math.max(longQty, shortQty);
+      const minQty = Math.min(longQty, shortQty);
+      const ratio = maxQty / minQty;
+
+      const liqThreshold = 1 / config.leverage;
+      const closerLiqDist = Math.min(longLiqDist, shortLiqDist);
+      const liqUrgency = closerLiqDist < liqThreshold * 0.5;
+
+      const imbalanceThreshold = liqUrgency ? 1.05 : 1.10;
+
+      if (ratio <= 1.03 && consecutiveRebalances > 0) {
+        config.consecutiveRebalances = 0;
+        config.lastRebalancePriceRef = currentPrice;
+        await storage.updateStrategy(strategy.id, { config });
+      }
+
+      if (ratio > imbalanceThreshold) {
+        const lastPriceRef = config.lastRebalancePriceRef || config.entryPrice;
+        const priceMove = Math.abs(currentPrice - lastPriceRef) / lastPriceRef;
+        const velocityThreshold = liqUrgency ? 0.01 : 0.005;
+
+        if (priceMove > velocityThreshold && !liqUrgency) {
+          config.lastRebalancePriceRef = currentPrice;
+          await storage.updateStrategy(strategy.id, { config });
+          console.log(`[Tandem ${strategy.id}] Rebalance SKIPPED: price moving fast (${(priceMove * 100).toFixed(2)}% since last ref). Ref updated, waiting for stability.`);
+          return;
+        }
+
+        const largerSide: "LONG" | "SHORT" = longQty > shortQty ? "LONG" : "SHORT";
+        const excessQty = maxQty - minQty;
+
+        const trimPct = liqUrgency ? 0.75 : 0.50;
+        const precision = await fetchPrecision(strategy.symbol);
+        const trimQty = roundQty(excessQty * trimPct, precision.basePrecision);
+        const trimQtyNum = parseFloat(trimQty);
+
+        if (trimQtyNum >= precision.minTradeVolume) {
+          const closeSide = largerSide === "LONG" ? "SELL" : "BUY";
+          const newConsecutive = consecutiveRebalances + 1;
+          const nextCooldown = Math.min(MAX_COOLDOWN_MS, BASE_COOLDOWN_MS * Math.pow(2, newConsecutive));
+
+          console.log(`[Tandem ${strategy.id}] REBALANCE #${(config.rebalanceCount || 0) + 1}: ${largerSide} ${maxQty} vs ${minQty} (ratio ${ratio.toFixed(2)}, trim ${(trimPct * 100).toFixed(0)}%=${trimQty}, liqUrg=${liqUrgency}, priceVel=${(priceMove * 100).toFixed(2)}%, nextCooldown=${Math.round(nextCooldown / 1000)}s)`);
+
+          try {
+            const result = await client.placeOrder({
+              symbol: strategy.symbol,
+              qty: trimQty,
+              side: closeSide,
+              tradeSide: "CLOSE",
+              orderType: "MARKET",
+            });
+
+            if (result?.code === 0) {
+              config.lastRebalanceAt = Date.now();
+              config.lastRebalancePriceRef = currentPrice;
+              config.rebalanceCount = (config.rebalanceCount || 0) + 1;
+              config.consecutiveRebalances = newConsecutive;
+              await storage.updateStrategy(strategy.id, { config });
+
+              await storage.createTradeLog({
+                strategyId: strategy.id,
+                symbol: strategy.symbol,
+                side: closeSide,
+                orderType: "MARKET",
+                quantity: trimQtyNum,
+                price: currentPrice,
+                status: "filled",
+                orderId: result.data?.orderId || null,
+                pnl: null,
+                errorMsg: `Rebalance #${config.rebalanceCount}: trimmed ${largerSide} by ${trimQty} (${(trimPct * 100).toFixed(0)}% of excess, ratio was ${ratio.toFixed(2)}, cooldown=${Math.round(nextCooldown / 1000)}s)`,
+              });
+
+              console.log(`[Tandem ${strategy.id}] Rebalanced: ${largerSide} -${trimQty}. Target ~${(minQty + excessQty * (1 - trimPct)).toFixed(1)}`);
+            } else {
+              console.error(`[Tandem ${strategy.id}] Rebalance order failed: ${result?.msg}`);
+            }
+          } catch (e: any) {
+            console.error(`[Tandem ${strategy.id}] Rebalance error:`, e.message);
+          }
+        }
+      }
     }
     return;
   }

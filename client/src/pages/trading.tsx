@@ -1118,6 +1118,22 @@ function TandemStartPanel() {
               </div>
             </div>
           )}
+          {positions.length >= 2 && phase === "waiting_liquidation" && (
+            <div className="grid grid-cols-2 gap-1.5">
+              {positions.map((p: any, i: number) => (
+                <div key={i} className="p-1.5 rounded border border-border/20 bg-card/20" data-testid={`tandem-pos-${p.side?.toLowerCase()}`}>
+                  <p className="text-[9px] text-muted-foreground">{p.side} qty</p>
+                  <p className="font-mono text-[11px] font-semibold">{p.quantity}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          {(cfg.rebalanceCount || 0) > 0 && (
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-rebalance">
+              <p className="text-[9px] text-muted-foreground">Rebalances</p>
+              <p className="font-mono text-[11px] font-semibold">{cfg.rebalanceCount} {cfg.lastRebalanceAt ? `(${Math.round((Date.now() - cfg.lastRebalanceAt) / 60000)}m ago)` : ""}</p>
+            </div>
+          )}
           {cfg.liquidatedSide && (
             <div className="grid grid-cols-2 gap-1.5">
               <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-liq-side">

@@ -143,6 +143,7 @@ A full-stack cryptocurrency trading platform with two main features:
 - Endpoint: GET /api/grid/leverage-analysis — full table of leverage vs grids vs ROI
 
 ## Recent Changes
+- 2026-02-18: Dynamic rebalancing: tandem trims larger side when positions diverge >10% (or >5% if liq is close), escalating cooldown (2→4→8→15min), 50% partial trim (75% if urgent), price velocity gate skips rebalance during fast moves (>0.5%), resets when balanced
 - 2026-02-18: Fixed tandem budget leak: grid orders now subtract position margin from allocatedBudget so total (position + orders) never exceeds per-side budget
 - 2026-02-18: Leverage optimization: tandem fee multiplier 4.0x→3.5x (gap 0.42%), grid stats preview in UI, leverage analysis endpoint
 - 2026-02-18: Tandem grid ranges derived from leverage (85% of 1/L) instead of hardcoded 10%/2%

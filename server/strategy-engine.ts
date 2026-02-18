@@ -609,51 +609,64 @@ async function executeGridStrategy(strategy: Strategy) {
     const lastTpCount = config.lastTpCount || 0;
     const now = Date.now();
 
+    let liveTpCount = 0;
+    let liveTpOrders: any[] = [];
+    try {
+      const tpRes = await client.getPendingTpslOrders(strategy.symbol);
+      if (tpRes?.code === 0) {
+        let rawData = tpRes.data;
+        if (rawData && !Array.isArray(rawData) && Array.isArray(rawData.orderList)) {
+          rawData = rawData.orderList;
+        }
+        if (Array.isArray(rawData)) {
+          liveTpOrders = rawData.filter((t: any) => t.positionId === positionId);
+          liveTpCount = liveTpOrders.length;
+        }
+      }
+    } catch (e: any) {
+      console.error(`[Grid ${strategy.id}] Check live TPs error:`, e.message);
+    }
+
     const hasTpsPlaced = lastTpCount > 0 && lastTpTime > 0;
+    const tpsMissing = hasTpsPlaced && liveTpCount === 0;
     const entryDroppedEnough = hasTpsPlaced && lastTpEntry > 0 && tpRefPrice < lastTpEntry * 0.995;
     const positionGrewEnough = hasTpsPlaced && lastTpPosQty > 0 && positionQty > lastTpPosQty * 1.15;
     const cooldownOk = (now - lastTpTime) > 60000;
 
-    const needsRebuild = !hasTpsPlaced || ((entryDroppedEnough || positionGrewEnough) && cooldownOk);
+    const needsRebuild = !hasTpsPlaced || tpsMissing || ((entryDroppedEnough || positionGrewEnough) && cooldownOk);
 
     if (!needsRebuild) {
       if (tpWasHit) {
         config.lastTpPositionQty = positionQty;
+        config.lastTpCount = liveTpCount;
         await storage.updateStrategy(strategy.id, { config });
-        console.log(`[Grid ${strategy.id}] TPs stable after TP hit: updated tracked qty to ${positionQty}`);
+        console.log(`[Grid ${strategy.id}] TPs after TP hit: ${liveTpCount} live on exchange, updated tracked qty to ${positionQty}`);
       } else {
-        console.log(`[Grid ${strategy.id}] TPs stable: ${lastTpCount} orders placed at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
+        console.log(`[Grid ${strategy.id}] TPs stable: ${liveTpCount} live on exchange (saved=${lastTpCount}) at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
       }
     } else {
       const reason = !hasTpsPlaced
         ? "first TP placement"
-        : entryDroppedEnough
-          ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
-          : `position grew ${lastTpPosQty}->${positionQty}`;
-      console.log(`[Grid ${strategy.id}] TP rebuild: ${reason} — cancelling any existing TPs first`);
-      try {
-        const tpRes = await client.getPendingTpslOrders(strategy.symbol);
-        if (tpRes?.code === 0) {
-          let rawData = tpRes.data;
-          if (rawData && !Array.isArray(rawData) && Array.isArray(rawData.orderList)) {
-            rawData = rawData.orderList;
-          }
-          if (Array.isArray(rawData)) {
-            const positionTps = rawData.filter((t: any) => t.positionId === positionId);
-            for (const tp of positionTps) {
-              const tpId = tp.id || tp.orderId;
-              if (tpId) {
-                await client.cancelTpslOrder(strategy.symbol, tpId);
-                cancelledTps++;
-              }
-            }
-            if (positionTps.length > 0) {
-              console.log(`[Grid ${strategy.id}] Cancelled ${positionTps.length} existing TPs before placing new ones`);
-            }
+        : tpsMissing
+          ? `TPs missing from exchange (saved=${lastTpCount}, live=${liveTpCount})`
+          : entryDroppedEnough
+            ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
+            : `position grew ${lastTpPosQty}->${positionQty}`;
+      console.log(`[Grid ${strategy.id}] TP rebuild: ${reason} — cancelling ${liveTpCount} existing TPs first`);
+
+      for (const tp of liveTpOrders) {
+        const tpId = tp.id || tp.orderId;
+        if (tpId) {
+          try {
+            await client.cancelTpslOrder(strategy.symbol, tpId);
+            cancelledTps++;
+          } catch (e: any) {
+            console.error(`[Grid ${strategy.id}] Cancel TP ${tpId} error:`, e.message);
           }
         }
-      } catch (e: any) {
-        console.error(`[Grid ${strategy.id}] Cancel TPs error:`, e.message);
+      }
+      if (liveTpOrders.length > 0) {
+        console.log(`[Grid ${strategy.id}] Cancelled ${cancelledTps}/${liveTpOrders.length} existing TPs`);
       }
 
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);
@@ -661,7 +674,6 @@ async function executeGridStrategy(strategy: Strategy) {
         Math.floor((positionQty / sellLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
         precision.minTradeVolume
       );
-      const targetQtyStr = tpQtyPerLevel.toFixed(precision.basePrecision);
 
       let levelsToPlace = sellLevels;
       if (tpQtyPerLevel * sellLevels.length > positionQty * 1.02) {
@@ -669,9 +681,18 @@ async function executeGridStrategy(strategy: Strategy) {
         levelsToPlace = sellLevels.slice(0, Math.max(maxLevels, 1));
       }
 
-      console.log(`[Grid ${strategy.id}] Placing ${levelsToPlace.length} TP orders, ${targetQtyStr} each (posQty: ${positionQty}, entry: ${tpRefPrice.toFixed(4)})`);
+      const lastLevelQty = Math.max(
+        Math.round((positionQty - tpQtyPerLevel * (levelsToPlace.length - 1)) * basePrecisionMultiplier) / basePrecisionMultiplier,
+        precision.minTradeVolume
+      );
 
-      for (const level of levelsToPlace) {
+      console.log(`[Grid ${strategy.id}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (last=${lastLevelQty.toFixed(precision.basePrecision)}) (posQty: ${positionQty}, entry: ${tpRefPrice.toFixed(4)})`);
+
+      for (let i = 0; i < levelsToPlace.length; i++) {
+        const level = levelsToPlace[i];
+        const isLast = i === levelsToPlace.length - 1;
+        const qty = isLast ? lastLevelQty : tpQtyPerLevel;
+        const qtyStr = qty.toFixed(precision.basePrecision);
         const priceStr = roundPrice(level, precision.quotePrecision);
         try {
           const result = await client.placeTpslOrder({
@@ -680,10 +701,14 @@ async function executeGridStrategy(strategy: Strategy) {
             tpPrice: priceStr,
             tpStopType: "LAST_PRICE",
             tpOrderType: "MARKET",
-            tpQty: targetQtyStr,
+            tpQty: qtyStr,
           });
-          if (result?.code === 0) placedTps++;
-          else console.error(`[Grid ${strategy.id}] TP failed @ ${priceStr}: ${result?.msg}`);
+          if (result?.code === 0) {
+            placedTps++;
+            console.log(`[Grid ${strategy.id}] TP placed @ ${priceStr} qty=${qtyStr} ✓`);
+          } else {
+            console.error(`[Grid ${strategy.id}] TP failed @ ${priceStr} qty=${qtyStr}: code=${result?.code} msg=${result?.msg}`);
+          }
         } catch (e: any) {
           console.error(`[Grid ${strategy.id}] TP error @ ${priceStr}:`, e.message);
         }
@@ -694,7 +719,7 @@ async function executeGridStrategy(strategy: Strategy) {
       config.lastTpPlacedAt = now;
       config.lastTpCount = placedTps;
       await storage.updateStrategy(strategy.id, { config });
-      console.log(`[Grid ${strategy.id}] TP state saved: entry=${tpRefPrice.toFixed(4)} qty=${positionQty} count=${placedTps}`);
+      console.log(`[Grid ${strategy.id}] TP state saved: entry=${tpRefPrice.toFixed(4)} qty=${positionQty} placed=${placedTps}/${levelsToPlace.length}`);
     }
   }
 

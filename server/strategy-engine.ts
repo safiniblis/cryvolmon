@@ -464,15 +464,14 @@ async function executeGridStrategy(strategy: Strategy) {
   const currentPrice = ticker.lastPrice;
   const levels = getAsymmetricGridLevels(config);
 
-  const bandPct = 0.03;
-  const bandLow = currentPrice * (1 - bandPct);
-  const bandHigh = currentPrice * (1 + bandPct);
+  const lowerBound = config.lowerPrice || currentPrice * 0.90;
+  const upperBound = config.upperPrice || currentPrice * 1.02;
 
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
   const minProfitableGap = roundTripFee * 4.0;
 
-  const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow).reverse();
+  const buyLevels = levels.filter(l => l < currentPrice && l >= lowerBound).reverse();
 
   let openOrders: any[] = [];
   try {
@@ -798,7 +797,7 @@ async function executeGridStrategy(strategy: Strategy) {
   }
 
   const budgetInfo = config.allocatedBudget ? ` | Budget=${config.allocatedBudget.toFixed(2)}` : "";
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${minTpPrice.toFixed(precision.quotePrecision)}-${tpUpperLimit.toFixed(precision.quotePrecision)}] gap=${(minProfitableGap*100).toFixed(2)}% | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}/${allSellLevels.length}(+${placedTps}/-${cancelledTps}) maxByQty=${maxTpLevels} | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${lowerBound.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${minTpPrice.toFixed(precision.quotePrecision)}-${tpUpperLimit.toFixed(precision.quotePrecision)}] gap=${(minProfitableGap*100).toFixed(2)}% | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}/${allSellLevels.length}(+${placedTps}/-${cancelledTps}) maxByQty=${maxTpLevels} | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
 
   await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 }

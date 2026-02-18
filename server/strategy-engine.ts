@@ -779,18 +779,22 @@ async function executeGridStrategy(strategy: Strategy) {
     const hasDuplicates = hasTpsPlaced && liveTpCount > lastTpCount + 2;
     const entryChanged = hasTpsPlaced && lastTpEntry > 0 && Math.abs(tpRefPrice - lastTpEntry) / lastTpEntry > 0.005;
     const positionGrewEnough = hasTpsPlaced && lastTpPosQty > 0 && positionQty > lastTpPosQty * 1.15;
-    const tpsConsumed = hasTpsPlaced && liveTpCount < lastTpCount && liveTpCount > 0;
+    const tpsPartiallyConsumed = hasTpsPlaced && liveTpCount < lastTpCount && liveTpCount > 0;
     const cooldownOk = (now - lastTpTime) > 60000;
 
-    const needsRebuild = !hasTpsPlaced || tpsMissing || hasDuplicates || tpsConsumed || ((entryChanged || positionGrewEnough) && cooldownOk);
+    const needsRebuild = !hasTpsPlaced || tpsMissing || hasDuplicates || ((entryChanged || positionGrewEnough) && cooldownOk);
 
-    if (!needsRebuild) {
+    if (tpsPartiallyConsumed && !needsRebuild) {
+      config.lastTpCount = liveTpCount;
+      config.lastTpPositionQty = positionQty;
+      await storage.updateStrategy(strategy.id, { config });
+      console.log(`[${tag}] TPs partially filled: ${liveTpCount}/${lastTpCount} remain — keeping existing, updated count`);
+    } else if (!needsRebuild) {
       console.log(`[${tag}] TPs stable: ${liveTpCount} live on exchange (saved=${lastTpCount}) at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
     } else {
       const reason = !hasTpsPlaced ? "first TP placement"
-        : tpsMissing ? `TPs missing (saved=${lastTpCount}, live=${liveTpCount})`
+        : tpsMissing ? `all TPs filled (saved=${lastTpCount}, live=0)`
         : hasDuplicates ? `duplicates (saved=${lastTpCount}, live=${liveTpCount})`
-        : tpsConsumed ? `TPs consumed (saved=${lastTpCount}, live=${liveTpCount})`
         : entryChanged ? `entry moved ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
         : `position grew ${lastTpPosQty}->${positionQty}`;
       console.log(`[${tag}] TP rebuild: ${reason} — cancelling ${liveTpCount} existing TPs first`);

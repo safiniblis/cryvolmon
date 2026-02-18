@@ -457,7 +457,7 @@ async function executeGridStrategy(strategy: Strategy) {
   const roundTripFee = 2 * feeRate;
   const minProfitableGap = roundTripFee * 2.5;
 
-  const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow);
+  const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow).reverse();
 
   let openOrders: any[] = [];
   try {
@@ -536,6 +536,13 @@ async function executeGridStrategy(strategy: Strategy) {
     }
   } catch {}
 
+  const lastTpPosQty = config.lastTpPositionQty || 0;
+  const tpWasHit = lastTpPosQty > 0 && positionQty < lastTpPosQty * 0.98;
+  if (tpWasHit) {
+    const qtyFreed = lastTpPosQty - positionQty;
+    console.log(`[Grid ${strategy.id}] TP hit detected: position ${lastTpPosQty} -> ${positionQty} (freed ${qtyFreed.toFixed(precision.basePrecision)} qty). Freed margin available for new buys.`);
+  }
+
   const missingBuyLevels = buyLevels.filter(l => !coveredBuyPrices.has(roundPrice(l, precision.quotePrecision)));
   const leverage = config.leverage || 8;
   const minOrderMargin = 1.0;
@@ -610,7 +617,13 @@ async function executeGridStrategy(strategy: Strategy) {
     const needsRebuild = !hasTpsPlaced || ((entryDroppedEnough || positionGrewEnough) && cooldownOk);
 
     if (!needsRebuild) {
-      console.log(`[Grid ${strategy.id}] TPs stable: ${lastTpCount} orders placed at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
+      if (tpWasHit) {
+        config.lastTpPositionQty = positionQty;
+        await storage.updateStrategy(strategy.id, { config });
+        console.log(`[Grid ${strategy.id}] TPs stable after TP hit: updated tracked qty to ${positionQty}`);
+      } else {
+        console.log(`[Grid ${strategy.id}] TPs stable: ${lastTpCount} orders placed at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
+      }
     } else {
       if (hasTpsPlaced) {
         const reason = entryDroppedEnough

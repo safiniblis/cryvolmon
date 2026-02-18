@@ -113,6 +113,9 @@ A full-stack cryptocurrency trading platform with two main features:
 - Budget Cap shown in strategy card params
 
 ## Recent Changes
+- 2026-02-18: UI cleanup: minimal Quick Start ($ + Start), PNL on running bot, 4h vol scores, 24h% change, manual rotation buttons, mobile-friendly tables
+- 2026-02-18: Fee multiplier changed from 2.5x to 4.0x (grid gap 0.48% vs 0.30%) — fewer but more profitable trades
+- 2026-02-18: Added manual pair rotation endpoint (POST /api/strategies/:id/rotate)
 - 2026-02-18: Optimized gap settings via backtest: symmetric 1.05x growth both directions, 10% TP reserve for spikes
 - 2026-02-18: Added gap optimization engine (/api/grid/optimize-gaps) testing 12 configs × 4 reserve levels across top coins
 - 2026-02-18: Extended TP range to +3% above current price with geometric spacing, unlimited TP count (limited only by position qty / minTradeVolume)

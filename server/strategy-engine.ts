@@ -497,7 +497,9 @@ async function executeGridStrategy(strategy: Strategy) {
   const roundTripFee = 2 * feeRate;
   const minProfitableGap = roundTripFee * 4.0;
 
-  const buyCap = positionEntryPrice > 0 ? Math.min(currentPrice, positionEntryPrice) : currentPrice;
+  const buyCap = positionEntryPrice > 0
+    ? Math.min(currentPrice, positionEntryPrice * (1 + minProfitableGap))
+    : currentPrice;
   const buyLevels = levels.filter(l => l < buyCap && l >= lowerBound).reverse();
 
   let openOrders: any[] = [];

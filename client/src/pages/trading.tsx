@@ -330,7 +330,9 @@ function StrategyCard({ s }: { s: Strategy }) {
   ] : s.type === "tandem" ? [
     { label: "Phase", value: phaseLabels[cfg.phase] || cfg.phase || "—" },
     { label: "Leverage", value: `${cfg.leverage || 33}x` },
-    { label: "$/Side", value: `$${cfg.capitalPerSide || 0}` },
+    { label: "Total $", value: `$${cfg.totalCapital || cfg.capitalPerSide * 2 || 0}` },
+    ...(cfg.longGridId ? [{ label: "L Grid", value: `#${cfg.longGridId}` }] : []),
+    ...(cfg.shortGridId ? [{ label: "S Grid", value: `#${cfg.shortGridId}` }] : []),
     { label: "Cycle", value: `#${cfg.cycleCount || 0}` },
     { label: "Entry", value: cfg.entryPrice ? `$${Number(cfg.entryPrice).toFixed(4)}` : "—" },
     ...(cfg.liquidatedSide ? [{ label: "Liq Side", value: cfg.liquidatedSide }] : []),
@@ -803,7 +805,7 @@ function TandemSimulationPanel() {
   const handleRun = () => {
     const params: any = {};
     if (tandemSymbol) params.symbol = tandemSymbol;
-    params.capitalPerSide = parseFloat(tandemCapital) || 50;
+    params.totalCapital = parseFloat(tandemCapital) || 100;
     params.leverage = parseInt(tandemLeverage) || 100;
     params.days = parseInt(tandemDays) || 7;
     tandem.mutate(params);
@@ -1016,7 +1018,7 @@ function TandemSimulationPanel() {
 
 function TandemStartPanel() {
   const [symbol, setSymbol] = useState("XRPUSDT");
-  const [capital, setCapital] = useState("50");
+  const [capital, setCapital] = useState("100");
   const [leverage, setLeverage] = useState("33");
   const [rotation, setRotation] = useState(false);
   const tandemStart = useTandemStart();
@@ -1073,9 +1075,15 @@ function TandemStartPanel() {
               <p className="font-mono text-[11px] font-semibold">{cfg.leverage || 33}x</p>
             </div>
             <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-capital">
-              <p className="text-[9px] text-muted-foreground">$/Side</p>
-              <p className="font-mono text-[11px] font-semibold">${cfg.capitalPerSide || 0}</p>
+              <p className="text-[9px] text-muted-foreground">Total $</p>
+              <p className="font-mono text-[11px] font-semibold">${cfg.totalCapital || (cfg.capitalPerSide ? cfg.capitalPerSide * 2 : 0)}</p>
             </div>
+            {cfg.longGridId && (
+              <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-grids">
+                <p className="text-[9px] text-muted-foreground">Grids</p>
+                <p className="font-mono text-[11px] font-semibold">L#{cfg.longGridId} S#{cfg.shortGridId}</p>
+              </div>
+            )}
           </div>
           {cfg.entryPrice > 0 && (
             <div className="grid grid-cols-2 gap-1.5">
@@ -1149,11 +1157,11 @@ function TandemStartPanel() {
           <Input
             data-testid="input-tandem-capital"
             type="number"
-            min="5"
+            min="10"
             value={capital}
             onChange={e => setCapital(e.target.value)}
             className="w-16 text-xs font-mono"
-            placeholder="$/side"
+            placeholder="Total $"
           />
           <Input
             data-testid="input-tandem-leverage"
@@ -1180,10 +1188,10 @@ function TandemStartPanel() {
           <Button
             data-testid="button-tandem-start"
             size="sm"
-            disabled={tandemStart.isPending || !symbol || parseFloat(capital) < 5}
+            disabled={tandemStart.isPending || !symbol || parseFloat(capital) < 10}
             onClick={() => tandemStart.mutate({
               symbol,
-              capitalPerSide: parseFloat(capital),
+              totalCapital: parseFloat(capital),
               leverage: parseInt(leverage),
               rotationEnabled: rotation,
             })}

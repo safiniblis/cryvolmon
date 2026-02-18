@@ -253,13 +253,18 @@ export interface GridConfig {
   lastTpPlacedAt?: number;
   lastTpCount?: number;
   tpReservePct?: number;
+  gridSide?: "LONG" | "SHORT";
+  parentTandemId?: number;
 }
 
 export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
   const client = getBitunixClient();
   if (!client) return { success: false, message: "Bitunix client not configured" };
 
-  const config = strategy.config as GridConfig;
+  const config = strategy.config as GridConfig & { initialBuyDone?: boolean };
+  const isShort = config.gridSide === "SHORT";
+  const posSide = isShort ? "SELL" : "BUY";
+  const label = isShort ? "InitialSell" : "InitialBuy";
   const precision = await getPairPrecision(strategy.symbol);
   const ticker = await getTickerPrice(strategy.symbol);
   if (!ticker) return { success: false, message: `Cannot get price for ${strategy.symbol}` };
@@ -281,7 +286,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     const budget = config.allocatedBudget && config.allocatedBudget > 0
       ? Math.min(config.allocatedBudget, accountAvailable)
       : accountAvailable;
-    console.log(`[InitialBuy ${strategy.id}] Account available=${accountAvailable.toFixed(2)}, allocatedBudget=${config.allocatedBudget || 'none'}, using budget=${budget.toFixed(2)} USDT`);
+    console.log(`[${label} ${strategy.id}] Account available=${accountAvailable.toFixed(2)}, allocatedBudget=${config.allocatedBudget || 'none'}, using budget=${budget.toFixed(2)} USDT`);
 
     try {
       const tpRes = await client.getPendingTpslOrders(strategy.symbol);
@@ -297,59 +302,63 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
             if (!tpId) continue;
             try { await client.cancelTpslOrder(strategy.symbol, tpId); cancelled++; } catch {}
           }
-          console.log(`[InitialBuy ${strategy.id}] Cleaned up ${cancelled}/${tpList.length} leftover TP/SL orders for ${strategy.symbol}`);
+          console.log(`[${label} ${strategy.id}] Cleaned up ${cancelled}/${tpList.length} leftover TP/SL orders for ${strategy.symbol}`);
         }
       }
     } catch (e: any) {
-      console.log(`[InitialBuy ${strategy.id}] TP cleanup note:`, e.message);
+      console.log(`[${label} ${strategy.id}] TP cleanup note:`, e.message);
     }
 
     try {
       await client.setMarginMode(strategy.symbol, "ISOLATION");
     } catch (e: any) {
-      console.log(`[InitialBuy ${strategy.id}] Margin mode note:`, e.message);
+      console.log(`[${label} ${strategy.id}] Margin mode note:`, e.message);
     }
     try {
       await client.setLeverage(strategy.symbol, leverage);
     } catch (e: any) {
-      console.log(`[InitialBuy ${strategy.id}] Leverage note:`, e.message);
+      console.log(`[${label} ${strategy.id}] Leverage note:`, e.message);
     }
 
     const allLevels = getAsymmetricGridLevels(config);
-    const allBuyLevels = allLevels.filter(l => l < currentPrice);
-    const totalGridCount = allBuyLevels.length;
+    const gridLevels = isShort
+      ? allLevels.filter(l => l > currentPrice)
+      : allLevels.filter(l => l < currentPrice);
+    const totalGridCount = gridLevels.length;
 
-    if (!config.lowerPrice) config.lowerPrice = currentPrice * 0.90;
-    if (!config.upperPrice) config.upperPrice = currentPrice * 1.02;
-    if (!config.liquidationPrice) config.liquidationPrice = currentPrice * 0.88;
+    if (!config.lowerPrice) config.lowerPrice = currentPrice * (isShort ? 0.98 : 0.90);
+    if (!config.upperPrice) config.upperPrice = currentPrice * (isShort ? 1.10 : 1.02);
+    if (!config.liquidationPrice) config.liquidationPrice = currentPrice * (isShort ? 1.12 : 0.88);
 
     const minTpCount = 5;
     const tpReserve = config.tpReservePct || 0.10;
     const minInitialQty = (minTpCount * precision.minTradeVolume) / (1 - tpReserve);
     const minInitialMargin = (minInitialQty * currentPrice) / (leverage * 0.95);
-    const initialBuyShare = Math.max(minInitialMargin, budget * 0.25);
-    const remainingForGrids = budget - initialBuyShare;
+    const initialShare = Math.max(minInitialMargin, budget * 0.25);
+    const remainingForGrids = budget - initialShare;
     const marginPerGrid = totalGridCount > 0 ? remainingForGrids / totalGridCount : remainingForGrids;
     config.amountPerGrid = marginPerGrid;
 
-    const initialNotional = initialBuyShare * leverage * 0.95;
+    const initialNotional = initialShare * leverage * 0.95;
     const baseQty = Math.max(initialNotional / currentPrice, minInitialQty);
     const qtyStr = roundQty(baseQty, precision.basePrecision);
 
-    const buyLevelsIn1Pct = allBuyLevels.filter(l => l >= currentPrice * (1 - bandPct));
-    const gridBuyCount = buyLevelsIn1Pct.length;
+    const gridLevelsIn1Pct = isShort
+      ? gridLevels.filter(l => l <= currentPrice * (1 + bandPct))
+      : gridLevels.filter(l => l >= currentPrice * (1 - bandPct));
+    const gridInitCount = gridLevelsIn1Pct.length;
 
-    console.log(`[InitialBuy ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, totalGridLevels=${totalGridCount}, initialBuyShare=${initialBuyShare.toFixed(2)}, marginPerGrid=${marginPerGrid.toFixed(4)}, gridBuysIn1%=${gridBuyCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, minInitialQty=${minInitialQty.toFixed(2)}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
+    console.log(`[${label} ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, side=${posSide}, totalGridLevels=${totalGridCount}, initialShare=${initialShare.toFixed(2)}, marginPerGrid=${marginPerGrid.toFixed(4)}, gridOrdersIn1%=${gridInitCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
 
     const result = await client.placeOrder({
       symbol: strategy.symbol,
       qty: qtyStr,
-      side: "BUY",
+      side: posSide,
       tradeSide: "OPEN",
       orderType: "MARKET",
     });
 
-    console.log(`[InitialBuy ${strategy.id}] Order result:`, JSON.stringify(result));
+    console.log(`[${label} ${strategy.id}] Order result:`, JSON.stringify(result));
 
     const success = result?.code === 0;
     const orderId = result?.data?.orderId;
@@ -357,7 +366,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     await storage.createTradeLog({
       strategyId: strategy.id,
       symbol: strategy.symbol,
-      side: "BUY",
+      side: posSide,
       orderType: "MARKET",
       quantity: baseQty,
       price: currentPrice,
@@ -370,7 +379,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     if (success) {
       config.allocatedBudget = budget;
       config.lastTrackedPnl = 0;
-      console.log(`[InitialBuy ${strategy.id}] Set allocatedBudget=${budget.toFixed(2)} USDT`);
+      console.log(`[${label} ${strategy.id}] Set allocatedBudget=${budget.toFixed(2)} USDT`);
       await storage.updateStrategy(strategy.id, {
         totalTrades: (strategy.totalTrades || 0) + 1,
         config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid, allocatedBudget: config.allocatedBudget, lastTrackedPnl: 0 },
@@ -378,20 +387,21 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
 
       let remainingBalance = 0;
       try {
-        const postBuyAccount = await client.getAccount();
-        if (postBuyAccount?.code === 0 && postBuyAccount?.data) {
-          remainingBalance = parseFloat(postBuyAccount.data.available || "0");
+        const postAccount = await client.getAccount();
+        if (postAccount?.code === 0 && postAccount?.data) {
+          remainingBalance = parseFloat(postAccount.data.available || "0");
         }
       } catch {}
 
-      const remainingBudget = Math.min(remainingBalance, budget - initialBuyShare);
-      const gridMarginEach = gridBuyCount > 0 ? Math.max(0, remainingBudget) / gridBuyCount : marginPerGrid;
-      console.log(`[InitialBuy ${strategy.id}] Now placing ${gridBuyCount} limit BUY orders within 1% below entry... (remainingBudget=${remainingBudget.toFixed(2)}, marginEach=${gridMarginEach.toFixed(4)} USDT)`);
+      const remainingBudget = Math.min(remainingBalance, budget - initialShare);
+      const gridMarginEach = gridInitCount > 0 ? Math.max(0, remainingBudget) / gridInitCount : marginPerGrid;
+      const gridOrderSide = isShort ? "SELL" : "BUY";
+      console.log(`[${label} ${strategy.id}] Now placing ${gridInitCount} limit ${gridOrderSide} orders within 1% of entry... (remainingBudget=${remainingBudget.toFixed(2)}, marginEach=${gridMarginEach.toFixed(4)} USDT)`);
       let placed = 0;
       const minExchangeMargin = (precision.minTradeVolume * currentPrice) / (leverage * 0.95);
-      for (const level of buyLevelsIn1Pct) {
+      for (const level of gridLevelsIn1Pct) {
         if (remainingBalance < minExchangeMargin * 0.9) {
-          console.log(`[InitialBuy ${strategy.id}] Stopping grid buys: insufficient remaining balance (${remainingBalance.toFixed(2)} USDT)`);
+          console.log(`[${label} ${strategy.id}] Stopping grid orders: insufficient remaining balance (${remainingBalance.toFixed(2)} USDT)`);
           break;
         }
         const gridNotional = Math.max(gridMarginEach, minExchangeMargin) * leverage * 0.95;
@@ -403,7 +413,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
           const gridResult = await client.placeOrder({
             symbol: strategy.symbol,
             qty: gridQtyStr,
-            side: "BUY",
+            side: gridOrderSide,
             tradeSide: "OPEN",
             orderType: "LIMIT",
             price: priceStr,
@@ -412,34 +422,34 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
 
           if (gridResult?.code === 0 && gridResult.data?.orderId) {
             const orders = activeGridOrders.get(strategy.id) || new Map();
-            orders.set(`BUY_${priceStr}`, {
+            orders.set(`${gridOrderSide}_${priceStr}`, {
               orderId: gridResult.data.orderId,
               price: level,
-              side: "BUY",
+              side: gridOrderSide,
               level,
             });
             activeGridOrders.set(strategy.id, orders);
             placed++;
-            console.log(`[InitialBuy ${strategy.id}] Placed BUY ${gridQtyStr} @ ${priceStr}`);
+            console.log(`[${label} ${strategy.id}] Placed ${gridOrderSide} ${gridQtyStr} @ ${priceStr}`);
           } else {
-            console.error(`[InitialBuy ${strategy.id}] Grid BUY failed @ ${priceStr}: ${gridResult?.msg}`);
+            console.error(`[${label} ${strategy.id}] Grid ${gridOrderSide} failed @ ${priceStr}: ${gridResult?.msg}`);
           }
         } catch (e: any) {
-          console.error(`[InitialBuy ${strategy.id}] Grid BUY error @ ${priceStr}:`, e.message);
+          console.error(`[${label} ${strategy.id}] Grid ${gridOrderSide} error @ ${priceStr}:`, e.message);
         }
       }
-      console.log(`[InitialBuy ${strategy.id}] Placed ${placed}/${gridBuyCount} grid BUY orders`);
+      console.log(`[${label} ${strategy.id}] Placed ${placed}/${gridInitCount} grid ${gridOrderSide} orders`);
     }
 
     return {
       success,
       message: success
-        ? `Bought ${qtyStr} ${strategy.symbol} at ~$${currentPrice.toFixed(2)} (${initialNotional.toFixed(2)} USDT notional, ${leverage}x, ${gridBuyCount} grid buys reserved)`
+        ? `${isShort ? "Sold" : "Bought"} ${qtyStr} ${strategy.symbol} at ~$${currentPrice.toFixed(2)} (${initialNotional.toFixed(2)} USDT notional, ${leverage}x, ${gridInitCount} grid orders reserved)`
         : (result?.msg || "Order placement failed"),
       orderId,
     };
   } catch (e: any) {
-    console.error(`[InitialBuy ${strategy.id}] Error:`, e);
+    console.error(`[${label} ${strategy.id}] Error:`, e);
     return { success: false, message: e.message };
   }
 }
@@ -449,15 +459,20 @@ async function executeGridStrategy(strategy: Strategy) {
   if (!client) throw new Error("Bitunix client not configured");
 
   const config = strategy.config as GridConfig & { initialBuyDone?: boolean };
+  const isShort = config.gridSide === "SHORT";
+  const posSide = isShort ? "SELL" : "BUY";
+  const gridOrderSide = isShort ? "SELL" : "BUY";
+  const oppositeSide = isShort ? "BUY" : "SELL";
+  const tag = isShort ? `GridS ${strategy.id}` : `Grid ${strategy.id}`;
 
   if (!config.startPrice || !config.lowerPrice || !config.upperPrice) {
     const ticker = await getTickerPrice(strategy.symbol);
     if (ticker) {
       const cp = ticker.lastPrice;
       if (!config.startPrice) config.startPrice = cp;
-      if (!config.lowerPrice) config.lowerPrice = cp * 0.90;
-      if (!config.upperPrice) config.upperPrice = cp * 1.02;
-      if (!config.liquidationPrice) config.liquidationPrice = cp * 0.88;
+      if (!config.lowerPrice) config.lowerPrice = cp * (isShort ? 0.98 : 0.90);
+      if (!config.upperPrice) config.upperPrice = cp * (isShort ? 1.10 : 1.02);
+      if (!config.liquidationPrice) config.liquidationPrice = cp * (isShort ? 1.12 : 0.88);
       if (!config.amountPerGrid) config.amountPerGrid = 2;
       await storage.updateStrategy(strategy.id, { config });
     }
@@ -465,16 +480,16 @@ async function executeGridStrategy(strategy: Strategy) {
 
   if (!config.initialBuyDone) {
     if (initialBuyLocks.has(strategy.id)) {
-      console.log(`[Grid ${strategy.id}] Initial buy already in progress, skipping...`);
+      console.log(`[${tag}] Initial position already in progress, skipping...`);
       return;
     }
     initialBuyLocks.add(strategy.id);
     try {
-      console.log(`[Grid ${strategy.id}] No initial buy yet, placing initial position...`);
+      console.log(`[${tag}] No initial position yet, placing...`);
       const result = await placeInitialGridBuy(strategy);
-      console.log(`[Grid ${strategy.id}] Initial buy result: ${result.message}`);
+      console.log(`[${tag}] Initial position result: ${result.message}`);
       if (!result.success) {
-        console.error(`[Grid ${strategy.id}] Initial buy failed: ${result.message}`);
+        console.error(`[${tag}] Initial position failed: ${result.message}`);
       }
     } finally {
       initialBuyLocks.delete(strategy.id);
@@ -490,15 +505,16 @@ async function executeGridStrategy(strategy: Strategy) {
   const currentPrice = ticker.lastPrice;
   const levels = getAsymmetricGridLevels(config);
 
-  const lowerBound = config.lowerPrice || currentPrice * 0.90;
-  const upperBound = config.upperPrice || currentPrice * 1.02;
+  const lowerBound = config.lowerPrice || currentPrice * (isShort ? 0.98 : 0.90);
+  const upperBound = config.upperPrice || currentPrice * (isShort ? 1.10 : 1.02);
 
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
   const minProfitableGap = roundTripFee * 4.0;
 
-  const buyCap = currentPrice * (1 - minProfitableGap);
-  const buyLevels = levels.filter(l => l <= buyCap && l >= lowerBound).reverse();
+  const gridLevels = isShort
+    ? levels.filter(l => l >= currentPrice * (1 + minProfitableGap) && l <= upperBound)
+    : levels.filter(l => l <= currentPrice * (1 - minProfitableGap) && l >= lowerBound).reverse();
 
   let openOrders: any[] = [];
   try {
@@ -509,10 +525,10 @@ async function executeGridStrategy(strategy: Strategy) {
       } else if (res.data?.orderList && Array.isArray(res.data.orderList)) {
         openOrders = res.data.orderList;
       }
-      console.log(`[Grid ${strategy.id}] Open orders on exchange: ${openOrders.length} (sides: ${openOrders.map((o: any) => `${o.side}@${o.price}`).join(', ')})`);
+      console.log(`[${tag}] Open orders on exchange: ${openOrders.length} (sides: ${openOrders.map((o: any) => `${o.side}@${o.price}`).join(', ')})`);
     }
   } catch (e: any) {
-    console.error(`[Grid ${strategy.id}] Failed to fetch open orders:`, e.message);
+    console.error(`[${tag}] Failed to fetch open orders:`, e.message);
   }
 
   let positionId: string | null = null;
@@ -524,7 +540,7 @@ async function executeGridStrategy(strategy: Strategy) {
   try {
     const posRes = await client.getPositions(strategy.symbol);
     if (posRes?.code === 0 && Array.isArray(posRes.data) && posRes.data.length > 0) {
-      const pos = posRes.data.find((p: any) => p.side === "BUY");
+      const pos = posRes.data.find((p: any) => p.side === posSide);
       if (pos) {
         positionId = pos.positionId;
         positionQty = parseFloat(pos.qty || "0");
@@ -535,28 +551,28 @@ async function executeGridStrategy(strategy: Strategy) {
       }
     }
   } catch (e: any) {
-    console.error(`[Grid ${strategy.id}] Failed to fetch positions:`, e.message);
+    console.error(`[${tag}] Failed to fetch positions:`, e.message);
   }
 
-  const desiredBuyPrices = new Set(buyLevels.map(l => roundPrice(l, precision.quotePrecision)));
+  const desiredGridPrices = new Set(gridLevels.map(l => roundPrice(l, precision.quotePrecision)));
 
   const ordersToCancel: string[] = [];
-  const coveredBuyPrices = new Set<string>();
+  const coveredGridPrices = new Set<string>();
 
   for (const order of openOrders) {
     const orderPrice = roundPrice(parseFloat(order.price || "0"), precision.quotePrecision);
     const orderSide = order.side;
 
-    if (orderSide === "SELL") {
+    if (orderSide === oppositeSide) {
       ordersToCancel.push(order.orderId);
       continue;
     }
 
-    if (orderSide === "BUY" && desiredBuyPrices.has(orderPrice)) {
-      if (coveredBuyPrices.has(orderPrice)) {
+    if (orderSide === gridOrderSide && desiredGridPrices.has(orderPrice)) {
+      if (coveredGridPrices.has(orderPrice)) {
         ordersToCancel.push(order.orderId);
       } else {
-        coveredBuyPrices.add(orderPrice);
+        coveredGridPrices.add(orderPrice);
       }
     } else {
       ordersToCancel.push(order.orderId);
@@ -569,9 +585,9 @@ async function executeGridStrategy(strategy: Strategy) {
         symbol: strategy.symbol,
         orderList: ordersToCancel.map(id => ({ orderId: id })),
       });
-      console.log(`[Grid ${strategy.id}] Cancelled ${ordersToCancel.length} unwanted orders (dupes/sells/out-of-range)`);
+      console.log(`[${tag}] Cancelled ${ordersToCancel.length} unwanted orders`);
     } catch (e: any) {
-      console.error(`[Grid ${strategy.id}] Cancel error:`, e.message);
+      console.error(`[${tag}] Cancel error:`, e.message);
     }
   }
 
@@ -595,7 +611,7 @@ async function executeGridStrategy(strategy: Strategy) {
       if (lastTrackedPositionId && lastTrackedPositionId !== positionId) {
         config.lastTrackedPnl = 0;
         config.lastTrackedPositionId = positionId;
-        console.log(`[Grid ${strategy.id}] Position changed (${lastTrackedPositionId} -> ${positionId}), reset PnL tracking`);
+        console.log(`[${tag}] Position changed (${lastTrackedPositionId} -> ${positionId}), reset PnL tracking`);
       }
 
       const trackBase = (lastTrackedPositionId === positionId) ? lastTrackedPnl : 0;
@@ -606,13 +622,13 @@ async function executeGridStrategy(strategy: Strategy) {
         config.allocatedBudget = Math.max(0, allocatedBudget);
         config.lastTrackedPnl = netPnl;
         config.lastTrackedPositionId = positionId;
-        console.log(`[Grid ${strategy.id}] PnL adjustment: realized=${posRealizedPnl.toFixed(4)} fee=${posFee.toFixed(4)} funding=${posFunding.toFixed(4)} net=${netPnl.toFixed(4)} delta=${pnlDelta > 0 ? "+" : ""}${pnlDelta.toFixed(4)} -> budget=${config.allocatedBudget.toFixed(2)}`);
+        console.log(`[${tag}] PnL adjustment: delta=${pnlDelta > 0 ? "+" : ""}${pnlDelta.toFixed(4)} -> budget=${config.allocatedBudget.toFixed(2)}`);
         await storage.updateStrategy(strategy.id, { config });
       }
     } else if (lastTrackedPositionId) {
       config.lastTrackedPnl = 0;
       config.lastTrackedPositionId = null;
-      console.log(`[Grid ${strategy.id}] Position closed, reset PnL tracking. Budget remains at ${allocatedBudget.toFixed(2)}`);
+      console.log(`[${tag}] Position closed, reset PnL tracking. Budget remains at ${allocatedBudget.toFixed(2)}`);
       await storage.updateStrategy(strategy.id, { config });
     }
   }
@@ -620,35 +636,35 @@ async function executeGridStrategy(strategy: Strategy) {
   let availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, allocatedBudget) : accountAvailable;
 
   if (allocatedBudget > 0 && accountAvailable > allocatedBudget + 0.5) {
-    console.log(`[Grid ${strategy.id}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
+    console.log(`[${tag}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
   }
 
   const lastTpPosQty = config.lastTpPositionQty || 0;
   const tpWasHit = lastTpPosQty > 0 && positionQty < lastTpPosQty * 0.98;
   if (tpWasHit) {
     const qtyFreed = lastTpPosQty - positionQty;
-    console.log(`[Grid ${strategy.id}] TP hit detected: position ${lastTpPosQty} -> ${positionQty} (freed ${qtyFreed.toFixed(precision.basePrecision)} qty). Freed margin available for new buys.`);
+    console.log(`[${tag}] TP hit detected: position ${lastTpPosQty} -> ${positionQty} (freed ${qtyFreed.toFixed(precision.basePrecision)} qty).`);
   }
 
-  const missingBuyLevels = buyLevels.filter(l => !coveredBuyPrices.has(roundPrice(l, precision.quotePrecision)));
+  const missingGridLevels = gridLevels.filter(l => !coveredGridPrices.has(roundPrice(l, precision.quotePrecision)));
   const leverage = config.leverage || 8;
   const minMarginPerOrder = (precision.minTradeVolume * currentPrice) / (leverage * 0.95);
-  const marginPerOrder = missingBuyLevels.length > 0
-    ? Math.max(minMarginPerOrder, (availableBalance - 0.1) / missingBuyLevels.length)
+  const marginPerOrder = missingGridLevels.length > 0
+    ? Math.max(minMarginPerOrder, (availableBalance - 0.1) / missingGridLevels.length)
     : minMarginPerOrder;
   const usableBalance = availableBalance - 0.1;
 
   const levelsToFill = usableBalance >= minMarginPerOrder
-    ? missingBuyLevels.length
+    ? missingGridLevels.length
     : 0;
-  const buySlice = missingBuyLevels.slice(0, levelsToFill);
+  const gridSlice = missingGridLevels.slice(0, levelsToFill);
 
-  if (missingBuyLevels.length > 0 && levelsToFill === 0 && coveredBuyPrices.size === 0) {
-    console.log(`[Grid ${strategy.id}] No balance for buy orders: ${availableBalance.toFixed(2)} USDT (need ${minMarginPerOrder.toFixed(2)} min per grid)`);
+  if (missingGridLevels.length > 0 && levelsToFill === 0 && coveredGridPrices.size === 0) {
+    console.log(`[${tag}] No balance for grid orders: ${availableBalance.toFixed(2)} USDT (need ${minMarginPerOrder.toFixed(2)} min per grid)`);
   }
 
-  let placedBuys = 0;
-  for (const level of buySlice) {
+  let placedGrids = 0;
+  for (const level of gridSlice) {
     const effectiveMargin = Math.min(marginPerOrder, (availableBalance - 0.1) * 0.95);
     if (effectiveMargin < minMarginPerOrder * 0.9) break;
     const notional = effectiveMargin * leverage * 0.95;
@@ -661,7 +677,7 @@ async function executeGridStrategy(strategy: Strategy) {
       const result = await client.placeOrder({
         symbol: strategy.symbol,
         qty: qtyStr,
-        side: "BUY",
+        side: gridOrderSide,
         tradeSide: "OPEN",
         orderType: "LIMIT",
         price: priceStr,
@@ -669,13 +685,13 @@ async function executeGridStrategy(strategy: Strategy) {
       });
 
       if (result?.code === 0 && result.data?.orderId) {
-        placedBuys++;
+        placedGrids++;
         availableBalance -= effectiveMargin;
       } else {
-        console.error(`[Grid ${strategy.id}] BUY failed @ ${priceStr}: ${result?.msg}`);
+        console.error(`[${tag}] ${gridOrderSide} failed @ ${priceStr}: ${result?.msg}`);
       }
     } catch (e: any) {
-      console.error(`[Grid ${strategy.id}] BUY error @ ${priceStr}:`, e.message);
+      console.error(`[${tag}] ${gridOrderSide} error @ ${priceStr}:`, e.message);
     }
   }
 
@@ -683,25 +699,35 @@ async function executeGridStrategy(strategy: Strategy) {
   let cancelledTps = 0;
 
   const tpRefPrice = positionEntryPrice > 0 ? positionEntryPrice : config.startPrice;
-  const minTpPrice = tpRefPrice * (1 + minProfitableGap);
-  const tpUpperLimit = Math.max(currentPrice * 1.03, minTpPrice * 1.005);
+  const tpLevels: number[] = [];
 
-  const allSellLevels: number[] = [];
-  let tpPrice = minTpPrice;
-  while (tpPrice <= tpUpperLimit) {
-    allSellLevels.push(tpPrice);
-    tpPrice *= (1 + minProfitableGap);
+  if (isShort) {
+    const maxTpPrice = tpRefPrice * (1 - minProfitableGap);
+    const tpLowerLimit = Math.min(currentPrice * 0.97, maxTpPrice * 0.995);
+    let tp = maxTpPrice;
+    while (tp >= tpLowerLimit) {
+      tpLevels.push(tp);
+      tp /= (1 + minProfitableGap);
+    }
+  } else {
+    const minTpPrice = tpRefPrice * (1 + minProfitableGap);
+    const tpUpperLimit = Math.max(currentPrice * 1.03, minTpPrice * 1.005);
+    let tp = minTpPrice;
+    while (tp <= tpUpperLimit) {
+      tpLevels.push(tp);
+      tp *= (1 + minProfitableGap);
+    }
   }
 
   const maxTpLevels = Math.max(
     Math.floor(positionQty / precision.minTradeVolume),
     1
   );
-  const sellLevels = allSellLevels.slice(0, maxTpLevels);
+  const activeTpLevels = tpLevels.slice(0, maxTpLevels);
 
-  console.log(`[Grid ${strategy.id}] Price: ${currentPrice.toFixed(4)} | Entry: ${tpRefPrice.toFixed(4)} | minTp: ${minTpPrice.toFixed(4)} | TP levels: ${sellLevels.length}/${allSellLevels.length} | Buy levels: ${buyLevels.length}`);
+  console.log(`[${tag}] Price: ${currentPrice.toFixed(4)} | Entry: ${tpRefPrice.toFixed(4)} | TP levels: ${activeTpLevels.length}/${tpLevels.length} | Grid levels: ${gridLevels.length}`);
 
-  if (positionId && positionQty > 0 && sellLevels.length > 0) {
+  if (positionId && positionQty > 0 && activeTpLevels.length > 0) {
     const lastTpEntry = config.lastTpEntryPrice || 0;
     const lastTpPosQty = config.lastTpPositionQty || 0;
     const lastTpTime = config.lastTpPlacedAt || 0;
@@ -723,34 +749,29 @@ async function executeGridStrategy(strategy: Strategy) {
         }
       }
     } catch (e: any) {
-      console.error(`[Grid ${strategy.id}] Check live TPs error:`, e.message);
+      console.error(`[${tag}] Check live TPs error:`, e.message);
     }
 
     const hasTpsPlaced = lastTpCount > 0 && lastTpTime > 0;
     const tpsMissing = hasTpsPlaced && liveTpCount === 0;
     const hasDuplicates = hasTpsPlaced && liveTpCount > lastTpCount + 2;
-    const entryDroppedEnough = hasTpsPlaced && lastTpEntry > 0 && tpRefPrice < lastTpEntry * 0.995;
+    const entryChanged = hasTpsPlaced && lastTpEntry > 0 && Math.abs(tpRefPrice - lastTpEntry) / lastTpEntry > 0.005;
     const positionGrewEnough = hasTpsPlaced && lastTpPosQty > 0 && positionQty > lastTpPosQty * 1.15;
     const tpsConsumed = hasTpsPlaced && liveTpCount < lastTpCount && liveTpCount > 0;
     const cooldownOk = (now - lastTpTime) > 60000;
 
-    const needsRebuild = !hasTpsPlaced || tpsMissing || hasDuplicates || tpsConsumed || ((entryDroppedEnough || positionGrewEnough) && cooldownOk);
+    const needsRebuild = !hasTpsPlaced || tpsMissing || hasDuplicates || tpsConsumed || ((entryChanged || positionGrewEnough) && cooldownOk);
 
     if (!needsRebuild) {
-      console.log(`[Grid ${strategy.id}] TPs stable: ${liveTpCount} live on exchange (saved=${lastTpCount}) at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
+      console.log(`[${tag}] TPs stable: ${liveTpCount} live on exchange (saved=${lastTpCount}) at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
     } else {
-      const reason = !hasTpsPlaced
-        ? "first TP placement"
-        : tpsMissing
-          ? `TPs missing from exchange (saved=${lastTpCount}, live=${liveTpCount})`
-          : hasDuplicates
-            ? `duplicate TPs detected (saved=${lastTpCount}, live=${liveTpCount}) — cleaning up`
-            : tpsConsumed
-              ? `TPs consumed (saved=${lastTpCount}, live=${liveTpCount}) — replanting for remaining qty ${positionQty}`
-              : entryDroppedEnough
-                ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
-                : `position grew ${lastTpPosQty}->${positionQty}`;
-      console.log(`[Grid ${strategy.id}] TP rebuild: ${reason} — cancelling ${liveTpCount} existing TPs first`);
+      const reason = !hasTpsPlaced ? "first TP placement"
+        : tpsMissing ? `TPs missing (saved=${lastTpCount}, live=${liveTpCount})`
+        : hasDuplicates ? `duplicates (saved=${lastTpCount}, live=${liveTpCount})`
+        : tpsConsumed ? `TPs consumed (saved=${lastTpCount}, live=${liveTpCount})`
+        : entryChanged ? `entry moved ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
+        : `position grew ${lastTpPosQty}->${positionQty}`;
+      console.log(`[${tag}] TP rebuild: ${reason} — cancelling ${liveTpCount} existing TPs first`);
 
       for (const tp of liveTpOrders) {
         const tpId = tp.id || tp.orderId;
@@ -759,28 +780,27 @@ async function executeGridStrategy(strategy: Strategy) {
             await client.cancelTpslOrder(strategy.symbol, tpId);
             cancelledTps++;
           } catch (e: any) {
-            console.error(`[Grid ${strategy.id}] Cancel TP ${tpId} error:`, e.message);
+            console.error(`[${tag}] Cancel TP ${tpId} error:`, e.message);
           }
         }
       }
       if (liveTpOrders.length > 0) {
-        console.log(`[Grid ${strategy.id}] Cancelled ${cancelledTps}/${liveTpOrders.length} existing TPs`);
+        console.log(`[${tag}] Cancelled ${cancelledTps}/${liveTpOrders.length} existing TPs`);
       }
 
       const tpReservePct = Math.min(Math.max(config.tpReservePct ?? 0.10, 0), 0.5);
       const sellableQty = positionQty * (1 - tpReservePct);
-      const reservedQty = positionQty - sellableQty;
 
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);
       const tpQtyPerLevel = Math.max(
-        Math.floor((sellableQty / sellLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
+        Math.floor((sellableQty / activeTpLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
         precision.minTradeVolume
       );
 
-      let levelsToPlace = sellLevels;
-      if (tpQtyPerLevel * sellLevels.length > sellableQty * 1.02) {
+      let levelsToPlace = activeTpLevels;
+      if (tpQtyPerLevel * activeTpLevels.length > sellableQty * 1.02) {
         const maxLevels = Math.floor(sellableQty / tpQtyPerLevel);
-        levelsToPlace = sellLevels.slice(0, Math.max(maxLevels, 1));
+        levelsToPlace = activeTpLevels.slice(0, Math.max(maxLevels, 1));
       }
 
       const lastLevelQty = Math.max(
@@ -788,7 +808,7 @@ async function executeGridStrategy(strategy: Strategy) {
         precision.minTradeVolume
       );
 
-      console.log(`[Grid ${strategy.id}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (last=${lastLevelQty.toFixed(precision.basePrecision)}) (posQty: ${positionQty}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, reserved: ${reservedQty.toFixed(precision.basePrecision)} [${(tpReservePct*100).toFixed(0)}%], entry: ${tpRefPrice.toFixed(4)})`);
+      console.log(`[${tag}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (posQty: ${positionQty}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, entry: ${tpRefPrice.toFixed(4)})`);
 
       for (let i = 0; i < levelsToPlace.length; i++) {
         const level = levelsToPlace[i];
@@ -807,12 +827,11 @@ async function executeGridStrategy(strategy: Strategy) {
           });
           if (result?.code === 0) {
             placedTps++;
-            console.log(`[Grid ${strategy.id}] TP placed @ ${priceStr} qty=${qtyStr} ✓`);
           } else {
-            console.error(`[Grid ${strategy.id}] TP failed @ ${priceStr} qty=${qtyStr}: code=${result?.code} msg=${result?.msg}`);
+            console.error(`[${tag}] TP failed @ ${priceStr} qty=${qtyStr}: ${result?.msg}`);
           }
         } catch (e: any) {
-          console.error(`[Grid ${strategy.id}] TP error @ ${priceStr}:`, e.message);
+          console.error(`[${tag}] TP error @ ${priceStr}:`, e.message);
         }
       }
 
@@ -821,12 +840,12 @@ async function executeGridStrategy(strategy: Strategy) {
       config.lastTpPlacedAt = now;
       config.lastTpCount = placedTps;
       await storage.updateStrategy(strategy.id, { config });
-      console.log(`[Grid ${strategy.id}] TP state saved: entry=${tpRefPrice.toFixed(4)} qty=${positionQty} placed=${placedTps}/${levelsToPlace.length}`);
+      console.log(`[${tag}] TP state saved: entry=${tpRefPrice.toFixed(4)} qty=${positionQty} placed=${placedTps}/${levelsToPlace.length}`);
     }
   }
 
   const budgetInfo = config.allocatedBudget ? ` | Budget=${config.allocatedBudget.toFixed(2)}` : "";
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${lowerBound.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${minTpPrice.toFixed(precision.quotePrecision)}-${tpUpperLimit.toFixed(precision.quotePrecision)}] gap=${(minProfitableGap*100).toFixed(2)}% | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}/${allSellLevels.length}(+${placedTps}/-${cancelledTps}) maxByQty=${maxTpLevels} | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
+  console.log(`[${tag}] Price=${currentPrice.toFixed(precision.quotePrecision)} | Side=${posSide} | GridOrders=${gridLevels.length}(live=${coveredGridPrices.size}+${placedGrids}) TPs=${activeTpLevels.length}/${tpLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
 
   await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 }
@@ -1647,10 +1666,12 @@ async function guardedExecuteGridStrategy(strategy: Strategy) {
 
 export interface TandemConfig {
   leverage: number;
-  capitalPerSide: number;
+  totalCapital: number;
   feeMultiplier: number;
   phase: "entry" | "waiting_liquidation" | "cascade" | "trailing" | "complete";
   entryPrice: number;
+  longGridId: number | null;
+  shortGridId: number | null;
   longPositionId: string | null;
   shortPositionId: string | null;
   longEntryQty: number;
@@ -1667,9 +1688,60 @@ export interface TandemConfig {
   totalPnl: number;
   lastActionAt: number;
   rotationEnabled?: boolean;
+  capitalPerSide?: number;
 }
 
 const tandemEntryLocks: Set<number> = new Set();
+
+function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, leverage: number, budget: number): GridConfig & { initialBuyDone?: boolean; gridSide: "LONG" | "SHORT" } {
+  const feeRate = 0.0006;
+  const roundTripFee = 2 * feeRate;
+  const gridRatio = 1 + roundTripFee * 4.0;
+
+  if (side === "LONG") {
+    return {
+      startPrice: currentPrice,
+      lowerPrice: currentPrice * 0.90,
+      upperPrice: currentPrice * 1.02,
+      liquidationPrice: currentPrice * 0.88,
+      leverage,
+      gridRatio,
+      gridCount: 20,
+      amountPerGrid: 2,
+      geometric: true,
+      gapGrowthBelow: 1.05,
+      gapShrinkAbove: 1.05,
+      gridsAbove: 10,
+      gridsBelow: 10,
+      extensionsBelow: 0,
+      extensionsAbove: 0,
+      allocatedBudget: budget,
+      tpReservePct: 0.10,
+      gridSide: "LONG",
+    };
+  } else {
+    return {
+      startPrice: currentPrice,
+      lowerPrice: currentPrice * 0.98,
+      upperPrice: currentPrice * 1.10,
+      liquidationPrice: currentPrice * 1.12,
+      leverage,
+      gridRatio,
+      gridCount: 20,
+      amountPerGrid: 2,
+      geometric: true,
+      gapGrowthBelow: 1.05,
+      gapShrinkAbove: 1.05,
+      gridsAbove: 10,
+      gridsBelow: 10,
+      extensionsBelow: 0,
+      extensionsAbove: 0,
+      allocatedBudget: budget,
+      tpReservePct: 0.10,
+      gridSide: "SHORT",
+    };
+  }
+}
 
 async function executeTandemStrategy(strategy: Strategy) {
   const client = getBitunixClient();
@@ -1709,20 +1781,19 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
   tandemEntryLocks.add(strategy.id);
 
   try {
-    const precision = await getPairPrecision(strategy.symbol);
     const ticker = await getTickerPrice(strategy.symbol);
     if (!ticker) throw new Error(`Cannot get price for ${strategy.symbol}`);
 
     const currentPrice = ticker.lastPrice;
     const leverage = config.leverage || 33;
-    const capitalPerSide = config.capitalPerSide || 50;
+    const totalCapital = config.totalCapital || (config.capitalPerSide ? config.capitalPerSide * 2 : 100);
+    const capitalPerSide = totalCapital / 2;
 
     const accountRes = await client.getAccount();
     if (accountRes?.code !== 0 || !accountRes?.data) throw new Error("Cannot fetch account balance");
     const accountAvailable = parseFloat(accountRes.data.available || "0");
-    const totalNeeded = capitalPerSide * 2;
-    if (accountAvailable < totalNeeded) {
-      throw new Error(`Insufficient balance: ${accountAvailable.toFixed(2)} USDT, need ${totalNeeded.toFixed(2)} for both sides`);
+    if (accountAvailable < totalCapital) {
+      throw new Error(`Insufficient balance: ${accountAvailable.toFixed(2)} USDT, need ${totalCapital.toFixed(2)} total`);
     }
 
     try { await client.setMarginMode(strategy.symbol, "ISOLATION"); } catch (e: any) {
@@ -1732,70 +1803,43 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
       console.log(`[Tandem ${strategy.id}] Leverage note:`, e.message);
     }
 
-    const notionalPerSide = capitalPerSide * leverage * 0.95;
-    const qty = notionalPerSide / currentPrice;
-    const qtyStr = roundQty(qty, precision.basePrecision);
+    console.log(`[Tandem ${strategy.id}] Creating LONG + SHORT grid bots, total=${totalCapital}, ${capitalPerSide}/side, leverage=${leverage}x`);
 
-    console.log(`[Tandem ${strategy.id}] Opening LONG + SHORT at ${currentPrice}, qty=${qtyStr}, leverage=${leverage}x, capital/side=${capitalPerSide}`);
-
-    const longResult = await client.placeOrder({
+    const longGridConfig = defaultGridConfigForSide("LONG", currentPrice, leverage, capitalPerSide);
+    (longGridConfig as any).parentTandemId = strategy.id;
+    const longGrid = await storage.createStrategy({
+      name: `TL ${strategy.symbol}`,
+      type: "grid",
       symbol: strategy.symbol,
-      qty: qtyStr,
       side: "BUY",
-      tradeSide: "OPEN",
-      orderType: "MARKET",
+      status: "running",
+      config: longGridConfig,
     });
-    console.log(`[Tandem ${strategy.id}] LONG result:`, JSON.stringify(longResult));
+    console.log(`[Tandem ${strategy.id}] LONG grid created: #${longGrid.id}`);
 
-    if (longResult?.code !== 0) throw new Error(`LONG order failed: ${longResult?.msg}`);
-
-    const shortResult = await client.placeOrder({
+    const shortGridConfig = defaultGridConfigForSide("SHORT", currentPrice, leverage, capitalPerSide);
+    (shortGridConfig as any).parentTandemId = strategy.id;
+    const shortGrid = await storage.createStrategy({
+      name: `TS ${strategy.symbol}`,
+      type: "grid",
       symbol: strategy.symbol,
-      qty: qtyStr,
       side: "SELL",
-      tradeSide: "OPEN",
-      orderType: "MARKET",
+      status: "running",
+      config: shortGridConfig,
     });
-    console.log(`[Tandem ${strategy.id}] SHORT result:`, JSON.stringify(shortResult));
-
-    if (shortResult?.code !== 0) {
-      console.error(`[Tandem ${strategy.id}] SHORT failed, closing LONG...`);
-      try { await client.flashClose(strategy.symbol); } catch {}
-      throw new Error(`SHORT order failed: ${shortResult?.msg}`);
-    }
-
-    await new Promise(r => setTimeout(r, 2000));
-
-    let longPosId: string | null = null;
-    let shortPosId: string | null = null;
-    let longQty = 0;
-    let shortQty = 0;
-    try {
-      const posRes = await client.getPositions(strategy.symbol);
-      if (posRes?.code === 0 && Array.isArray(posRes.data)) {
-        for (const pos of posRes.data) {
-          const posQty = parseFloat(pos.qty || "0");
-          if (pos.side === "BUY" && posQty > 0) {
-            longPosId = pos.positionId;
-            longQty = posQty;
-          } else if (pos.side === "SELL" && posQty > 0) {
-            shortPosId = pos.positionId;
-            shortQty = posQty;
-          }
-        }
-      }
-    } catch (e: any) {
-      console.error(`[Tandem ${strategy.id}] Position fetch error:`, e.message);
-    }
+    console.log(`[Tandem ${strategy.id}] SHORT grid created: #${shortGrid.id}`);
 
     const updatedConfig: TandemConfig = {
       ...config,
+      totalCapital,
       phase: "waiting_liquidation",
       entryPrice: currentPrice,
-      longPositionId: longPosId,
-      shortPositionId: shortPosId,
-      longEntryQty: longQty || qty,
-      shortEntryQty: shortQty || qty,
+      longGridId: longGrid.id,
+      shortGridId: shortGrid.id,
+      longPositionId: null,
+      shortPositionId: null,
+      longEntryQty: 0,
+      shortEntryQty: 0,
       liquidatedSide: null,
       liquidationPrice: 0,
       cascadeStep: 0,
@@ -1815,27 +1859,15 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
       symbol: strategy.symbol,
       side: "BUY",
       orderType: "MARKET",
-      quantity: qty,
+      quantity: 0,
       price: currentPrice,
       status: "filled",
-      orderId: longResult.data?.orderId || null,
+      orderId: null,
       pnl: null,
-      errorMsg: `Tandem cycle ${updatedConfig.cycleCount}: LONG opened`,
-    });
-    await storage.createTradeLog({
-      strategyId: strategy.id,
-      symbol: strategy.symbol,
-      side: "SELL",
-      orderType: "MARKET",
-      quantity: qty,
-      price: currentPrice,
-      status: "filled",
-      orderId: shortResult.data?.orderId || null,
-      pnl: null,
-      errorMsg: `Tandem cycle ${updatedConfig.cycleCount}: SHORT opened`,
+      errorMsg: `Tandem cycle ${updatedConfig.cycleCount}: LONG grid #${longGrid.id} + SHORT grid #${shortGrid.id} created (${capitalPerSide.toFixed(0)}/side)`,
     });
 
-    console.log(`[Tandem ${strategy.id}] Cycle ${updatedConfig.cycleCount} started: LONG ${longPosId}, SHORT ${shortPosId} @ ${currentPrice}`);
+    console.log(`[Tandem ${strategy.id}] Cycle ${updatedConfig.cycleCount} started with grid bots #${longGrid.id} (LONG) + #${shortGrid.id} (SHORT) @ ${currentPrice}`);
   } finally {
     tandemEntryLocks.delete(strategy.id);
   }
@@ -1860,19 +1892,34 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
     if (pos.side === "SELL") { shortAlive = true; shortPos = pos; }
   }
 
+  if (config.longEntryQty === 0 && longPos) {
+    config.longEntryQty = parseFloat(longPos.qty || "0");
+    config.longPositionId = longPos.positionId;
+  }
+  if (config.shortEntryQty === 0 && shortPos) {
+    config.shortEntryQty = parseFloat(shortPos.qty || "0");
+    config.shortPositionId = shortPos.positionId;
+  }
+  if ((config.longEntryQty === 0 && longPos) || (config.shortEntryQty === 0 && shortPos)) {
+    await storage.updateStrategy(strategy.id, { config });
+  }
+
   if (longAlive && shortAlive) {
     const ticker = await getTickerPrice(strategy.symbol);
     if (ticker) {
       const liqDist = 1 / config.leverage;
       const longLiqPrice = config.entryPrice * (1 - liqDist);
       const shortLiqPrice = config.entryPrice * (1 + liqDist);
-      console.log(`[Tandem ${strategy.id}] Both alive @ ${ticker.lastPrice.toFixed(4)} | LongLiq=${longLiqPrice.toFixed(4)} ShortLiq=${shortLiqPrice.toFixed(4)}`);
+      console.log(`[Tandem ${strategy.id}] Both grids alive @ ${ticker.lastPrice.toFixed(4)} | LongLiq=${longLiqPrice.toFixed(4)} ShortLiq=${shortLiqPrice.toFixed(4)}`);
     }
     return;
   }
 
+  const capitalPerSide = (config.totalCapital || 100) / 2;
+
   if (!longAlive && !shortAlive) {
-    console.log(`[Tandem ${strategy.id}] Both liquidated! Resetting to entry phase.`);
+    console.log(`[Tandem ${strategy.id}] Both grids liquidated! Cleaning up child strategies...`);
+    await stopChildGrids(config);
     await storage.updateStrategy(strategy.id, {
       config: { ...config, phase: "complete", lastActionAt: Date.now() },
     });
@@ -1885,8 +1932,8 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
       price: config.entryPrice,
       status: "filled",
       orderId: null,
-      pnl: -(config.capitalPerSide * 2),
-      errorMsg: `Tandem cycle ${config.cycleCount}: BOTH liquidated`,
+      pnl: -config.totalCapital,
+      errorMsg: `Tandem cycle ${config.cycleCount}: BOTH grids liquidated`,
     });
     return;
   }
@@ -1897,10 +1944,18 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
   const survivingPositionId = survivingPos?.positionId || null;
   const survivingQty = parseFloat(survivingPos?.qty || "0");
 
+  const liquidatedGridId = liquidatedSide === "LONG" ? config.longGridId : config.shortGridId;
+  if (liquidatedGridId) {
+    try {
+      await storage.updateStrategy(liquidatedGridId, { status: "stopped" });
+      console.log(`[Tandem ${strategy.id}] Stopped liquidated ${liquidatedSide} grid #${liquidatedGridId}`);
+    } catch {}
+  }
+
   const ticker = await getTickerPrice(strategy.symbol);
   const liquidationPrice = ticker?.lastPrice || config.entryPrice;
 
-  console.log(`[Tandem ${strategy.id}] ${liquidatedSide} LIQUIDATED @ ~${liquidationPrice.toFixed(4)} | Survivor: ${survivingSide} (qty=${survivingQty}, posId=${survivingPositionId})`);
+  console.log(`[Tandem ${strategy.id}] ${liquidatedSide} grid LIQUIDATED @ ~${liquidationPrice.toFixed(4)} | Survivor: ${survivingSide} grid (qty=${survivingQty})`);
 
   await storage.updateStrategy(strategy.id, {
     config: {
@@ -1927,9 +1982,49 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
     price: liquidationPrice,
     status: "filled",
     orderId: null,
-    pnl: -config.capitalPerSide,
-    errorMsg: `Tandem cycle ${config.cycleCount}: ${liquidatedSide} liquidated`,
+    pnl: -capitalPerSide,
+    errorMsg: `Tandem cycle ${config.cycleCount}: ${liquidatedSide} grid liquidated`,
   });
+}
+
+async function stopChildGrids(config: TandemConfig) {
+  const ids = [config.longGridId, config.shortGridId].filter(Boolean) as number[];
+  for (const id of ids) {
+    try {
+      const child = await storage.getStrategy(id);
+      if (child && child.status === "running") {
+        try {
+          const client = getBitunixClient();
+          if (client) {
+            await client.cancelAllOrders(child.symbol);
+          }
+        } catch {}
+        await storage.updateStrategy(id, { status: "stopped" });
+        console.log(`[Tandem] Stopped child grid #${id}`);
+      }
+    } catch {}
+  }
+}
+
+async function deleteChildGrids(config: TandemConfig) {
+  const ids = [config.longGridId, config.shortGridId].filter(Boolean) as number[];
+  for (const id of ids) {
+    try {
+      const child = await storage.getStrategy(id);
+      if (child) {
+        if (child.status === "running") {
+          try {
+            const client = getBitunixClient();
+            if (client) {
+              await client.cancelAllOrders(child.symbol);
+            }
+          } catch {}
+        }
+        await storage.deleteStrategy(id);
+        console.log(`[Tandem] Deleted child grid #${id}`);
+      }
+    } catch {}
+  }
 }
 
 async function tandemCascade(strategy: Strategy, config: TandemConfig, client: any) {
@@ -1940,8 +2035,11 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
   const posSide = survivingSide === "LONG" ? "BUY" : "SELL";
   const survivingPos = posRes.data.find((p: any) => p.side === posSide && parseFloat(p.qty || "0") > 0);
 
+  const capitalPerSide = (config.totalCapital || 100) / 2;
+
   if (!survivingPos) {
     console.log(`[Tandem ${strategy.id}] Surviving position gone (liquidated during cascade)`);
+    await stopChildGrids(config);
     await storage.updateStrategy(strategy.id, {
       config: { ...config, phase: "complete", lastActionAt: Date.now() },
     });
@@ -1954,7 +2052,7 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
       price: config.liquidationPrice,
       status: "filled",
       orderId: null,
-      pnl: -config.capitalPerSide,
+      pnl: -capitalPerSide,
       errorMsg: `Tandem cycle ${config.cycleCount}: survivor also liquidated`,
     });
     return;
@@ -1964,7 +2062,6 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
   if (!ticker) return;
   const currentPrice = ticker.lastPrice;
   const currentQty = parseFloat(survivingPos.qty || "0");
-  const positionId = survivingPos.positionId;
   const precision = await getPairPrecision(strategy.symbol);
 
   const direction = survivingSide === "LONG" ? 1 : -1;
@@ -1980,7 +2077,7 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
     const targetPct = (cascadeStep + 1) * 0.01;
 
     if (moveBeyondLiq >= targetPct) {
-      const originalQty = config.longEntryQty || config.remainingQty;
+      const originalQty = config.longEntryQty || config.shortEntryQty || config.remainingQty;
       const portionQty = originalQty * (2 / 7);
       const sellQty = Math.min(portionQty, currentQty);
       const qtyStr = roundQty(sellQty, precision.basePrecision);
@@ -2055,6 +2152,7 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
 
   if (!survivingPos) {
     console.log(`[Tandem ${strategy.id}] Trailing: position gone, completing cycle`);
+    await stopChildGrids(config);
     await storage.updateStrategy(strategy.id, {
       config: { ...config, phase: "complete", lastActionAt: Date.now() },
     });
@@ -2081,6 +2179,11 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
   console.log(`[Tandem ${strategy.id}] Trailing: price=${currentPrice.toFixed(4)} hwm=${hwm.toFixed(4)} drop=${(trailingDrop * 100).toFixed(3)}% (trigger=0.5%)`);
 
   if (trailingDrop >= 0.005) {
+    const survivingGridId = config.survivingSide === "LONG" ? config.longGridId : config.shortGridId;
+    if (survivingGridId) {
+      try { await storage.updateStrategy(survivingGridId, { status: "stopped" }); } catch {}
+    }
+
     const closeSide = config.survivingSide === "LONG" ? "SELL" : "BUY";
     const qtyStr = roundQty(currentQty, precision.basePrecision);
 
@@ -2135,6 +2238,8 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
 async function tandemComplete(strategy: Strategy, config: TandemConfig, client: any) {
   console.log(`[Tandem ${strategy.id}] Cycle ${config.cycleCount} complete. Cleaning up and restarting...`);
 
+  await stopChildGrids(config);
+
   try { await client.cancelAllOrders(strategy.symbol); } catch {}
   try {
     const tpRes = await client.getPendingTpslOrders(strategy.symbol);
@@ -2161,6 +2266,8 @@ async function tandemComplete(strategy: Strategy, config: TandemConfig, client: 
     }
   } catch {}
 
+  await deleteChildGrids(config);
+
   const checkRotation = config.rotationEnabled;
   if (checkRotation) {
     const rotation = await checkPairRotation(strategy);
@@ -2172,6 +2279,8 @@ async function tandemComplete(strategy: Strategy, config: TandemConfig, client: 
           ...config,
           phase: "entry",
           entryPrice: 0,
+          longGridId: null,
+          shortGridId: null,
           longPositionId: null,
           shortPositionId: null,
           liquidatedSide: null,
@@ -2194,6 +2303,8 @@ async function tandemComplete(strategy: Strategy, config: TandemConfig, client: 
       ...config,
       phase: "entry",
       entryPrice: 0,
+      longGridId: null,
+      shortGridId: null,
       longPositionId: null,
       shortPositionId: null,
       liquidatedSide: null,
@@ -2213,6 +2324,12 @@ async function tandemComplete(strategy: Strategy, config: TandemConfig, client: 
 export async function cancelAllTandemOrders(strategyId: number, symbol: string) {
   const client = getBitunixClient();
   if (!client) return;
+
+  const strategy = await storage.getStrategy(strategyId);
+  if (strategy) {
+    const config = strategy.config as TandemConfig;
+    await deleteChildGrids(config);
+  }
 
   try { await client.cancelAllOrders(symbol); } catch {}
   try {

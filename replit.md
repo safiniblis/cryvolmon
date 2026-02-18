@@ -107,7 +107,8 @@ A full-stack cryptocurrency trading platform with two main features:
 - Set automatically at strategy start to the available balance at that time
 - Increased by manual "Add Margin" (user explicitly assigns more funds)
 - Decreased by manual "Remove Margin" (user withdraws funds from strategy)
-- PnL adjustments: each cycle reads position `realizedPNL + fee + funding` from Bitunix, tracks delta via `lastTrackedPnl`, and adjusts budget up (profits) or down (losses/fees/funding)
+- **Standalone grids**: PnL adjustments each cycle — reads position `realizedPNL + fee + funding` from Bitunix, tracks delta via `lastTrackedPnl`, adjusts budget up (profits) or down (losses/fees/funding)
+- **Tandem child grids**: Budget is FIXED at initial 50% of totalCapital — NO PnL adjustments. Grid ROI is saved as liquidation buffer, not reinvested into bigger positions
 - `lastTrackedPositionId` handles position changes/closures — resets PnL tracking when position ID changes
 - Bot spending capped at `min(accountAvailable, allocatedBudget)` — new deposits won't be spent unless user explicitly adds margin
 - Budget Cap shown in strategy card params

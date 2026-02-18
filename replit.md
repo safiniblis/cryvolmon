@@ -143,6 +143,7 @@ A full-stack cryptocurrency trading platform with two main features:
 - Endpoint: GET /api/grid/leverage-analysis — full table of leverage vs grids vs ROI
 
 ## Recent Changes
+- 2026-02-18: Fixed tandem budget leak: grid orders now subtract position margin from allocatedBudget so total (position + orders) never exceeds per-side budget
 - 2026-02-18: Leverage optimization: tandem fee multiplier 4.0x→3.5x (gap 0.42%), grid stats preview in UI, leverage analysis endpoint
 - 2026-02-18: Tandem grid ranges derived from leverage (85% of 1/L) instead of hardcoded 10%/2%
 - 2026-02-18: Redesigned tandem to use dual grid bots (LONG grid + SHORT grid) instead of simple positions

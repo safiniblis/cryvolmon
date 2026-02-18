@@ -161,6 +161,25 @@ export function useDeleteStrategy() {
   });
 }
 
+export function useUpdateStrategyConfig() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ id, config }: { id: number; config: Record<string, any> }) => {
+      const res = await apiRequest("PATCH", `/api/strategies/${id}`, { config });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      toast({ title: "Config Updated" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useTradeLogs(strategyId?: number) {
   const key = strategyId ? ["/api/trades", String(strategyId)] : ["/api/trades"];
   return useQuery<TradeLogEntry[]>({
@@ -247,7 +266,11 @@ export function useAddMargin() {
       queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/strategies", id, "margin-info"] });
       queryClient.invalidateQueries({ queryKey: ["/api/account"] });
-      toast({ title: "Margin Added", description: data.message });
+      if (data.success === false) {
+        toast({ title: "Add Margin Failed", description: data.message, variant: "destructive" });
+      } else {
+        toast({ title: "Margin Added", description: data.message });
+      }
     },
     onError: (e: Error) => {
       toast({ title: "Add Margin Failed", description: e.message, variant: "destructive" });

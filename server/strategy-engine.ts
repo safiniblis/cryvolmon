@@ -284,6 +284,27 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     console.log(`[InitialBuy ${strategy.id}] Account available=${accountAvailable.toFixed(2)}, allocatedBudget=${config.allocatedBudget || 'none'}, using budget=${budget.toFixed(2)} USDT`);
 
     try {
+      const tpRes = await client.getPendingTpslOrders(strategy.symbol);
+      if (tpRes?.code === 0) {
+        let tpList = tpRes.data;
+        if (tpList && !Array.isArray(tpList) && Array.isArray(tpList.orderList)) {
+          tpList = tpList.orderList;
+        }
+        if (Array.isArray(tpList) && tpList.length > 0) {
+          let cancelled = 0;
+          for (const tp of tpList) {
+            const tpId = tp.id || tp.orderId;
+            if (!tpId) continue;
+            try { await client.cancelTpslOrder(strategy.symbol, tpId); cancelled++; } catch {}
+          }
+          console.log(`[InitialBuy ${strategy.id}] Cleaned up ${cancelled}/${tpList.length} leftover TP/SL orders for ${strategy.symbol}`);
+        }
+      }
+    } catch (e: any) {
+      console.log(`[InitialBuy ${strategy.id}] TP cleanup note:`, e.message);
+    }
+
+    try {
       await client.setMarginMode(strategy.symbol, "ISOLATION");
     } catch (e: any) {
       console.log(`[InitialBuy ${strategy.id}] Margin mode note:`, e.message);
@@ -706,11 +727,12 @@ async function executeGridStrategy(strategy: Strategy) {
 
     const hasTpsPlaced = lastTpCount > 0 && lastTpTime > 0;
     const tpsMissing = hasTpsPlaced && liveTpCount === 0;
+    const hasDuplicates = hasTpsPlaced && liveTpCount > lastTpCount + 2;
     const entryDroppedEnough = hasTpsPlaced && lastTpEntry > 0 && tpRefPrice < lastTpEntry * 0.995;
     const positionGrewEnough = hasTpsPlaced && lastTpPosQty > 0 && positionQty > lastTpPosQty * 1.15;
     const cooldownOk = (now - lastTpTime) > 60000;
 
-    const needsRebuild = !hasTpsPlaced || tpsMissing || ((entryDroppedEnough || positionGrewEnough) && cooldownOk);
+    const needsRebuild = !hasTpsPlaced || tpsMissing || hasDuplicates || ((entryDroppedEnough || positionGrewEnough) && cooldownOk);
 
     if (!needsRebuild) {
       if (tpWasHit) {
@@ -726,9 +748,11 @@ async function executeGridStrategy(strategy: Strategy) {
         ? "first TP placement"
         : tpsMissing
           ? `TPs missing from exchange (saved=${lastTpCount}, live=${liveTpCount})`
-          : entryDroppedEnough
-            ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
-            : `position grew ${lastTpPosQty}->${positionQty}`;
+          : hasDuplicates
+            ? `duplicate TPs detected (saved=${lastTpCount}, live=${liveTpCount}) — cleaning up`
+            : entryDroppedEnough
+              ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
+              : `position grew ${lastTpPosQty}->${positionQty}`;
       console.log(`[Grid ${strategy.id}] TP rebuild: ${reason} — cancelling ${liveTpCount} existing TPs first`);
 
       for (const tp of liveTpOrders) {
@@ -1670,19 +1694,27 @@ export async function cancelAllGridOrders(strategyId: number, symbol: string) {
 
   try {
     const tpslRes = await client.getPendingTpslOrders(symbol);
-    if (tpslRes?.code === 0 && Array.isArray(tpslRes.data) && tpslRes.data.length > 0) {
-      let cancelled = 0;
-      for (const tp of tpslRes.data) {
-        try {
-          await client.cancelTpslOrder(symbol, tp.id);
-          cancelled++;
-        } catch (ce: any) {
-          console.error(`[Grid ${strategyId}] Cancel TP ${tp.id} error:`, ce.message);
-        }
+    if (tpslRes?.code === 0) {
+      let tpList = tpslRes.data;
+      if (tpList && !Array.isArray(tpList) && Array.isArray(tpList.orderList)) {
+        tpList = tpList.orderList;
       }
-      console.log(`[Grid ${strategyId}] Cancelled ${cancelled}/${tpslRes.data.length} TP/SL orders for ${symbol}`);
-    } else {
-      console.log(`[Grid ${strategyId}] No pending TP/SL orders for ${symbol}`);
+      if (Array.isArray(tpList) && tpList.length > 0) {
+        let cancelled = 0;
+        for (const tp of tpList) {
+          const tpId = tp.id || tp.orderId;
+          if (!tpId) continue;
+          try {
+            await client.cancelTpslOrder(symbol, tpId);
+            cancelled++;
+          } catch (ce: any) {
+            console.error(`[Grid ${strategyId}] Cancel TP ${tpId} error:`, ce.message);
+          }
+        }
+        console.log(`[Grid ${strategyId}] Cancelled ${cancelled}/${tpList.length} TP/SL orders for ${symbol}`);
+      } else {
+        console.log(`[Grid ${strategyId}] No pending TP/SL orders for ${symbol}`);
+      }
     }
   } catch (e: any) {
     console.error(`[Grid ${strategyId}] Cancel TP/SL orders error:`, e.message);

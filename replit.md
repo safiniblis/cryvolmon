@@ -78,7 +78,11 @@ A full-stack cryptocurrency trading platform with two main features:
 - Grid sell levels are NOT separate SELL CLOSE limit orders (those fail with "Insufficient amount")
 - Instead, sell levels use the TP/SL API: `place_tpsl_order` with `tpPrice`, `tpQty`, `tpStopType: "LAST_PRICE"`, `tpOrderType: "MARKET"`
 - Each TP order is attached to the position via `positionId`
-- Position qty is split equally across all TP levels up to upperPrice (full channel)
+- TP range: from entry * (1 + minProfitableGap) up to currentPrice * 1.03 (3% above current price)
+- TP spacing: geometric progression with minProfitableGap (2.5x round-trip fee, ~0.3%) — each level is 0.3% above the previous
+- TP count: limited only by position qty / minTradeVolume — packs in as many small TPs as the exchange allows
+- If price is below entry, tpUpperLimit is at least minTpPrice * 1.005 to ensure some TPs always exist
+- Position qty is split equally across all TP levels (last level gets remainder)
 - On strategy stop, both limit orders AND TP/SL orders are cancelled
 
 ## Initial Buy Logic
@@ -108,6 +112,7 @@ A full-stack cryptocurrency trading platform with two main features:
 - Budget Cap shown in strategy card params
 
 ## Recent Changes
+- 2026-02-18: Extended TP range to +3% above current price with geometric spacing, unlimited TP count (limited only by position qty / minTradeVolume)
 - 2026-02-18: Budget cap system with PnL-based adjustments (profits increase cap, losses decrease it)
 - 2026-02-18: Fixed add-margin 500 error with defensive validation
 - 2026-02-18: Editable gap modifiers (gapGrowthBelow/gapShrinkAbove) while bot is running

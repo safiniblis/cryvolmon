@@ -648,8 +648,19 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const tpRefPrice = positionEntryPrice > 0 ? positionEntryPrice : config.startPrice;
   const minTpPrice = tpRefPrice * (1 + minProfitableGap);
-  const maxTpLevels = 6;
-  const allSellLevels = levels.filter(l => l >= minTpPrice && l <= (config.upperPrice || tpRefPrice * 1.02));
+  const tpUpperLimit = Math.max(currentPrice * 1.03, minTpPrice * 1.005);
+
+  const allSellLevels: number[] = [];
+  let tpPrice = minTpPrice;
+  while (tpPrice <= tpUpperLimit) {
+    allSellLevels.push(tpPrice);
+    tpPrice *= (1 + minProfitableGap);
+  }
+
+  const maxTpLevels = Math.max(
+    Math.floor(positionQty / precision.minTradeVolume),
+    1
+  );
   const sellLevels = allSellLevels.slice(0, maxTpLevels);
 
   console.log(`[Grid ${strategy.id}] Price: ${currentPrice.toFixed(4)} | Entry: ${tpRefPrice.toFixed(4)} | minTp: ${minTpPrice.toFixed(4)} | TP levels: ${sellLevels.length}/${allSellLevels.length} | Buy levels: ${buyLevels.length}`);
@@ -775,9 +786,8 @@ async function executeGridStrategy(strategy: Strategy) {
     }
   }
 
-  const tpUpperBound = config.upperPrice ? config.upperPrice.toFixed(precision.quotePrecision) : bandHigh.toFixed(precision.quotePrecision);
   const budgetInfo = config.allocatedBudget ? ` | Budget=${config.allocatedBudget.toFixed(2)}` : "";
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${currentPrice.toFixed(precision.quotePrecision)}-${tpUpperBound}] | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${minTpPrice.toFixed(precision.quotePrecision)}-${tpUpperLimit.toFixed(precision.quotePrecision)}] step=${tpStep.toFixed(precision.quotePrecision)} | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}/${allSellLevels.length}(+${placedTps}/-${cancelledTps}) maxByQty=${maxTpLevels} | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
 
   await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 }

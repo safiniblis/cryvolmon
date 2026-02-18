@@ -46,7 +46,7 @@ A full-stack cryptocurrency trading platform with two main features:
 - **Liquidation**: -12% from current price (2% buffer below lower)
 - **Leverage**: Maximized (~8x), derived from liquidation distance
 - **Grid ratio**: 1 + 2.5 * roundTripFee (geometric spacing, 2.5x fee profit per grid)
-- **Asymmetric spacing**: Below grids grow wider (1.07x per step), above grids shrink tighter (0.96x per step)
+- **Symmetric spacing**: Both below and above grids grow wider (1.05x per step) — optimized via backtest simulation
 - **Dynamic extension**: Lower bound extends when bot hits grids below start price (adjusts liquidation/leverage); upper extends when hitting grids above start price
 - **GridConfig interface**: Tracks startPrice, extensionsBelow, extensionsAbove, gapGrowthBelow, gapShrinkAbove for live range management
 
@@ -82,7 +82,8 @@ A full-stack cryptocurrency trading platform with two main features:
 - TP spacing: geometric progression with minProfitableGap (2.5x round-trip fee, ~0.3%) — each level is 0.3% above the previous
 - TP count: limited only by position qty / minTradeVolume — packs in as many small TPs as the exchange allows
 - If price is below entry, tpUpperLimit is at least minTpPrice * 1.005 to ensure some TPs always exist
-- Position qty is split equally across all TP levels (last level gets remainder)
+- TP reserve: 10% of position qty held back from TP orders for larger price spikes (configurable via tpReservePct)
+- Remaining 90% of position qty split equally across all TP levels (last level gets remainder)
 - On strategy stop, both limit orders AND TP/SL orders are cancelled
 
 ## Initial Buy Logic
@@ -112,6 +113,8 @@ A full-stack cryptocurrency trading platform with two main features:
 - Budget Cap shown in strategy card params
 
 ## Recent Changes
+- 2026-02-18: Optimized gap settings via backtest: symmetric 1.05x growth both directions, 10% TP reserve for spikes
+- 2026-02-18: Added gap optimization engine (/api/grid/optimize-gaps) testing 12 configs × 4 reserve levels across top coins
 - 2026-02-18: Extended TP range to +3% above current price with geometric spacing, unlimited TP count (limited only by position qty / minTradeVolume)
 - 2026-02-18: Budget cap system with PnL-based adjustments (profits increase cap, losses decrease it)
 - 2026-02-18: Fixed add-margin 500 error with defensive validation

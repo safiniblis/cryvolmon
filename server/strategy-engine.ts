@@ -294,25 +294,26 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       console.log(`[InitialBuy ${strategy.id}] Leverage note:`, e.message);
     }
 
-    const levels = getAsymmetricGridLevels(config);
-    const buyLevelsIn1Pct = levels.filter(l => l < currentPrice && l >= currentPrice * (1 - bandPct));
-    const gridBuyCount = buyLevelsIn1Pct.length;
-
-    const totalMarginSlots = 1 + gridBuyCount;
-    const marginPerSlot = budget / totalMarginSlots;
-    const initialMargin = marginPerSlot;
-    const initialNotional = initialMargin * leverage * 0.95;
-    const baseQty = Math.max(initialNotional / currentPrice, precision.minTradeVolume);
-    const qtyStr = roundQty(baseQty, precision.basePrecision);
+    const allLevels = getAsymmetricGridLevels(config);
+    const allBuyLevels = allLevels.filter(l => l < currentPrice);
+    const totalGridCount = allBuyLevels.length;
 
     if (!config.lowerPrice) config.lowerPrice = currentPrice * 0.90;
     if (!config.upperPrice) config.upperPrice = currentPrice * 1.02;
     if (!config.liquidationPrice) config.liquidationPrice = currentPrice * 0.88;
-    if (!config.amountPerGrid) {
-      config.amountPerGrid = Math.max(marginPerSlot, 1);
-    }
 
-    console.log(`[InitialBuy ${strategy.id}] Balance=${available.toFixed(2)} USDT, leverage=${leverage}x, gridBuysIn1%=${gridBuyCount}, marginPerSlot=${marginPerSlot.toFixed(2)}, amountPerGrid=${config.amountPerGrid.toFixed(2)}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
+    const initialMargin = config.amountPerGrid || Math.max(budget / (totalGridCount + 1), 1);
+    if (!config.amountPerGrid) {
+      config.amountPerGrid = initialMargin;
+    }
+    const initialNotional = initialMargin * leverage * 0.95;
+    const baseQty = Math.max(initialNotional / currentPrice, precision.minTradeVolume);
+    const qtyStr = roundQty(baseQty, precision.basePrecision);
+
+    const buyLevelsIn1Pct = allBuyLevels.filter(l => l >= currentPrice * (1 - bandPct));
+    const gridBuyCount = buyLevelsIn1Pct.length;
+
+    console.log(`[InitialBuy ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, totalGridLevels=${totalGridCount}, amountPerGrid=${config.amountPerGrid.toFixed(2)}, gridBuysIn1%=${gridBuyCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
 
     const result = await client.placeOrder({
       symbol: strategy.symbol,
@@ -358,12 +359,13 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       } catch {}
 
       const remainingBudget = Math.min(remainingBalance, budget - initialMargin);
-      console.log(`[InitialBuy ${strategy.id}] Now placing ${gridBuyCount} limit BUY orders within 1% below entry... (remainingAccount=${remainingBalance.toFixed(2)}, remainingBudget=${remainingBudget.toFixed(2)} USDT)`);
-      const gridMarginEach = gridBuyCount > 0 ? Math.max(0, remainingBudget) / gridBuyCount : 0;
+      const gridMarginEach = config.amountPerGrid || initialMargin;
+      const affordableGrids = Math.min(gridBuyCount, Math.floor(Math.max(0, remainingBudget) / gridMarginEach));
+      console.log(`[InitialBuy ${strategy.id}] Now placing ${affordableGrids}/${gridBuyCount} limit BUY orders within 1% below entry... (remainingBudget=${remainingBudget.toFixed(2)}, marginEach=${gridMarginEach.toFixed(2)} USDT)`);
       let placed = 0;
-      for (const level of buyLevelsIn1Pct) {
-        if (gridMarginEach < 0.5) {
-          console.log(`[InitialBuy ${strategy.id}] Skipping grid buys: insufficient margin (${gridMarginEach.toFixed(2)} per order)`);
+      for (const level of buyLevelsIn1Pct.slice(0, affordableGrids)) {
+        if (remainingBalance < gridMarginEach * 0.5) {
+          console.log(`[InitialBuy ${strategy.id}] Stopping grid buys: insufficient remaining balance (${remainingBalance.toFixed(2)} USDT)`);
           break;
         }
         const gridNotional = gridMarginEach * leverage * 0.95;
@@ -604,18 +606,16 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const missingBuyLevels = buyLevels.filter(l => !coveredBuyPrices.has(roundPrice(l, precision.quotePrecision)));
   const leverage = config.leverage || 8;
-  const minOrderMargin = 1.0;
+  const marginPerOrder = config.amountPerGrid || 5;
   const usableBalance = availableBalance - 0.1;
 
-  let levelsToFill = 0;
-  if (usableBalance > minOrderMargin) {
-    levelsToFill = Math.min(missingBuyLevels.length, 4, Math.floor(usableBalance / minOrderMargin));
-  }
-  const marginPerOrder = levelsToFill > 0 ? usableBalance / levelsToFill : 0;
+  const levelsToFill = usableBalance >= marginPerOrder * 0.5
+    ? Math.min(missingBuyLevels.length, Math.floor(usableBalance / marginPerOrder))
+    : 0;
   const buySlice = missingBuyLevels.slice(0, levelsToFill);
 
   if (missingBuyLevels.length > 0 && levelsToFill === 0 && coveredBuyPrices.size === 0) {
-    console.log(`[Grid ${strategy.id}] No balance for buy orders: ${availableBalance.toFixed(2)} USDT`);
+    console.log(`[Grid ${strategy.id}] No balance for buy orders: ${availableBalance.toFixed(2)} USDT (need ${marginPerOrder.toFixed(2)} per grid)`);
   }
 
   let placedBuys = 0;

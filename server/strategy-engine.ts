@@ -283,10 +283,11 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       return { success: false, message: `Insufficient balance: ${accountAvailable.toFixed(2)} USDT. Need at least 1 USDT.` };
     }
 
+    const isTandemChild = !!(config as any).parentTandemId;
     const budget = config.allocatedBudget && config.allocatedBudget > 0
-      ? Math.min(config.allocatedBudget, accountAvailable)
+      ? (isTandemChild ? config.allocatedBudget : Math.min(config.allocatedBudget, accountAvailable))
       : accountAvailable;
-    console.log(`[${label} ${strategy.id}] Account available=${accountAvailable.toFixed(2)}, allocatedBudget=${config.allocatedBudget || 'none'}, using budget=${budget.toFixed(2)} USDT`);
+    console.log(`[${label} ${strategy.id}] Account available=${accountAvailable.toFixed(2)}, allocatedBudget=${config.allocatedBudget || 'none'}, tandemChild=${isTandemChild}, using budget=${budget.toFixed(2)} USDT`);
 
     try {
       const tpRes = await client.getPendingTpslOrders(strategy.symbol);
@@ -385,60 +386,64 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
         config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid, allocatedBudget: config.allocatedBudget, lastTrackedPnl: 0 },
       });
 
-      let remainingBalance = 0;
-      try {
-        const postAccount = await client.getAccount();
-        if (postAccount?.code === 0 && postAccount?.data) {
-          remainingBalance = parseFloat(postAccount.data.available || "0");
-        }
-      } catch {}
-
-      const remainingBudget = Math.min(remainingBalance, budget - initialShare);
-      const gridMarginEach = gridInitCount > 0 ? Math.max(0, remainingBudget) / gridInitCount : marginPerGrid;
-      const gridOrderSide = isShort ? "SELL" : "BUY";
-      console.log(`[${label} ${strategy.id}] Now placing ${gridInitCount} limit ${gridOrderSide} orders within 1% of entry... (remainingBudget=${remainingBudget.toFixed(2)}, marginEach=${gridMarginEach.toFixed(4)} USDT)`);
-      let placed = 0;
-      const minExchangeMargin = (precision.minTradeVolume * currentPrice) / (leverage * 0.95);
-      for (const level of gridLevelsIn1Pct) {
-        if (remainingBalance < minExchangeMargin * 0.9) {
-          console.log(`[${label} ${strategy.id}] Stopping grid orders: insufficient remaining balance (${remainingBalance.toFixed(2)} USDT)`);
-          break;
-        }
-        const gridNotional = Math.max(gridMarginEach, minExchangeMargin) * leverage * 0.95;
-        const gridQty = Math.max(gridNotional / level, precision.minTradeVolume);
-        const gridQtyStr = roundQty(gridQty, precision.basePrecision);
-        const priceStr = roundPrice(level, precision.quotePrecision);
-
+      if (isTandemChild) {
+        console.log(`[${label} ${strategy.id}] Tandem child: skipping grid limit orders during initial buy (grid cycle will handle them)`);
+      } else {
+        let remainingBalance = 0;
         try {
-          const gridResult = await client.placeOrder({
-            symbol: strategy.symbol,
-            qty: gridQtyStr,
-            side: gridOrderSide,
-            tradeSide: "OPEN",
-            orderType: "LIMIT",
-            price: priceStr,
-            effect: "GTC",
-          });
-
-          if (gridResult?.code === 0 && gridResult.data?.orderId) {
-            const orders = activeGridOrders.get(strategy.id) || new Map();
-            orders.set(`${gridOrderSide}_${priceStr}`, {
-              orderId: gridResult.data.orderId,
-              price: level,
-              side: gridOrderSide,
-              level,
-            });
-            activeGridOrders.set(strategy.id, orders);
-            placed++;
-            console.log(`[${label} ${strategy.id}] Placed ${gridOrderSide} ${gridQtyStr} @ ${priceStr}`);
-          } else {
-            console.error(`[${label} ${strategy.id}] Grid ${gridOrderSide} failed @ ${priceStr}: ${gridResult?.msg}`);
+          const postAccount = await client.getAccount();
+          if (postAccount?.code === 0 && postAccount?.data) {
+            remainingBalance = parseFloat(postAccount.data.available || "0");
           }
-        } catch (e: any) {
-          console.error(`[${label} ${strategy.id}] Grid ${gridOrderSide} error @ ${priceStr}:`, e.message);
+        } catch {}
+
+        const remainingBudget = Math.min(remainingBalance, budget - initialShare);
+        const gridMarginEach = gridInitCount > 0 ? Math.max(0, remainingBudget) / gridInitCount : marginPerGrid;
+        const gridOrderSide = isShort ? "SELL" : "BUY";
+        console.log(`[${label} ${strategy.id}] Now placing ${gridInitCount} limit ${gridOrderSide} orders within 1% of entry... (remainingBudget=${remainingBudget.toFixed(2)}, marginEach=${gridMarginEach.toFixed(4)} USDT)`);
+        let placed = 0;
+        const minExchangeMargin = (precision.minTradeVolume * currentPrice) / (leverage * 0.95);
+        for (const level of gridLevelsIn1Pct) {
+          if (remainingBalance < minExchangeMargin * 0.9) {
+            console.log(`[${label} ${strategy.id}] Stopping grid orders: insufficient remaining balance (${remainingBalance.toFixed(2)} USDT)`);
+            break;
+          }
+          const gridNotional = Math.max(gridMarginEach, minExchangeMargin) * leverage * 0.95;
+          const gridQty = Math.max(gridNotional / level, precision.minTradeVolume);
+          const gridQtyStr = roundQty(gridQty, precision.basePrecision);
+          const priceStr = roundPrice(level, precision.quotePrecision);
+
+          try {
+            const gridResult = await client.placeOrder({
+              symbol: strategy.symbol,
+              qty: gridQtyStr,
+              side: gridOrderSide,
+              tradeSide: "OPEN",
+              orderType: "LIMIT",
+              price: priceStr,
+              effect: "GTC",
+            });
+
+            if (gridResult?.code === 0 && gridResult.data?.orderId) {
+              const orders = activeGridOrders.get(strategy.id) || new Map();
+              orders.set(`${gridOrderSide}_${priceStr}`, {
+                orderId: gridResult.data.orderId,
+                price: level,
+                side: gridOrderSide,
+                level,
+              });
+              activeGridOrders.set(strategy.id, orders);
+              placed++;
+              console.log(`[${label} ${strategy.id}] Placed ${gridOrderSide} ${gridQtyStr} @ ${priceStr}`);
+            } else {
+              console.error(`[${label} ${strategy.id}] Grid ${gridOrderSide} failed @ ${priceStr}: ${gridResult?.msg}`);
+            }
+          } catch (e: any) {
+            console.error(`[${label} ${strategy.id}] Grid ${gridOrderSide} error @ ${priceStr}:`, e.message);
+          }
         }
+        console.log(`[${label} ${strategy.id}] Placed ${placed}/${gridInitCount} grid ${gridOrderSide} orders`);
       }
-      console.log(`[${label} ${strategy.id}] Placed ${placed}/${gridInitCount} grid ${gridOrderSide} orders`);
     }
 
     return {

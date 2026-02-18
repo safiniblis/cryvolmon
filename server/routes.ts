@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier, executePairRotation } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier, executePairRotation, simulateTandem } from "./strategy-engine";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -620,6 +620,38 @@ export async function registerRoutes(
       for (const coin of stats) {
         if (!coin.priceHistory || (coin.priceHistory as any).length < 3) continue;
         const result = simulateGridStrategy(coin.priceHistory as any, feeRate, amountPerGrid);
+        if (result) {
+          result.symbol = (coin.symbol?.toUpperCase() || "") + "USDT";
+          results.push(result);
+        }
+      }
+      results.sort((a, b) => b.totalPnl - a.totalPnl);
+      res.json(results);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/tandem/simulate", async (req, res) => {
+    try {
+      const stats = await storage.getCryptoStats();
+      const { symbol, feeRate = 0.0006, capitalPerSide = 50, leverage = 100, feeMultiplier = 4.0 } = req.body;
+
+      if (symbol) {
+        const coin = stats.find(s => s.symbol?.toUpperCase() === symbol.replace("USDT", "").toUpperCase());
+        if (!coin || !coin.priceHistory) {
+          return res.status(404).json({ message: `No price history for ${symbol}` });
+        }
+        const result = simulateTandem(coin.priceHistory as any, feeRate, capitalPerSide, leverage, feeMultiplier);
+        if (!result) return res.status(400).json({ message: "Not enough data to simulate" });
+        result.symbol = symbol;
+        return res.json(result);
+      }
+
+      const results = [];
+      for (const coin of stats) {
+        if (!coin.priceHistory || (coin.priceHistory as any).length < 10) continue;
+        const result = simulateTandem(coin.priceHistory as any, feeRate, capitalPerSide, leverage, feeMultiplier);
         if (result) {
           result.symbol = (coin.symbol?.toUpperCase() || "") + "USDT";
           results.push(result);

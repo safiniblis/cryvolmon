@@ -877,7 +877,7 @@ export interface SimulationResult {
 export function simulateGridStrategy(
   priceHistory: { timestamp: number; price: number }[],
   feeRate: number = 0.0006,
-  amountPerGrid: number = 10
+  marginPerGrid: number = 10
 ): SimulationResult | null {
   if (!priceHistory || priceHistory.length < 3) return null;
 
@@ -887,15 +887,16 @@ export function simulateGridStrategy(
 
   if (levels.length < 2) return null;
 
-  const roundTripFee = 2 * feeRate;
+  const leverage = grid.leverage;
   let position = 0;
-  let avgEntryPrice = 0;
   let realizedPnl = 0;
   let peakEquity = 0;
   let maxDrawdown = 0;
   let buys = 0;
   let sells = 0;
   const trades: SimulationResult["trades"] = [];
+
+  const levelLots = new Map<number, { qty: number; price: number }>();
 
   let lastGridIndex = findGridIndex(startPrice, levels);
 
@@ -904,37 +905,69 @@ export function simulateGridStrategy(
     const time = priceHistory[i].timestamp;
     const currentGridIndex = findGridIndex(price, levels);
 
-    if (currentGridIndex !== lastGridIndex && currentGridIndex >= 0) {
-      if (currentGridIndex < lastGridIndex && price < startPrice) {
-        const cost = amountPerGrid * price;
-        const fee = cost * feeRate;
-        const newPos = position + amountPerGrid;
-        avgEntryPrice = newPos > 0 ? ((avgEntryPrice * position) + cost) / newPos : price;
-        position = newPos;
+    if (currentGridIndex === lastGridIndex || currentGridIndex < 0) continue;
+
+    if (currentGridIndex < lastGridIndex) {
+      for (let gi = lastGridIndex - 1; gi >= currentGridIndex; gi--) {
+        if (gi < 0 || gi >= levels.length) continue;
+        if (levelLots.has(gi)) continue;
+        const buyPrice = levels[gi];
+        const notional = marginPerGrid * leverage;
+        const qty = notional / buyPrice;
+        const fee = notional * feeRate;
+        position += qty;
         realizedPnl -= fee;
         buys++;
-        trades.push({ time, side: "BUY", price, gridLevel: currentGridIndex, pnl: -fee });
-      } else if (currentGridIndex > lastGridIndex && position > 0) {
-        const sellQty = Math.min(amountPerGrid, position);
-        const revenue = sellQty * price;
+        levelLots.set(gi, { qty, price: buyPrice });
+        trades.push({ time, side: "BUY", price: buyPrice, gridLevel: gi, pnl: -fee });
+      }
+    } else if (currentGridIndex > lastGridIndex) {
+      for (let gi = lastGridIndex + 1; gi <= currentGridIndex; gi++) {
+        if (gi < 0 || gi >= levels.length) continue;
+        if (position <= 0) break;
+
+        const sellPrice = levels[gi];
+        let soldQty = 0;
+        let soldCost = 0;
+
+        const belowLevels = Array.from(levelLots.keys()).filter(k => k < gi).sort((a, b) => b - a);
+        if (belowLevels.length === 0) continue;
+
+        const lotKey = belowLevels[0];
+        const lot = levelLots.get(lotKey)!;
+        soldQty = lot.qty;
+        soldCost = lot.qty * lot.price;
+        levelLots.delete(lotKey);
+
+        const revenue = soldQty * sellPrice;
         const fee = revenue * feeRate;
-        const pnl = sellQty * (price - avgEntryPrice) - fee;
-        position -= sellQty;
+        const pnl = (revenue - soldCost) - fee;
+        position -= soldQty;
         realizedPnl += pnl;
         sells++;
-        trades.push({ time, side: "SELL", price, gridLevel: currentGridIndex, pnl });
+        trades.push({ time, side: "SELL", price: sellPrice, gridLevel: gi, pnl });
       }
-
-      lastGridIndex = currentGridIndex;
     }
 
-    const equity = realizedPnl + (position * (price - avgEntryPrice));
+    lastGridIndex = currentGridIndex;
+
+    let totalCost = 0;
+    for (const lot of levelLots.values()) {
+      totalCost += lot.qty * lot.price;
+    }
+    const avgEntry = position > 0 ? totalCost / position : 0;
+    const equity = realizedPnl + (position * (price - avgEntry));
     peakEquity = Math.max(peakEquity, equity);
     maxDrawdown = Math.max(maxDrawdown, peakEquity - equity);
   }
 
   const endPrice = priceHistory[priceHistory.length - 1].price;
-  const unrealizedPnl = position * (endPrice - avgEntryPrice);
+  let totalCostEnd = 0;
+  for (const lot of levelLots.values()) {
+    totalCostEnd += lot.qty * lot.price;
+  }
+  const avgEntryEnd = position > 0 ? totalCostEnd / position : endPrice;
+  const unrealizedPnl = position * (endPrice - avgEntryEnd);
 
   return {
     symbol: "",
@@ -947,7 +980,7 @@ export function simulateGridStrategy(
     unrealizedPnl,
     totalPnl: realizedPnl + unrealizedPnl,
     maxDrawdown,
-    leverage: grid.leverage,
+    leverage,
     gridCount: grid.gridCount,
     gridsBelow: grid.gridsBelow,
     gridsAbove: grid.gridsAbove,

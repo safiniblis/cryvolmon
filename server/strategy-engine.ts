@@ -332,9 +332,12 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     });
 
     if (success) {
+      config.allocatedBudget = available;
+      config.budgetUsed = available;
+      console.log(`[InitialBuy ${strategy.id}] Set allocatedBudget=${available.toFixed(2)} USDT`);
       await storage.updateStrategy(strategy.id, {
         totalTrades: (strategy.totalTrades || 0) + 1,
-        config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid },
+        config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid, allocatedBudget: config.allocatedBudget, budgetUsed: config.budgetUsed },
       });
 
       let remainingBalance = 0;
@@ -528,13 +531,22 @@ async function executeGridStrategy(strategy: Strategy) {
     }
   }
 
-  let availableBalance = 0;
+  let accountAvailable = 0;
   try {
     const accountRes = await client.getAccount();
     if (accountRes?.code === 0 && accountRes?.data) {
-      availableBalance = parseFloat(accountRes.data.available || "0");
+      accountAvailable = parseFloat(accountRes.data.available || "0");
     }
   } catch {}
+
+  const allocatedBudget = config.allocatedBudget || 0;
+  const budgetUsed = config.budgetUsed || 0;
+  const budgetRemaining = Math.max(0, allocatedBudget - budgetUsed);
+  const availableBalance = Math.min(accountAvailable, budgetRemaining);
+
+  if (allocatedBudget > 0 && accountAvailable > budgetRemaining + 0.5) {
+    console.log(`[Grid ${strategy.id}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, used=${budgetUsed.toFixed(2)}, remaining=${budgetRemaining.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
+  }
 
   const lastTpPosQty = config.lastTpPositionQty || 0;
   const tpWasHit = lastTpPosQty > 0 && positionQty < lastTpPosQty * 0.98;
@@ -583,6 +595,9 @@ async function executeGridStrategy(strategy: Strategy) {
       if (result?.code === 0 && result.data?.orderId) {
         placedBuys++;
         availableBalance -= effectiveMargin;
+        if (config.allocatedBudget) {
+          config.budgetUsed = (config.budgetUsed || 0) + effectiveMargin;
+        }
       } else {
         console.error(`[Grid ${strategy.id}] BUY failed @ ${priceStr}: ${result?.msg}`);
       }
@@ -724,9 +739,14 @@ async function executeGridStrategy(strategy: Strategy) {
   }
 
   const tpUpperBound = config.upperPrice ? config.upperPrice.toFixed(precision.quotePrecision) : bandHigh.toFixed(precision.quotePrecision);
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${currentPrice.toFixed(precision.quotePrecision)}-${tpUpperBound}] | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}`);
+  const budgetInfo = config.allocatedBudget ? ` | Budget=${config.allocatedBudget.toFixed(2)}/Used=${(config.budgetUsed || 0).toFixed(2)}` : "";
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${currentPrice.toFixed(precision.quotePrecision)}-${tpUpperBound}] | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
 
-  await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
+  if (placedBuys > 0 && config.allocatedBudget) {
+    await storage.updateStrategy(strategy.id, { config, lastRunAt: new Date() });
+  } else {
+    await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
+  }
 }
 
 async function executeDCAStrategy(strategy: Strategy) {
@@ -1571,8 +1591,15 @@ export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): P
     }
   }
 
+  if (placed > 0) {
+    config.allocatedBudget = (config.allocatedBudget || 0) + amountUsdt;
+    config.budgetUsed = (config.budgetUsed || 0) + amountUsdt;
+    await storage.updateStrategy(strategy.id, { config });
+    console.log(`[AddMargin ${strategy.id}] Budget updated: allocated=${config.allocatedBudget.toFixed(2)}, used=${config.budgetUsed.toFixed(2)}`);
+  }
+
   const message = placed > 0
-    ? `Placed ${placed}/${buyLevels.length} buy orders` + (errors.length > 0 ? ` (${errors.length} failed)` : "")
+    ? `Placed ${placed}/${buyLevels.length} buy orders (+$${amountUsdt.toFixed(2)} to budget)`
     : `No orders placed. ${errors[0] || "All levels covered"}`;
   return { success: placed > 0, message, ordersPlaced: placed };
 }
@@ -1627,6 +1654,13 @@ export async function removeMarginFromGrid(strategy: Strategy, count: number): P
       const leverage = ((strategy.config as any)?.leverage) || 8;
       freedMargin = toCancel.reduce((sum, o) => sum + (o.price * o.qty / leverage), 0);
       console.log(`[RemoveMargin ${strategy.id}] Cancelled ${cancelled} bottom orders, freed ~$${freedMargin.toFixed(2)}`);
+
+      if (config.allocatedBudget && freedMargin > 0) {
+        config.allocatedBudget = Math.max(0, (config.allocatedBudget || 0) - freedMargin);
+        config.budgetUsed = Math.max(0, (config.budgetUsed || 0) - freedMargin);
+        await storage.updateStrategy(strategy.id, { config });
+        console.log(`[RemoveMargin ${strategy.id}] Budget updated: allocated=${config.allocatedBudget.toFixed(2)}, used=${config.budgetUsed.toFixed(2)}`);
+      }
     }
   } catch (e: any) {
     console.error(`[RemoveMargin ${strategy.id}] Cancel error:`, e.message);
@@ -1634,7 +1668,7 @@ export async function removeMarginFromGrid(strategy: Strategy, count: number): P
 
   return {
     success: true,
-    message: `Cancelled ${cancelled} bottom buy orders (below $${threshold.toFixed(precision.quotePrecision)})`,
+    message: `Cancelled ${cancelled} bottom buy orders (below $${threshold.toFixed(precision.quotePrecision)})${freedMargin > 0 ? ` (-$${freedMargin.toFixed(2)} from budget)` : ""}`,
     ordersCancelled: cancelled,
     freedMargin,
   };

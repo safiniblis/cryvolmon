@@ -253,6 +253,7 @@ export interface GridConfig {
   lastTpPlacedAt?: number;
   lastTpCount?: number;
   tpReservePct?: number;
+  tpConsumedAtQty?: number;
   gridSide?: "LONG" | "SHORT";
   parentTandemId?: number;
 }
@@ -777,96 +778,129 @@ async function executeGridStrategy(strategy: Strategy) {
     const hasTpsPlaced = lastTpCount > 0 && lastTpTime > 0;
     const tpsMissing = hasTpsPlaced && liveTpCount === 0;
     const hasDuplicates = hasTpsPlaced && liveTpCount > lastTpCount + 2;
-    const entryChanged = hasTpsPlaced && lastTpEntry > 0 && Math.abs(tpRefPrice - lastTpEntry) / lastTpEntry > 0.005;
-    const positionGrewEnough = hasTpsPlaced && lastTpPosQty > 0 && positionQty > lastTpPosQty * 1.15;
     const tpsPartiallyConsumed = hasTpsPlaced && liveTpCount < lastTpCount && liveTpCount > 0;
     const cooldownOk = (now - lastTpTime) > 60000;
 
-    const needsRebuild = !hasTpsPlaced || tpsMissing || hasDuplicates || ((entryChanged || positionGrewEnough) && cooldownOk);
+    const tpConsumedAtQty = config.tpConsumedAtQty || 0;
+    const grewBackFromConsumed = tpConsumedAtQty > 0 && positionQty > tpConsumedAtQty;
+    const growthQty = grewBackFromConsumed ? positionQty - tpConsumedAtQty : 0;
 
-    if (tpsPartiallyConsumed && !needsRebuild) {
+    const needsRebuild = !hasTpsPlaced || hasDuplicates;
+    const needsGrowthTps = grewBackFromConsumed && cooldownOk;
+
+    if (tpsMissing && !grewBackFromConsumed) {
+      config.tpConsumedAtQty = config.tpConsumedAtQty || positionQty;
+      config.lastTpCount = 0;
+      await storage.updateStrategy(strategy.id, { config });
+      console.log(`[${tag}] All TPs consumed — waiting for position to grow back (baseline=${config.tpConsumedAtQty.toFixed(precision.basePrecision)})`);
+    } else if (tpsPartiallyConsumed && !needsRebuild && !needsGrowthTps) {
       config.lastTpCount = liveTpCount;
       config.lastTpPositionQty = positionQty;
       await storage.updateStrategy(strategy.id, { config });
       console.log(`[${tag}] TPs partially filled: ${liveTpCount}/${lastTpCount} remain — keeping existing, updated count`);
-    } else if (!needsRebuild) {
+    } else if (!needsRebuild && !needsGrowthTps) {
       console.log(`[${tag}] TPs stable: ${liveTpCount} live on exchange (saved=${lastTpCount}) at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
     } else {
-      const reason = !hasTpsPlaced ? "first TP placement"
-        : tpsMissing ? `all TPs filled (saved=${lastTpCount}, live=0)`
-        : hasDuplicates ? `duplicates (saved=${lastTpCount}, live=${liveTpCount})`
-        : entryChanged ? `entry moved ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
-        : `position grew ${lastTpPosQty}->${positionQty}`;
-      console.log(`[${tag}] TP rebuild: ${reason} — cancelling ${liveTpCount} existing TPs first`);
+      let tpQtyBasis: number;
+      let reason: string;
 
-      for (const tp of liveTpOrders) {
-        const tpId = tp.id || tp.orderId;
-        if (tpId) {
-          try {
-            await client.cancelTpslOrder(strategy.symbol, tpId);
-            cancelledTps++;
-          } catch (e: any) {
-            console.error(`[${tag}] Cancel TP ${tpId} error:`, e.message);
+      if (needsGrowthTps && !needsRebuild) {
+        tpQtyBasis = growthQty;
+        reason = `position grew back ${tpConsumedAtQty.toFixed(precision.basePrecision)}->${positionQty.toFixed(precision.basePrecision)} (+${growthQty.toFixed(precision.basePrecision)}) — adding TPs for growth only`;
+      } else if (!hasTpsPlaced) {
+        tpQtyBasis = positionQty;
+        reason = "first TP placement";
+      } else if (hasDuplicates) {
+        tpQtyBasis = positionQty;
+        reason = `duplicates (saved=${lastTpCount}, live=${liveTpCount})`;
+      } else {
+        tpQtyBasis = positionQty;
+        reason = "rebuild";
+      }
+
+      console.log(`[${tag}] TP action: ${reason}`);
+
+      if (needsRebuild || hasDuplicates) {
+        for (const tp of liveTpOrders) {
+          const tpId = tp.id || tp.orderId;
+          if (tpId) {
+            try {
+              await client.cancelTpslOrder(strategy.symbol, tpId);
+              cancelledTps++;
+            } catch (e: any) {
+              console.error(`[${tag}] Cancel TP ${tpId} error:`, e.message);
+            }
           }
         }
-      }
-      if (liveTpOrders.length > 0) {
-        console.log(`[${tag}] Cancelled ${cancelledTps}/${liveTpOrders.length} existing TPs`);
+        if (liveTpOrders.length > 0) {
+          console.log(`[${tag}] Cancelled ${cancelledTps}/${liveTpOrders.length} existing TPs`);
+        }
       }
 
       const tpReservePct = Math.min(Math.max(config.tpReservePct ?? 0.10, 0), 0.5);
-      const sellableQty = positionQty * (1 - tpReservePct);
+      const sellableQty = tpQtyBasis * (1 - tpReservePct);
 
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);
+
+      const maxTpFromQty = Math.max(Math.floor(sellableQty / precision.minTradeVolume), 1);
+      const cappedTpLevels = activeTpLevels.slice(0, Math.min(activeTpLevels.length, maxTpFromQty));
+
       const tpQtyPerLevel = Math.max(
-        Math.floor((sellableQty / activeTpLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
+        Math.floor((sellableQty / cappedTpLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
         precision.minTradeVolume
       );
 
-      let levelsToPlace = activeTpLevels;
-      if (tpQtyPerLevel * activeTpLevels.length > sellableQty * 1.02) {
+      let levelsToPlace = cappedTpLevels;
+      if (tpQtyPerLevel * cappedTpLevels.length > sellableQty * 1.02) {
         const maxLevels = Math.floor(sellableQty / tpQtyPerLevel);
-        levelsToPlace = activeTpLevels.slice(0, Math.max(maxLevels, 1));
+        levelsToPlace = cappedTpLevels.slice(0, Math.max(maxLevels, 1));
       }
 
-      const lastLevelQty = Math.max(
-        Math.round((sellableQty - tpQtyPerLevel * (levelsToPlace.length - 1)) * basePrecisionMultiplier) / basePrecisionMultiplier,
-        precision.minTradeVolume
-      );
+      if (sellableQty < precision.minTradeVolume) {
+        console.log(`[${tag}] Growth qty too small for TPs (${sellableQty.toFixed(precision.basePrecision)} < minVol ${precision.minTradeVolume}) — skipping`);
+        config.tpConsumedAtQty = positionQty;
+        await storage.updateStrategy(strategy.id, { config });
+      } else {
+        const lastLevelQty = Math.max(
+          Math.round((sellableQty - tpQtyPerLevel * (levelsToPlace.length - 1)) * basePrecisionMultiplier) / basePrecisionMultiplier,
+          precision.minTradeVolume
+        );
 
-      console.log(`[${tag}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (posQty: ${positionQty}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, entry: ${tpRefPrice.toFixed(4)})`);
+        console.log(`[${tag}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (basis: ${tpQtyBasis.toFixed(precision.basePrecision)}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, entry: ${tpRefPrice.toFixed(4)})`);
 
-      for (let i = 0; i < levelsToPlace.length; i++) {
-        const level = levelsToPlace[i];
-        const isLast = i === levelsToPlace.length - 1;
-        const qty = isLast ? lastLevelQty : tpQtyPerLevel;
-        const qtyStr = qty.toFixed(precision.basePrecision);
-        const priceStr = roundPrice(level, precision.quotePrecision);
-        try {
-          const result = await client.placeTpslOrder({
-            symbol: strategy.symbol,
-            positionId,
-            tpPrice: priceStr,
-            tpStopType: "LAST_PRICE",
-            tpOrderType: "MARKET",
-            tpQty: qtyStr,
-          });
-          if (result?.code === 0) {
-            placedTps++;
-          } else {
-            console.error(`[${tag}] TP failed @ ${priceStr} qty=${qtyStr}: ${result?.msg}`);
+        for (let i = 0; i < levelsToPlace.length; i++) {
+          const level = levelsToPlace[i];
+          const isLast = i === levelsToPlace.length - 1;
+          const qty = isLast ? lastLevelQty : tpQtyPerLevel;
+          const qtyStr = qty.toFixed(precision.basePrecision);
+          const priceStr = roundPrice(level, precision.quotePrecision);
+          try {
+            const result = await client.placeTpslOrder({
+              symbol: strategy.symbol,
+              positionId,
+              tpPrice: priceStr,
+              tpStopType: "LAST_PRICE",
+              tpOrderType: "MARKET",
+              tpQty: qtyStr,
+            });
+            if (result?.code === 0) {
+              placedTps++;
+            } else {
+              console.error(`[${tag}] TP failed @ ${priceStr} qty=${qtyStr}: ${result?.msg}`);
+            }
+          } catch (e: any) {
+            console.error(`[${tag}] TP error @ ${priceStr}:`, e.message);
           }
-        } catch (e: any) {
-          console.error(`[${tag}] TP error @ ${priceStr}:`, e.message);
         }
-      }
 
-      config.lastTpEntryPrice = tpRefPrice;
-      config.lastTpPositionQty = positionQty;
-      config.lastTpPlacedAt = now;
-      config.lastTpCount = placedTps;
-      await storage.updateStrategy(strategy.id, { config });
-      console.log(`[${tag}] TP state saved: entry=${tpRefPrice.toFixed(4)} qty=${positionQty} placed=${placedTps}/${levelsToPlace.length}`);
+        config.lastTpEntryPrice = tpRefPrice;
+        config.lastTpPositionQty = positionQty;
+        config.lastTpPlacedAt = now;
+        config.lastTpCount = (needsGrowthTps && !needsRebuild) ? liveTpCount + placedTps : placedTps;
+        config.tpConsumedAtQty = 0;
+        await storage.updateStrategy(strategy.id, { config });
+        console.log(`[${tag}] TP state saved: entry=${tpRefPrice.toFixed(4)} qty=${positionQty} placed=${placedTps}/${levelsToPlace.length} total_live=${config.lastTpCount}`);
+      }
     }
   }
 

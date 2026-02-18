@@ -655,7 +655,7 @@ function SimulationPanel() {
             data-testid="input-sim-symbol"
             placeholder="Symbol or all"
             value={simSymbol}
-            onChange={e => setSimSymbol(e.target.value)}
+            onChange={e => setSimSymbol(e.target.value.toUpperCase())}
             className="w-28 text-xs"
           />
           <Button
@@ -798,7 +798,7 @@ function TandemSimulationPanel() {
             data-testid="input-tandem-symbol"
             placeholder="Pair"
             value={tandemSymbol}
-            onChange={e => setTandemSymbol(e.target.value)}
+            onChange={e => setTandemSymbol(e.target.value.toUpperCase())}
             className="w-20 h-7 text-xs"
           />
           <Input

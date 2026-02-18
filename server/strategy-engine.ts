@@ -1548,9 +1548,25 @@ export async function executePairRotation(strategy: Strategy, newSymbol: string,
   const client = getBitunixClient();
   if (!client) return;
 
+  console.log(`[Rotation ${strategy.id}] Starting rotation from ${strategy.symbol} to ${newSymbol}: ${reason}`);
+
   try {
-    await client.flashClose(strategy.symbol);
-    console.log(`[Rotation ${strategy.id}] Closed ${strategy.symbol}: ${reason}`);
+    await cancelAllGridOrders(strategy.id, strategy.symbol);
+    console.log(`[Rotation ${strategy.id}] Cancelled all orders/TPs for ${strategy.symbol}`);
+  } catch (e: any) {
+    console.error(`[Rotation ${strategy.id}] Cancel orders error:`, e.message);
+  }
+
+  try {
+    const posRes = await client.getPositions(strategy.symbol);
+    if (posRes?.code === 0 && Array.isArray(posRes.data)) {
+      for (const pos of posRes.data) {
+        if (pos.positionId && parseFloat(pos.qty || "0") > 0) {
+          await client.flashClose(pos.positionId);
+          console.log(`[Rotation ${strategy.id}] Flash closed position ${pos.positionId} on ${strategy.symbol}`);
+        }
+      }
+    }
   } catch (e: any) {
     console.error(`[Rotation ${strategy.id}] Failed to close ${strategy.symbol}:`, e.message);
   }
@@ -1579,12 +1595,21 @@ export async function executePairRotation(strategy: Strategy, newSymbol: string,
     gridsBelow: newGrid.gridsBelow,
     extensionsBelow: 0,
     extensionsAbove: 0,
+    initialBuyDone: false,
+    lastTpCount: 0,
+    lastTpEntryPrice: 0,
+    lastTpPositionQty: 0,
+    lastTpPlacedAt: 0,
+    lastTrackedPnl: 0,
+    lastTrackedPositionId: null,
   };
 
   await storage.updateStrategy(strategy.id, {
     symbol: newSymbol,
     config: newConfig,
   });
+
+  priceFeed.subscribe(newSymbol);
 
   await storage.createTradeLog({
     strategyId: strategy.id,
@@ -1599,7 +1624,7 @@ export async function executePairRotation(strategy: Strategy, newSymbol: string,
     errorMsg: `Rotation: ${reason}`,
   });
 
-  console.log(`[Rotation ${strategy.id}] Switched to ${newSymbol} at ${ticker.lastPrice}`);
+  console.log(`[Rotation ${strategy.id}] Switched to ${newSymbol} at ${ticker.lastPrice} — will place initial buy next cycle`);
 }
 
 const lastRotationCheck = new Map<number, number>();

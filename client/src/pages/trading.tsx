@@ -772,12 +772,14 @@ function TandemSimulationPanel() {
   const [tandemSymbol, setTandemSymbol] = useState("");
   const [tandemCapital, setTandemCapital] = useState("50");
   const [tandemLeverage, setTandemLeverage] = useState("100");
+  const [tandemDays, setTandemDays] = useState("7");
 
   const handleRun = () => {
     const params: any = {};
     if (tandemSymbol) params.symbol = tandemSymbol;
     params.capitalPerSide = parseFloat(tandemCapital) || 50;
     params.leverage = parseInt(tandemLeverage) || 100;
+    params.days = parseInt(tandemDays) || 7;
     tandem.mutate(params);
   };
 
@@ -821,6 +823,20 @@ function TandemSimulationPanel() {
               </Button>
             ))}
           </div>
+          <div className="flex items-center gap-0.5">
+            {[1, 3, 7].map(d => (
+              <Button
+                key={d}
+                size="sm"
+                variant={tandemDays === String(d) ? "default" : "ghost"}
+                onClick={() => setTandemDays(String(d))}
+                data-testid={`button-tandem-days-${d}`}
+                className="h-7 text-[10px] px-1.5 font-mono"
+              >
+                {d}d
+              </Button>
+            ))}
+          </div>
           <Button
             size="sm"
             variant="outline"
@@ -837,7 +853,7 @@ function TandemSimulationPanel() {
       <CardContent>
         {!results && !tandem.isPending && (
           <p className="text-xs text-muted-foreground">
-            Simulates long+short at {tandemLeverage}x (liq at {(100 / parseInt(tandemLeverage || "100")).toFixed(1)}% move). One side liquidates, survivor runs TP cascade (2/7, 2/7, 2/7, 1/7 trailing 0.5%).
+            {tandemDays}d window, {tandemLeverage}x leverage (liq at {(100 / parseInt(tandemLeverage || "100")).toFixed(1)}% move). Both sides open, one liquidates, survivor runs TP cascade (2/7, 2/7, 2/7, 1/7 trailing 0.5%).
           </p>
         )}
         {isArray && (

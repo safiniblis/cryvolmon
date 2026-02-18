@@ -24,15 +24,15 @@ async function fetchTop20CryptoData() {
     const results = [];
 
     for (const coin of markets) {
-      const prices: number[] = coin.sparkline_in_7d?.price || [];
-      let swings = 0;
-      const recentPrices = prices.slice(-25);
+      const allPrices: number[] = coin.sparkline_in_7d?.price || [];
       const now = Date.now();
-      const priceHistory = recentPrices.map((price, index) => {
-        const hoursAgo = recentPrices.length - 1 - index;
+      const priceHistory = allPrices.map((price, index) => {
+        const hoursAgo = allPrices.length - 1 - index;
         return { timestamp: now - (hoursAgo * 60 * 60 * 1000), price };
       });
 
+      const recentPrices = allPrices.slice(-25);
+      let swings = 0;
       for (let i = 1; i < recentPrices.length; i++) {
         const prevPrice = recentPrices[i - 1];
         const currPrice = recentPrices[i];
@@ -603,14 +603,18 @@ export async function registerRoutes(
   app.post("/api/grid/simulate", async (req, res) => {
     try {
       const stats = await storage.getCryptoStats();
-      const { symbol, feeRate = 0.0006, amountPerGrid = 10 } = req.body;
+      const { symbol, feeRate = 0.0006, amountPerGrid = 10, days = 1 } = req.body;
+      const hoursWindow = Math.min(days * 24, 168);
+
+      const slicePH = (ph: any[]) => ph ? ph.slice(-hoursWindow) : ph;
 
       if (symbol) {
         const coin = stats.find(s => s.symbol?.toUpperCase() === symbol.replace("USDT", "").toUpperCase());
         if (!coin || !coin.priceHistory) {
           return res.status(404).json({ message: `No price history for ${symbol}` });
         }
-        const result = simulateGridStrategy(coin.priceHistory as any, feeRate, amountPerGrid);
+        const ph = slicePH(coin.priceHistory as any);
+        const result = simulateGridStrategy(ph, feeRate, amountPerGrid);
         if (!result) return res.status(400).json({ message: "Not enough data to simulate" });
         result.symbol = symbol;
         return res.json(result);
@@ -618,8 +622,9 @@ export async function registerRoutes(
 
       const results = [];
       for (const coin of stats) {
-        if (!coin.priceHistory || (coin.priceHistory as any).length < 3) continue;
-        const result = simulateGridStrategy(coin.priceHistory as any, feeRate, amountPerGrid);
+        const ph = slicePH(coin.priceHistory as any);
+        if (!ph || ph.length < 3) continue;
+        const result = simulateGridStrategy(ph, feeRate, amountPerGrid);
         if (result) {
           result.symbol = (coin.symbol?.toUpperCase() || "") + "USDT";
           results.push(result);
@@ -635,14 +640,21 @@ export async function registerRoutes(
   app.post("/api/tandem/simulate", async (req, res) => {
     try {
       const stats = await storage.getCryptoStats();
-      const { symbol, feeRate = 0.0006, capitalPerSide = 50, leverage = 100, feeMultiplier = 4.0 } = req.body;
+      const { symbol, feeRate = 0.0006, capitalPerSide = 50, leverage = 100, feeMultiplier = 4.0, days = 7 } = req.body;
+      const hoursWindow = Math.min(days * 24, 168);
+
+      const slicePriceHistory = (ph: any[]) => {
+        if (!ph) return ph;
+        return ph.slice(-hoursWindow);
+      };
 
       if (symbol) {
         const coin = stats.find(s => s.symbol?.toUpperCase() === symbol.replace("USDT", "").toUpperCase());
         if (!coin || !coin.priceHistory) {
           return res.status(404).json({ message: `No price history for ${symbol}` });
         }
-        const result = simulateTandem(coin.priceHistory as any, feeRate, capitalPerSide, leverage, feeMultiplier);
+        const ph = slicePriceHistory(coin.priceHistory as any);
+        const result = simulateTandem(ph, feeRate, capitalPerSide, leverage, feeMultiplier);
         if (!result) return res.status(400).json({ message: "Not enough data to simulate" });
         result.symbol = symbol;
         return res.json(result);
@@ -650,8 +662,9 @@ export async function registerRoutes(
 
       const results = [];
       for (const coin of stats) {
-        if (!coin.priceHistory || (coin.priceHistory as any).length < 10) continue;
-        const result = simulateTandem(coin.priceHistory as any, feeRate, capitalPerSide, leverage, feeMultiplier);
+        const ph = slicePriceHistory(coin.priceHistory as any);
+        if (!ph || ph.length < 10) continue;
+        const result = simulateTandem(ph, feeRate, capitalPerSide, leverage, feeMultiplier);
         if (result) {
           result.symbol = (coin.symbol?.toUpperCase() || "") + "USDT";
           results.push(result);

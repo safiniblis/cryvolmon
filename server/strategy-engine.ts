@@ -625,32 +625,35 @@ async function executeGridStrategy(strategy: Strategy) {
         console.log(`[Grid ${strategy.id}] TPs stable: ${lastTpCount} orders placed at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
       }
     } else {
-      if (hasTpsPlaced) {
-        const reason = entryDroppedEnough
+      const reason = !hasTpsPlaced
+        ? "first TP placement"
+        : entryDroppedEnough
           ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
           : `position grew ${lastTpPosQty}->${positionQty}`;
-        console.log(`[Grid ${strategy.id}] TP rebuild: ${reason} — cancelling existing TPs`);
-        try {
-          const tpRes = await client.getPendingTpslOrders(strategy.symbol);
-          if (tpRes?.code === 0) {
-            let rawData = tpRes.data;
-            if (rawData && !Array.isArray(rawData) && Array.isArray(rawData.orderList)) {
-              rawData = rawData.orderList;
-            }
-            if (Array.isArray(rawData)) {
-              const positionTps = rawData.filter((t: any) => t.positionId === positionId);
-              for (const tp of positionTps) {
-                const tpId = tp.id || tp.orderId;
-                if (tpId) {
-                  await client.cancelTpslOrder(strategy.symbol, tpId);
-                  cancelledTps++;
-                }
+      console.log(`[Grid ${strategy.id}] TP rebuild: ${reason} — cancelling any existing TPs first`);
+      try {
+        const tpRes = await client.getPendingTpslOrders(strategy.symbol);
+        if (tpRes?.code === 0) {
+          let rawData = tpRes.data;
+          if (rawData && !Array.isArray(rawData) && Array.isArray(rawData.orderList)) {
+            rawData = rawData.orderList;
+          }
+          if (Array.isArray(rawData)) {
+            const positionTps = rawData.filter((t: any) => t.positionId === positionId);
+            for (const tp of positionTps) {
+              const tpId = tp.id || tp.orderId;
+              if (tpId) {
+                await client.cancelTpslOrder(strategy.symbol, tpId);
+                cancelledTps++;
               }
             }
+            if (positionTps.length > 0) {
+              console.log(`[Grid ${strategy.id}] Cancelled ${positionTps.length} existing TPs before placing new ones`);
+            }
           }
-        } catch (e: any) {
-          console.error(`[Grid ${strategy.id}] Cancel TPs error:`, e.message);
         }
+      } catch (e: any) {
+        console.error(`[Grid ${strategy.id}] Cancel TPs error:`, e.message);
       }
 
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);

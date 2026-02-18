@@ -273,10 +273,15 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     if (accountRes?.code !== 0 || !accountRes?.data) {
       return { success: false, message: "Cannot fetch account balance" };
     }
-    const available = parseFloat(accountRes.data.available || "0");
-    if (available < 1) {
-      return { success: false, message: `Insufficient balance: ${available.toFixed(2)} USDT. Need at least 1 USDT.` };
+    const accountAvailable = parseFloat(accountRes.data.available || "0");
+    if (accountAvailable < 1) {
+      return { success: false, message: `Insufficient balance: ${accountAvailable.toFixed(2)} USDT. Need at least 1 USDT.` };
     }
+
+    const budget = config.allocatedBudget && config.allocatedBudget > 0
+      ? Math.min(config.allocatedBudget, accountAvailable)
+      : accountAvailable;
+    console.log(`[InitialBuy ${strategy.id}] Account available=${accountAvailable.toFixed(2)}, allocatedBudget=${config.allocatedBudget || 'none'}, using budget=${budget.toFixed(2)} USDT`);
 
     try {
       await client.setMarginMode(strategy.symbol, "ISOLATION");
@@ -294,7 +299,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     const gridBuyCount = buyLevelsIn1Pct.length;
 
     const totalMarginSlots = 1 + gridBuyCount;
-    const marginPerSlot = available / totalMarginSlots;
+    const marginPerSlot = budget / totalMarginSlots;
     const initialMargin = marginPerSlot;
     const initialNotional = initialMargin * leverage * 0.95;
     const baseQty = Math.max(initialNotional / currentPrice, precision.minTradeVolume);
@@ -336,9 +341,9 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     });
 
     if (success) {
-      config.allocatedBudget = available;
+      config.allocatedBudget = budget;
       config.lastTrackedPnl = 0;
-      console.log(`[InitialBuy ${strategy.id}] Set allocatedBudget=${available.toFixed(2)} USDT`);
+      console.log(`[InitialBuy ${strategy.id}] Set allocatedBudget=${budget.toFixed(2)} USDT`);
       await storage.updateStrategy(strategy.id, {
         totalTrades: (strategy.totalTrades || 0) + 1,
         config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid, allocatedBudget: config.allocatedBudget, lastTrackedPnl: 0 },
@@ -352,8 +357,9 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
         }
       } catch {}
 
-      console.log(`[InitialBuy ${strategy.id}] Now placing ${gridBuyCount} limit BUY orders within 1% below entry... (remaining=${remainingBalance.toFixed(2)} USDT)`);
-      const gridMarginEach = gridBuyCount > 0 ? remainingBalance / gridBuyCount : 0;
+      const remainingBudget = Math.min(remainingBalance, budget - initialMargin);
+      console.log(`[InitialBuy ${strategy.id}] Now placing ${gridBuyCount} limit BUY orders within 1% below entry... (remainingAccount=${remainingBalance.toFixed(2)}, remainingBudget=${remainingBudget.toFixed(2)} USDT)`);
+      const gridMarginEach = gridBuyCount > 0 ? Math.max(0, remainingBudget) / gridBuyCount : 0;
       let placed = 0;
       for (const level of buyLevelsIn1Pct) {
         if (gridMarginEach < 0.5) {

@@ -468,7 +468,7 @@ export async function registerRoutes(
       const feeRate = 0.0006;
       const grid = calculateOptimizedGrid(bestPair.currentPrice, feeRate);
 
-      const amountPerGrid = Math.max(5, Math.floor(usdtAmount / grid.gridCount));
+      const amountPerGrid = usdtAmount / (grid.gridCount + 1);
 
       if (usdtAmount < 10) {
         return res.status(400).json({ message: "Minimum amount is 10 USDT." });

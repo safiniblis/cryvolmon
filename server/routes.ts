@@ -172,7 +172,11 @@ export async function registerRoutes(
   // === Strategies ===
   app.get("/api/strategies", async (req, res) => {
     const strats = await storage.getStrategies();
-    res.json(strats);
+    const filtered = strats.filter(s => {
+      const cfg = s.config as any;
+      return !cfg?.parentTandemId;
+    });
+    res.json(filtered);
   });
 
   app.post("/api/strategies", async (req, res) => {
@@ -557,11 +561,11 @@ export async function registerRoutes(
     try {
       const schema = z.object({
         symbol: z.string().min(1),
-        capitalPerSide: z.number().min(5).default(50),
+        totalCapital: z.number().min(10).default(100),
         leverage: z.number().min(2).max(125).default(33),
         rotationEnabled: z.boolean().default(false),
       });
-      const { symbol, capitalPerSide, leverage, rotationEnabled } = schema.parse(req.body);
+      const { symbol, totalCapital, leverage, rotationEnabled } = schema.parse(req.body);
 
       const client = getBitunixClient();
       if (!client) return res.status(400).json({ message: "API keys not configured" });
@@ -574,10 +578,12 @@ export async function registerRoutes(
         status: "running",
         config: {
           leverage,
-          capitalPerSide,
+          totalCapital,
           feeMultiplier: 4.0,
           phase: "entry",
           entryPrice: 0,
+          longGridId: null,
+          shortGridId: null,
           longPositionId: null,
           shortPositionId: null,
           longEntryQty: 0,
@@ -707,7 +713,8 @@ export async function registerRoutes(
   app.post("/api/tandem/simulate", async (req, res) => {
     try {
       const stats = await storage.getCryptoStats();
-      const { symbol, feeRate = 0.0006, capitalPerSide = 50, leverage = 100, feeMultiplier = 4.0, days = 7 } = req.body;
+      const { symbol, feeRate = 0.0006, totalCapital = 100, leverage = 100, feeMultiplier = 4.0, days = 7 } = req.body;
+      const capitalPerSide = (totalCapital || 100) / 2;
       const hoursWindow = Math.min(days * 24, 168);
 
       const slicePriceHistory = (ph: any[]) => {

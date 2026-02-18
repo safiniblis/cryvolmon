@@ -45,7 +45,7 @@ export function useSimulation() {
 export function useTandemSimulation() {
   const { toast } = useToast();
   return useMutation({
-    mutationFn: async (data: { symbol?: string; capitalPerSide?: number; leverage?: number; feeRate?: number; feeMultiplier?: number; days?: number }) => {
+    mutationFn: async (data: { symbol?: string; totalCapital?: number; leverage?: number; feeRate?: number; feeMultiplier?: number; days?: number }) => {
       const res = await apiRequest("POST", "/api/tandem/simulate", data);
       return res.json();
     },
@@ -338,7 +338,7 @@ export function useTandemStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
-    mutationFn: async (data: { symbol: string; capitalPerSide: number; leverage: number; rotationEnabled?: boolean }) => {
+    mutationFn: async (data: { symbol: string; totalCapital: number; leverage: number; rotationEnabled?: boolean }) => {
       const res = await apiRequest("POST", "/api/strategies/tandem-start", data);
       return res.json();
     },

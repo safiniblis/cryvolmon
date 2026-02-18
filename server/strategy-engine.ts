@@ -542,6 +542,7 @@ async function executeGridStrategy(strategy: Strategy) {
   let posRealizedPnl = 0;
   let posFee = 0;
   let posFunding = 0;
+  let positionActualMargin = 0;
   try {
     const posRes = await client.getPositions(strategy.symbol);
     if (posRes?.code === 0 && Array.isArray(posRes.data) && posRes.data.length > 0) {
@@ -553,6 +554,7 @@ async function executeGridStrategy(strategy: Strategy) {
         posRealizedPnl = parseFloat(pos.realizedPNL || "0");
         posFee = parseFloat(pos.fee || "0");
         posFunding = parseFloat(pos.funding || "0");
+        positionActualMargin = parseFloat(pos.margin || "0");
       }
     }
   } catch (e: any) {
@@ -642,10 +644,18 @@ async function executeGridStrategy(strategy: Strategy) {
     }
   }
 
-  let availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, allocatedBudget) : accountAvailable;
+  const positionMargin = positionActualMargin > 0
+    ? positionActualMargin
+    : (positionQty > 0 && positionEntryPrice > 0
+      ? (positionQty * positionEntryPrice) / (config.leverage || 8)
+      : 0);
+  const effectiveAllocated = isTandemChildBudget && allocatedBudget > 0
+    ? Math.max(0, allocatedBudget - positionMargin)
+    : allocatedBudget;
+  let availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, effectiveAllocated) : accountAvailable;
 
-  if (allocatedBudget > 0 && accountAvailable > allocatedBudget + 0.5) {
-    console.log(`[${tag}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
+  if (allocatedBudget > 0 && (accountAvailable > effectiveAllocated + 0.5 || isTandemChildBudget)) {
+    console.log(`[${tag}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, posMargin=${positionMargin.toFixed(2)}, effective=${effectiveAllocated.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
   }
 
   const lastTpPosQty = config.lastTpPositionQty || 0;

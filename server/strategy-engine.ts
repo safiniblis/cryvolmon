@@ -582,7 +582,7 @@ async function executeGridStrategy(strategy: Strategy) {
     }
   }
 
-  const availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, allocatedBudget) : accountAvailable;
+  let availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, allocatedBudget) : accountAvailable;
 
   if (allocatedBudget > 0 && accountAvailable > allocatedBudget + 0.5) {
     console.log(`[Grid ${strategy.id}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);

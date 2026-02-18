@@ -557,6 +557,41 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/grid/leverage-analysis", async (_req, res) => {
+    const feeRate = 0.0006;
+    const roundTripFee = 2 * feeRate;
+    const leverages = [10, 15, 20, 25, 30, 33, 40, 50, 60, 75, 100];
+    const feeMultipliers = [3.0, 3.5, 4.0];
+
+    const results = feeMultipliers.map(fm => {
+      const gridGap = fm * roundTripFee;
+      const netPerGrid = gridGap - roundTripFee;
+      return {
+        feeMultiplier: fm,
+        gridGapPct: +(gridGap * 100).toFixed(3),
+        netPerGridPct: +(netPerGrid * 100).toFixed(3),
+        leverages: leverages.map(lev => {
+          const liqDist = 1 / lev;
+          const gridRange = liqDist * 0.85;
+          const gridCount = Math.floor(gridRange / gridGap);
+          const roiPerOscillation = +(gridCount * netPerGrid * lev * 100).toFixed(1);
+          const roiPerGridOnMargin = +(netPerGrid * lev * 100).toFixed(2);
+          return {
+            leverage: lev,
+            liqDistPct: +(liqDist * 100).toFixed(2),
+            gridRangePct: +(gridRange * 100).toFixed(2),
+            gridCount,
+            roiPerGridOnMargin,
+            roiPerOscillation,
+            recommended: gridCount >= 4 && gridCount <= 12,
+          };
+        }),
+      };
+    });
+
+    res.json(results);
+  });
+
   app.post("/api/strategies/tandem-start", async (req, res) => {
     try {
       const schema = z.object({
@@ -579,7 +614,7 @@ export async function registerRoutes(
         config: {
           leverage,
           totalCapital,
-          feeMultiplier: 4.0,
+          feeMultiplier: 3.5,
           phase: "entry",
           entryPrice: 0,
           longGridId: null,

@@ -418,7 +418,7 @@ export async function registerRoutes(
   // === Quick Start (auto-select best pair + create + start) ===
   app.post("/api/strategies/quickstart", async (req, res) => {
     try {
-      const { amount = 100 } = req.body;
+      const { amount = 100, symbol: requestedSymbol } = req.body;
       const usdtAmount = parseFloat(amount);
       if (isNaN(usdtAmount) || usdtAmount <= 0) {
         return res.status(400).json({ message: "Invalid USDT amount" });
@@ -450,16 +450,32 @@ export async function registerRoutes(
       } catch {}
 
       let bestPair: typeof scores[0] | null = null;
-      for (const s of scores) {
-        if (availablePairs.size > 0 && !availablePairs.has(s.bitunixSymbol)) continue;
-        if (s.riskGauge < 0.5 && s.largeSwingsDown > s.largeSwingsUp) continue;
-        bestPair = s;
-        break;
+
+      if (requestedSymbol) {
+        bestPair = scores.find(s => s.bitunixSymbol === requestedSymbol) || null;
+        if (!bestPair) {
+          const matchedScore = scores.find(s => s.symbol.toLowerCase() === requestedSymbol.replace("USDT", "").toLowerCase());
+          bestPair = matchedScore || null;
+        }
+        if (!bestPair) {
+          return res.status(400).json({ message: `Pair ${requestedSymbol} not found in volatility data.` });
+        }
+        if (availablePairs.size > 0 && !availablePairs.has(bestPair.bitunixSymbol)) {
+          return res.status(400).json({ message: `Pair ${requestedSymbol} not available on Bitunix.` });
+        }
+      } else {
+        for (const s of scores) {
+          if (availablePairs.size > 0 && !availablePairs.has(s.bitunixSymbol)) continue;
+          if (s.riskGauge < 0.5 && s.largeSwingsDown > s.largeSwingsUp) continue;
+          bestPair = s;
+          break;
+        }
+
+        if (!bestPair) {
+          bestPair = scores[0] || null;
+        }
       }
 
-      if (!bestPair) {
-        bestPair = scores[0] || null;
-      }
       if (!bestPair) {
         return res.status(400).json({ message: "No volatility data available. Refresh the dashboard first." });
       }

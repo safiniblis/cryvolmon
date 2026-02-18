@@ -517,8 +517,21 @@ function VolatilityScoresPanel() {
   const { data: scores, isLoading } = useVolatilityScores();
   const { data: strategies } = useStrategies();
   const manualRotation = useManualRotation();
+  const quickStart = useQuickStart();
+  const [amount, setAmount] = useState("40");
+  const [startingSymbol, setStartingSymbol] = useState<string | null>(null);
 
   const runningStrategy = strategies?.find(s => s.status === "running" && s.type === "grid");
+  const hasRunning = !!runningStrategy;
+
+  const handleStart = (bitunixSymbol: string) => {
+    const val = parseFloat(amount);
+    if (isNaN(val) || val <= 0) return;
+    setStartingSymbol(bitunixSymbol);
+    quickStart.mutate({ amount: val, symbol: bitunixSymbol }, {
+      onSettled: () => setStartingSymbol(null),
+    });
+  };
 
   return (
     <Card className="bg-card/30 border-border/40">
@@ -527,6 +540,21 @@ function VolatilityScoresPanel() {
           <Shield className="h-4 w-4 text-blue-400" />
           Volatility
         </CardTitle>
+        {!hasRunning && (
+          <div className="flex items-center gap-1.5">
+            <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              data-testid="input-quickstart-amount"
+              type="number"
+              min="5"
+              step="10"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              className="w-20 h-7 text-xs font-mono"
+              placeholder="40"
+            />
+          </div>
+        )}
       </CardHeader>
       <CardContent className="p-0">
         {isLoading && <p className="text-xs text-muted-foreground p-3">Loading...</p>}
@@ -539,12 +567,13 @@ function VolatilityScoresPanel() {
                 <th className="text-right p-2 text-muted-foreground font-medium">24h</th>
                 <th className="text-right p-2 text-muted-foreground font-medium">4h</th>
                 <th className="text-right p-2 text-muted-foreground font-medium">Risk</th>
-                {runningStrategy && <th className="p-2"></th>}
+                <th className="p-2"></th>
               </tr>
             </thead>
             <tbody>
               {scores?.slice(0, 10).map(s => {
                 const isActive = runningStrategy?.symbol === s.bitunixSymbol;
+                const isStarting = startingSymbol === s.bitunixSymbol;
                 return (
                   <tr key={s.symbol} className={`border-b border-border/10 ${isActive ? "bg-purple-500/10" : ""}`} data-testid={`vol-score-${s.symbol}`}>
                     <td className="p-2">
@@ -556,9 +585,11 @@ function VolatilityScoresPanel() {
                     <td className="p-2 text-right font-mono text-foreground">{s.swings1to5}</td>
                     <td className="p-2 text-right font-mono text-foreground">{s.score4h}</td>
                     <td className="p-2 text-right font-mono text-muted-foreground">{s.riskGauge.toFixed(1)}</td>
-                    {runningStrategy && (
-                      <td className="p-2 text-right">
-                        {!isActive ? (
+                    <td className="p-2 text-right">
+                      {hasRunning ? (
+                        isActive ? (
+                          <Badge variant="secondary" className="text-[9px] bg-purple-500/20 text-purple-300 border-purple-500/30">Active</Badge>
+                        ) : (
                           <Button
                             size="icon"
                             variant="ghost"
@@ -568,11 +599,24 @@ function VolatilityScoresPanel() {
                           >
                             <RefreshCw className="h-3 w-3" />
                           </Button>
-                        ) : (
-                          <Badge variant="secondary" className="text-[9px] bg-purple-500/20 text-purple-300 border-purple-500/30">Active</Badge>
-                        )}
-                      </td>
-                    )}
+                        )
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={quickStart.isPending || !amount || parseFloat(amount) <= 0}
+                          onClick={() => handleStart(s.bitunixSymbol)}
+                          data-testid={`button-start-${s.symbol}`}
+                          className="h-7 px-2 text-xs text-purple-400"
+                        >
+                          {isStarting ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <><Play className="h-3 w-3 mr-1" /> Start</>
+                          )}
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -723,38 +767,7 @@ function SimulationPanel() {
 }
 
 function QuickStartPanel() {
-  const [amount, setAmount] = useState("100");
-  const quickStart = useQuickStart();
-
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <div className="relative">
-        <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          data-testid="input-quickstart-amount"
-          type="number"
-          min="5"
-          step="10"
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
-          className="pl-8 w-24 font-mono"
-          placeholder="100"
-        />
-      </div>
-      <Button
-        data-testid="button-quickstart"
-        onClick={() => quickStart.mutate({ amount: parseFloat(amount) })}
-        disabled={quickStart.isPending || !amount || parseFloat(amount) <= 0}
-        className="bg-purple-600 border-purple-500"
-      >
-        {quickStart.isPending ? (
-          <><Activity className="h-4 w-4 mr-1 animate-spin" /> Starting...</>
-        ) : (
-          <><Play className="h-4 w-4 mr-1" /> Start</>
-        )}
-      </Button>
-    </div>
-  );
+  return null;
 }
 
 export default function TradingPage() {
@@ -769,7 +782,6 @@ export default function TradingPage() {
             <h1 className="text-xl font-extrabold text-foreground">Trading Agent</h1>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <QuickStartPanel />
             <ConnectionBanner />
             <Link href="/">
               <Button variant="outline" size="sm" data-testid="link-dashboard">

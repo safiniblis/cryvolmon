@@ -46,7 +46,7 @@ export function useQuickStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
-    mutationFn: async (data: { amount: number }) => {
+    mutationFn: async (data: { amount: number; symbol?: string }) => {
       const res = await apiRequest("POST", "/api/strategies/quickstart", data);
       return res.json();
     },
@@ -54,7 +54,7 @@ export function useQuickStart() {
       queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
       toast({
         title: "Strategy Started",
-        description: `Auto-selected ${data.selectedPair} (${data.pairName}) with volatility score ${data.volatilityScore}`,
+        description: `Started ${data.selectedPair} (${data.pairName}) with volatility score ${data.volatilityScore}`,
       });
     },
     onError: (e: Error) => {

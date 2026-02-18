@@ -538,19 +538,24 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const missingBuyLevels = buyLevels.filter(l => !coveredBuyPrices.has(roundPrice(l, precision.quotePrecision)));
   const leverage = config.leverage || 8;
-  const levelsToFill = Math.min(missingBuyLevels.length, 4);
-  const marginPerOrder = levelsToFill > 0 ? availableBalance / levelsToFill : 0;
+  const minOrderMargin = 1.0;
+  const usableBalance = availableBalance - 0.1;
+
+  let levelsToFill = 0;
+  if (usableBalance > minOrderMargin) {
+    levelsToFill = Math.min(missingBuyLevels.length, 4, Math.floor(usableBalance / minOrderMargin));
+  }
+  const marginPerOrder = levelsToFill > 0 ? usableBalance / levelsToFill : 0;
   const buySlice = missingBuyLevels.slice(0, levelsToFill);
+
+  if (missingBuyLevels.length > 0 && levelsToFill === 0 && coveredBuyPrices.size === 0) {
+    console.log(`[Grid ${strategy.id}] No balance for buy orders: ${availableBalance.toFixed(2)} USDT`);
+  }
 
   let placedBuys = 0;
   for (const level of buySlice) {
-    if (availableBalance < 0.1) {
-      if (placedBuys === 0) {
-        console.log(`[Grid ${strategy.id}] No balance for buy orders: ${availableBalance.toFixed(2)} USDT`);
-      }
-      break;
-    }
-    const effectiveMargin = Math.min(marginPerOrder, availableBalance * 0.95);
+    const effectiveMargin = Math.min(marginPerOrder, (availableBalance - 0.1) * 0.95);
+    if (effectiveMargin < 0.5) break;
     const notional = effectiveMargin * leverage * 0.95;
     const qtyBase = notional / level;
     const qty = Math.max(qtyBase, precision.minTradeVolume);

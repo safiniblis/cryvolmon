@@ -731,19 +731,13 @@ async function executeGridStrategy(strategy: Strategy) {
     const hasDuplicates = hasTpsPlaced && liveTpCount > lastTpCount + 2;
     const entryDroppedEnough = hasTpsPlaced && lastTpEntry > 0 && tpRefPrice < lastTpEntry * 0.995;
     const positionGrewEnough = hasTpsPlaced && lastTpPosQty > 0 && positionQty > lastTpPosQty * 1.15;
+    const tpsConsumed = hasTpsPlaced && liveTpCount < lastTpCount && liveTpCount > 0;
     const cooldownOk = (now - lastTpTime) > 60000;
 
-    const needsRebuild = !hasTpsPlaced || tpsMissing || hasDuplicates || ((entryDroppedEnough || positionGrewEnough) && cooldownOk);
+    const needsRebuild = !hasTpsPlaced || tpsMissing || hasDuplicates || tpsConsumed || ((entryDroppedEnough || positionGrewEnough) && cooldownOk);
 
     if (!needsRebuild) {
-      if (tpWasHit) {
-        config.lastTpPositionQty = positionQty;
-        config.lastTpCount = liveTpCount;
-        await storage.updateStrategy(strategy.id, { config });
-        console.log(`[Grid ${strategy.id}] TPs after TP hit: ${liveTpCount} live on exchange, updated tracked qty to ${positionQty}`);
-      } else {
-        console.log(`[Grid ${strategy.id}] TPs stable: ${liveTpCount} live on exchange (saved=${lastTpCount}) at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
-      }
+      console.log(`[Grid ${strategy.id}] TPs stable: ${liveTpCount} live on exchange (saved=${lastTpCount}) at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
     } else {
       const reason = !hasTpsPlaced
         ? "first TP placement"
@@ -751,9 +745,11 @@ async function executeGridStrategy(strategy: Strategy) {
           ? `TPs missing from exchange (saved=${lastTpCount}, live=${liveTpCount})`
           : hasDuplicates
             ? `duplicate TPs detected (saved=${lastTpCount}, live=${liveTpCount}) — cleaning up`
-            : entryDroppedEnough
-              ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
-              : `position grew ${lastTpPosQty}->${positionQty}`;
+            : tpsConsumed
+              ? `TPs consumed (saved=${lastTpCount}, live=${liveTpCount}) — replanting for remaining qty ${positionQty}`
+              : entryDroppedEnough
+                ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}`
+                : `position grew ${lastTpPosQty}->${positionQty}`;
       console.log(`[Grid ${strategy.id}] TP rebuild: ${reason} — cancelling ${liveTpCount} existing TPs first`);
 
       for (const tp of liveTpOrders) {

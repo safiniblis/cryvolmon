@@ -2209,9 +2209,24 @@ export function simulateTandem(
     const cascadeStartPrice = liquidationPrice;
     let highWatermark = liquidationPrice;
 
+    const survivorLiqPrice = survivingSide === "LONG" ? longLiqPrice : shortLiqPrice;
+
     i++;
     while (i < priceHistory.length && remainingQty > 0) {
       const price = priceHistory[i].price;
+
+      const survivorLiquidated = survivingSide === "LONG"
+        ? price <= survivorLiqPrice
+        : price >= survivorLiqPrice;
+
+      if (survivorLiquidated) {
+        cascadePnl -= capitalPerSide;
+        cascadeExits.push({ percent: -2, price, pnl: -capitalPerSide });
+        remainingQty = 0;
+        i++;
+        break;
+      }
+
       const profitPerUnit = direction * (price - entryPrice);
 
       if (survivingSide === "LONG") {

@@ -245,6 +245,7 @@ export interface GridConfig {
   gridsBelow: number;
   extensionsBelow: number;
   extensionsAbove: number;
+  lastTpEntryPrice?: number;
 }
 
 export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
@@ -445,7 +446,7 @@ async function executeGridStrategy(strategy: Strategy) {
   const currentPrice = ticker.lastPrice;
   const levels = getAsymmetricGridLevels(config);
 
-  const bandPct = 0.01;
+  const bandPct = 0.03;
   const bandLow = currentPrice * (1 - bandPct);
   const bandHigh = currentPrice * (1 + bandPct);
 
@@ -605,9 +606,28 @@ async function executeGridStrategy(strategy: Strategy) {
 
     const totalExistingTpQty = existingTpsl.reduce((s: number, t: any) => s + parseFloat(t.tpQty || t.qty || "0"), 0);
 
-    if (existingTpsl.length > 0) {
+    const lastTpEntry = config.lastTpEntryPrice || 0;
+    const entryDropped = lastTpEntry > 0 && tpRefPrice < lastTpEntry * 0.998;
+    const positionGrew = totalExistingTpQty > 0 && positionQty > totalExistingTpQty * 1.1;
+    const needsFullRebuild = existingTpsl.length === 0 || entryDropped || positionGrew;
+
+    if (!needsFullRebuild) {
       console.log(`[Grid ${strategy.id}] TPs OK: ${existingTpsl.length} orders covering ${totalExistingTpQty.toFixed(precision.basePrecision)} of ${positionQty} qty — no changes`);
     } else {
+      if (existingTpsl.length > 0) {
+        const reason = entryDropped ? `entry dropped ${lastTpEntry.toFixed(4)}->${tpRefPrice.toFixed(4)}` : `position grew ${totalExistingTpQty.toFixed(precision.basePrecision)}->${positionQty}`;
+        console.log(`[Grid ${strategy.id}] TP rebuild: ${reason} — cancelling ${existingTpsl.length} existing TPs`);
+        for (const tp of existingTpsl) {
+          try {
+            const tpId = tp.id || tp.orderId;
+            if (tpId) await client.cancelTpslOrder(strategy.symbol, tpId);
+            cancelledTps++;
+          } catch (e: any) {
+            console.error(`[Grid ${strategy.id}] Cancel TP error:`, e.message);
+          }
+        }
+      }
+
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);
       const tpQtyPerLevel = Math.max(
         Math.floor((positionQty / sellLevels.length) * basePrecisionMultiplier) / basePrecisionMultiplier,
@@ -621,7 +641,7 @@ async function executeGridStrategy(strategy: Strategy) {
         levelsToPlace = sellLevels.slice(0, Math.max(maxLevels, 1));
       }
 
-      console.log(`[Grid ${strategy.id}] No TPs found — placing ${levelsToPlace.length} TP orders, ${targetQtyStr} each (posQty: ${positionQty})`);
+      console.log(`[Grid ${strategy.id}] Placing ${levelsToPlace.length} TP orders, ${targetQtyStr} each (posQty: ${positionQty}, entry: ${tpRefPrice.toFixed(4)})`);
 
       for (const level of levelsToPlace) {
         const priceStr = roundPrice(level, precision.quotePrecision);
@@ -640,6 +660,9 @@ async function executeGridStrategy(strategy: Strategy) {
           console.error(`[Grid ${strategy.id}] TP error @ ${priceStr}:`, e.message);
         }
       }
+
+      config.lastTpEntryPrice = tpRefPrice;
+      await storage.updateStrategy(strategy.id, { config });
     }
   }
 

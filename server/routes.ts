@@ -497,6 +497,7 @@ export async function registerRoutes(
           extensionsBelow: 0,
           extensionsAbove: 0,
           rotationEnabled: true,
+          allocatedBudget: usdtAmount,
         },
       });
 

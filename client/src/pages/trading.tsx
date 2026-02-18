@@ -807,14 +807,20 @@ function TandemSimulationPanel() {
             className="w-16 h-7 text-xs font-mono"
             placeholder="$/side"
           />
-          <Input
-            data-testid="input-tandem-leverage"
-            type="number"
-            value={tandemLeverage}
-            onChange={e => setTandemLeverage(e.target.value)}
-            className="w-16 h-7 text-xs font-mono"
-            placeholder="Lev"
-          />
+          <div className="flex items-center gap-0.5">
+            {[20, 33, 50, 100].map(lev => (
+              <Button
+                key={lev}
+                size="sm"
+                variant={tandemLeverage === String(lev) ? "default" : "ghost"}
+                onClick={() => setTandemLeverage(String(lev))}
+                data-testid={`button-tandem-lev-${lev}`}
+                className="h-7 text-[10px] px-1.5 font-mono"
+              >
+                {lev}x
+              </Button>
+            ))}
+          </div>
           <Button
             size="sm"
             variant="outline"
@@ -831,7 +837,7 @@ function TandemSimulationPanel() {
       <CardContent>
         {!results && !tandem.isPending && (
           <p className="text-xs text-muted-foreground">
-            Simulates long+short at {tandemLeverage}x. One side liquidates, survivor runs TP cascade (2/7, 2/7, 2/7, 1/7 trailing 0.5%).
+            Simulates long+short at {tandemLeverage}x (liq at {(100 / parseInt(tandemLeverage || "100")).toFixed(1)}% move). One side liquidates, survivor runs TP cascade (2/7, 2/7, 2/7, 1/7 trailing 0.5%).
           </p>
         )}
         {isArray && (
@@ -841,11 +847,12 @@ function TandemSimulationPanel() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-xs">Symbol</TableHead>
-                    <TableHead className="text-xs text-right">Cycles</TableHead>
+                    <TableHead className="text-xs text-right">Cy</TableHead>
+                    <TableHead className="text-xs text-right">Grid</TableHead>
+                    <TableHead className="text-xs text-right">Casc</TableHead>
                     <TableHead className="text-xs text-right">PnL</TableHead>
                     <TableHead className="text-xs text-right">ROI</TableHead>
                     <TableHead className="text-xs text-right">W/L</TableHead>
-                    <TableHead className="text-xs text-right">DD</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -853,6 +860,12 @@ function TandemSimulationPanel() {
                     <TableRow key={r.symbol} data-testid={`tandem-row-${r.symbol}`}>
                       <TableCell className="font-bold text-xs">{r.symbol}</TableCell>
                       <TableCell className="text-right font-mono text-xs">{r.totalCycles}</TableCell>
+                      <TableCell className={`text-right font-mono text-xs ${r.totalGridPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        ${r.totalGridPnl.toFixed(1)}
+                      </TableCell>
+                      <TableCell className={`text-right font-mono text-xs ${r.totalCascadePnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        ${r.totalCascadePnl.toFixed(1)}
+                      </TableCell>
                       <TableCell className={`text-right font-mono text-xs font-bold ${r.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                         ${r.totalPnl.toFixed(2)}
                       </TableCell>
@@ -862,7 +875,6 @@ function TandemSimulationPanel() {
                       <TableCell className="text-right font-mono text-xs">
                         <span className="text-emerald-400">{r.winCycles}</span>/<span className="text-red-400">{r.lossCycles}</span>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs text-amber-400">${r.maxDrawdown.toFixed(2)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

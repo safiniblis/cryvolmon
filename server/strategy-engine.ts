@@ -2194,6 +2194,84 @@ async function deleteChildGrids(config: TandemConfig) {
   }
 }
 
+async function bailOutAndRestart(
+  strategy: Strategy,
+  config: TandemConfig,
+  client: any,
+  currentPrice: number,
+  currentQty: number,
+  precision: { basePrecision: number; minTradeVolume: number },
+  reason: string,
+) {
+  const survivingSide = config.survivingSide;
+  const closeSide = survivingSide === "LONG" ? "SELL" : "BUY";
+  const direction = survivingSide === "LONG" ? 1 : -1;
+  const qtyStr = roundQty(currentQty, precision.basePrecision);
+
+  try {
+    const result = await client.placeOrder({
+      symbol: strategy.symbol,
+      qty: qtyStr,
+      side: closeSide,
+      tradeSide: "CLOSE",
+      orderType: "MARKET",
+    });
+
+    const profitPerUnit = direction * (currentPrice - config.entryPrice);
+    const exitPnl = profitPerUnit * currentQty;
+
+    if (result?.code === 0) {
+      console.log(`[Tandem ${strategy.id}] Bail-out close filled: pnl=${exitPnl.toFixed(4)}`);
+
+      await storage.createTradeLog({
+        strategyId: strategy.id,
+        symbol: strategy.symbol,
+        side: closeSide,
+        orderType: "MARKET",
+        quantity: currentQty,
+        price: currentPrice,
+        status: "filled",
+        orderId: result.data?.orderId || null,
+        pnl: exitPnl,
+        errorMsg: `Tandem bail-out: ${reason}`,
+      });
+
+      await storage.updateStrategy(strategy.id, {
+        config: { ...config, phase: "complete", lastActionAt: Date.now() },
+        totalPnl: (strategy.totalPnl || 0) + exitPnl,
+      });
+    } else {
+      console.error(`[Tandem ${strategy.id}] Bail-out close failed: ${result?.msg}, flash-closing...`);
+      const posRes = await client.getPositions(strategy.symbol);
+      if (posRes?.code === 0 && Array.isArray(posRes.data)) {
+        for (const pos of posRes.data) {
+          if (parseFloat(pos.qty || "0") > 0) {
+            try { await client.flashClose(strategy.symbol, pos.positionId); } catch {}
+          }
+        }
+      }
+      await storage.updateStrategy(strategy.id, {
+        config: { ...config, phase: "complete", lastActionAt: Date.now() },
+      });
+    }
+  } catch (e: any) {
+    console.error(`[Tandem ${strategy.id}] Bail-out error:`, e.message);
+    try {
+      const posRes = await client.getPositions(strategy.symbol);
+      if (posRes?.code === 0 && Array.isArray(posRes.data)) {
+        for (const pos of posRes.data) {
+          if (parseFloat(pos.qty || "0") > 0) {
+            try { await client.flashClose(strategy.symbol, pos.positionId); } catch {}
+          }
+        }
+      }
+    } catch {}
+    await storage.updateStrategy(strategy.id, {
+      config: { ...config, phase: "complete", lastActionAt: Date.now() },
+    });
+  }
+}
+
 async function tandemCascade(strategy: Strategy, config: TandemConfig, client: any) {
   const posRes = await client.getPositions(strategy.symbol);
   if (posRes?.code !== 0 || !Array.isArray(posRes.data)) return;
@@ -2245,6 +2323,12 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
     : (cascadeStartPrice - currentPrice) / cascadeStartPrice;
 
   const cascadeStep = config.cascadeStep || 0;
+
+  if (cascadeStep > 0 && moveBeyondLiq < 0) {
+    console.log(`[Tandem ${strategy.id}] REVERSAL BAIL-OUT: trend broke after cascade step ${cascadeStep}, price reversed past liq point (move=${(moveBeyondLiq * 100).toFixed(2)}%). Closing remaining and restarting.`);
+    await bailOutAndRestart(strategy, config, client, currentPrice, currentQty, precision, "cascade reversal after step " + cascadeStep);
+    return;
+  }
 
   if (cascadeStep < TOTAL_CASCADE_STEPS) {
     const targetPct = cascadeTargetPcts[cascadeStep];
@@ -2346,6 +2430,17 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
   const currentPrice = ticker.lastPrice;
   const currentQty = parseFloat(survivingPos.qty || "0");
   const precision = await getPairPrecision(strategy.symbol);
+
+  const cascadeStartPrice = config.liquidationPrice;
+  const moveBeyondLiq = config.survivingSide === "LONG"
+    ? (currentPrice - cascadeStartPrice) / cascadeStartPrice
+    : (cascadeStartPrice - currentPrice) / cascadeStartPrice;
+
+  if (moveBeyondLiq < 0) {
+    console.log(`[Tandem ${strategy.id}] REVERSAL BAIL-OUT (trailing): price reversed past liq point (move=${(moveBeyondLiq * 100).toFixed(2)}%). Closing remaining and restarting.`);
+    await bailOutAndRestart(strategy, config, client, currentPrice, currentQty, precision, "trailing reversal past liq");
+    return;
+  }
 
   let hwm = config.highWatermark || currentPrice;
   if (config.survivingSide === "LONG") {
@@ -3135,11 +3230,20 @@ export function simulateTandem(
         highWatermark = Math.min(highWatermark, price);
       }
 
-      if (cascadeStep < TOTAL_STEPS) {
-        const moveBeyondLiq = survivingSide === "LONG"
-          ? (price - cascadeStartPrice) / cascadeStartPrice
-          : (cascadeStartPrice - price) / cascadeStartPrice;
+      const moveBeyondLiq = survivingSide === "LONG"
+        ? (price - cascadeStartPrice) / cascadeStartPrice
+        : (cascadeStartPrice - price) / cascadeStartPrice;
 
+      if (cascadeStep > 0 && moveBeyondLiq < 0) {
+        const bailPnl = profitPerUnit * remainingQty - remainingQty * price * feeRate;
+        cascadePnl += bailPnl;
+        cascadeExits.push({ percent: -3, price, pnl: bailPnl });
+        remainingQty = 0;
+        i++;
+        break;
+      }
+
+      if (cascadeStep < TOTAL_STEPS) {
         if (moveBeyondLiq >= targetPcts[cascadeStep]) {
           const sellQty = posQty * portions[cascadeStep];
           const exitPnl = profitPerUnit * sellQty - sellQty * price * feeRate;
@@ -3154,6 +3258,15 @@ export function simulateTandem(
       }
 
       if (cascadeStep >= TOTAL_STEPS) {
+        if (moveBeyondLiq < 0) {
+          const bailPnl = profitPerUnit * remainingQty - remainingQty * price * feeRate;
+          cascadePnl += bailPnl;
+          cascadeExits.push({ percent: -3, price, pnl: bailPnl });
+          remainingQty = 0;
+          i++;
+          break;
+        }
+
         const trailingDrop = survivingSide === "LONG"
           ? (highWatermark - price) / highWatermark
           : (price - highWatermark) / highWatermark;

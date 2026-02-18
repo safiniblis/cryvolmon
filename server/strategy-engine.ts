@@ -246,6 +246,8 @@ export interface GridConfig {
   extensionsBelow: number;
   extensionsAbove: number;
   allocatedBudget?: number;
+  lastTrackedPnl?: number;
+  lastTrackedPositionId?: string | null;
   lastTpEntryPrice?: number;
   lastTpPositionQty?: number;
   lastTpPlacedAt?: number;
@@ -334,10 +336,11 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
 
     if (success) {
       config.allocatedBudget = available;
+      config.lastTrackedPnl = 0;
       console.log(`[InitialBuy ${strategy.id}] Set allocatedBudget=${available.toFixed(2)} USDT`);
       await storage.updateStrategy(strategy.id, {
         totalTrades: (strategy.totalTrades || 0) + 1,
-        config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid, allocatedBudget: config.allocatedBudget },
+        config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid, allocatedBudget: config.allocatedBudget, lastTrackedPnl: 0 },
       });
 
       let remainingBalance = 0;
@@ -480,6 +483,9 @@ async function executeGridStrategy(strategy: Strategy) {
   let positionId: string | null = null;
   let positionQty = 0;
   let positionEntryPrice = 0;
+  let posRealizedPnl = 0;
+  let posFee = 0;
+  let posFunding = 0;
   try {
     const posRes = await client.getPositions(strategy.symbol);
     if (posRes?.code === 0 && Array.isArray(posRes.data) && posRes.data.length > 0) {
@@ -488,6 +494,9 @@ async function executeGridStrategy(strategy: Strategy) {
         positionId = pos.positionId;
         positionQty = parseFloat(pos.qty || "0");
         positionEntryPrice = parseFloat(pos.entryPrice || pos.avgPrice || "0");
+        posRealizedPnl = parseFloat(pos.realizedPNL || "0");
+        posFee = parseFloat(pos.fee || "0");
+        posFunding = parseFloat(pos.funding || "0");
       }
     }
   } catch (e: any) {
@@ -539,7 +548,40 @@ async function executeGridStrategy(strategy: Strategy) {
     }
   } catch {}
 
-  const allocatedBudget = config.allocatedBudget || 0;
+  let allocatedBudget = config.allocatedBudget || 0;
+
+  if (allocatedBudget > 0) {
+    const lastTrackedPnl = config.lastTrackedPnl ?? 0;
+    const lastTrackedPositionId = config.lastTrackedPositionId || null;
+
+    if (positionId) {
+      const netPnl = posRealizedPnl + posFee + posFunding;
+
+      if (lastTrackedPositionId && lastTrackedPositionId !== positionId) {
+        config.lastTrackedPnl = 0;
+        config.lastTrackedPositionId = positionId;
+        console.log(`[Grid ${strategy.id}] Position changed (${lastTrackedPositionId} -> ${positionId}), reset PnL tracking`);
+      }
+
+      const trackBase = (lastTrackedPositionId === positionId) ? lastTrackedPnl : 0;
+      const pnlDelta = netPnl - trackBase;
+
+      if (Math.abs(pnlDelta) > 0.001) {
+        allocatedBudget += pnlDelta;
+        config.allocatedBudget = Math.max(0, allocatedBudget);
+        config.lastTrackedPnl = netPnl;
+        config.lastTrackedPositionId = positionId;
+        console.log(`[Grid ${strategy.id}] PnL adjustment: realized=${posRealizedPnl.toFixed(4)} fee=${posFee.toFixed(4)} funding=${posFunding.toFixed(4)} net=${netPnl.toFixed(4)} delta=${pnlDelta > 0 ? "+" : ""}${pnlDelta.toFixed(4)} -> budget=${config.allocatedBudget.toFixed(2)}`);
+        await storage.updateStrategy(strategy.id, { config });
+      }
+    } else if (lastTrackedPositionId) {
+      config.lastTrackedPnl = 0;
+      config.lastTrackedPositionId = null;
+      console.log(`[Grid ${strategy.id}] Position closed, reset PnL tracking. Budget remains at ${allocatedBudget.toFixed(2)}`);
+      await storage.updateStrategy(strategy.id, { config });
+    }
+  }
+
   const availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, allocatedBudget) : accountAvailable;
 
   if (allocatedBudget > 0 && accountAvailable > allocatedBudget + 0.5) {

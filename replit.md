@@ -97,7 +97,21 @@ A full-stack cryptocurrency trading platform with two main features:
 - **Remove Margin**: Cancels the lowest N buy orders that are >1% below current price. Only cancels orders matching grid levels. Reports freed margin estimate.
 - Controls visible in expanded strategy card for running grid strategies only.
 
+## Budget Cap System
+- `allocatedBudget` in strategy config tracks the maximum USDT the bot can use
+- Set automatically at strategy start to the available balance at that time
+- Increased by manual "Add Margin" (user explicitly assigns more funds)
+- Decreased by manual "Remove Margin" (user withdraws funds from strategy)
+- PnL adjustments: each cycle reads position `realizedPNL + fee + funding` from Bitunix, tracks delta via `lastTrackedPnl`, and adjusts budget up (profits) or down (losses/fees/funding)
+- `lastTrackedPositionId` handles position changes/closures — resets PnL tracking when position ID changes
+- Bot spending capped at `min(accountAvailable, allocatedBudget)` — new deposits won't be spent unless user explicitly adds margin
+- Budget Cap shown in strategy card params
+
 ## Recent Changes
+- 2026-02-18: Budget cap system with PnL-based adjustments (profits increase cap, losses decrease it)
+- 2026-02-18: Fixed add-margin 500 error with defensive validation
+- 2026-02-18: Editable gap modifiers (gapGrowthBelow/gapShrinkAbove) while bot is running
+- 2026-02-18: PNL gauge side mapping fix (LONG→BUY, SHORT→SELL for Bitunix)
 - 2026-02-17: Fixed buy order sizing to use fixed amountPerGrid (uniform orders)
 - 2026-02-17: Widened TP channel: sell/TP levels cover all grid levels above price up to upperPrice (not just +1%)
 - 2026-02-17: Added margin info endpoint, extend-to-1% button, MAX remove, withdrawable margin display

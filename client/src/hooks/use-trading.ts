@@ -42,6 +42,19 @@ export function useSimulation() {
   });
 }
 
+export function useTandemSimulation() {
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { symbol?: string; capitalPerSide?: number; leverage?: number; feeRate?: number; feeMultiplier?: number }) => {
+      const res = await apiRequest("POST", "/api/tandem/simulate", data);
+      return res.json();
+    },
+    onError: (e: Error) => {
+      toast({ title: "Tandem Simulation Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useQuickStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

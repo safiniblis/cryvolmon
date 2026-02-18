@@ -2064,6 +2064,248 @@ export async function removeMarginFromGrid(strategy: Strategy, count: number): P
   };
 }
 
+export interface TandemCycle {
+  cycleNum: number;
+  entryPrice: number;
+  liquidatedSide: "LONG" | "SHORT";
+  liquidationPrice: number;
+  gridPnlLong: number;
+  gridPnlShort: number;
+  cascadePnl: number;
+  liquidationLoss: number;
+  cyclePnl: number;
+  cascadeExits: { percent: number; price: number; pnl: number }[];
+  trailingExitPrice?: number;
+}
+
+export interface TandemSimResult {
+  symbol: string;
+  leverage: number;
+  startPrice: number;
+  endPrice: number;
+  totalCycles: number;
+  totalPnl: number;
+  totalGridPnl: number;
+  totalCascadePnl: number;
+  totalLiquidationLoss: number;
+  winCycles: number;
+  lossCycles: number;
+  maxDrawdown: number;
+  capitalUsed: number;
+  roiPercent: number;
+  cycles: TandemCycle[];
+  pricePoints: number;
+}
+
+export function simulateTandem(
+  priceHistory: { timestamp: number; price: number }[],
+  feeRate: number = 0.0006,
+  capitalPerSide: number = 50,
+  leverage: number = 100,
+  feeMultiplier: number = 4.0
+): TandemSimResult | null {
+  if (!priceHistory || priceHistory.length < 10) return null;
+
+  const roundTripFee = 2 * feeRate;
+  const gridGap = feeMultiplier * roundTripFee;
+  const liqDistance = 1 / leverage;
+  const totalCapital = capitalPerSide * 2;
+  const notionalPerSide = capitalPerSide * leverage;
+  const maxGrids = Math.floor(liqDistance / gridGap);
+  const gridSize = maxGrids > 0 ? notionalPerSide / maxGrids : notionalPerSide;
+  const gridProfitPerRoundTrip = (gridSize * gridGap) - (gridSize * roundTripFee);
+
+  const cycles: TandemCycle[] = [];
+  let cumulativePnl = 0;
+  let peakPnl = 0;
+  let maxDrawdown = 0;
+  let i = 0;
+
+  while (i < priceHistory.length - 1) {
+    const entryPrice = priceHistory[i].price;
+    const longLiqPrice = entryPrice * (1 - liqDistance);
+    const shortLiqPrice = entryPrice * (1 + liqDistance);
+    const posQty = notionalPerSide / entryPrice;
+
+    const entryFees = notionalPerSide * feeRate * 2;
+    let gridPnlLong = 0;
+    let gridPnlShort = 0;
+
+    const longOpenBuys = new Set<number>();
+    const shortOpenSells = new Set<number>();
+    let liquidatedSide: "LONG" | "SHORT" | null = null;
+    let liquidationPrice = 0;
+    let prevPrice = entryPrice;
+
+    i++;
+
+    while (i < priceHistory.length) {
+      const price = priceHistory[i].price;
+
+      if (price <= longLiqPrice) {
+        liquidatedSide = "LONG";
+        liquidationPrice = price;
+        break;
+      }
+      if (price >= shortLiqPrice) {
+        liquidatedSide = "SHORT";
+        liquidationPrice = price;
+        break;
+      }
+
+      const longGridIdx = Math.max(0, Math.floor((entryPrice - price) / (entryPrice * gridGap)));
+      const shortGridIdx = Math.max(0, Math.floor((price - entryPrice) / (entryPrice * gridGap)));
+      const prevLongIdx = Math.max(0, Math.floor((entryPrice - prevPrice) / (entryPrice * gridGap)));
+      const prevShortIdx = Math.max(0, Math.floor((prevPrice - entryPrice) / (entryPrice * gridGap)));
+
+      if (longGridIdx > prevLongIdx) {
+        for (let g = prevLongIdx + 1; g <= Math.min(longGridIdx, maxGrids); g++) {
+          if (!longOpenBuys.has(g)) {
+            longOpenBuys.add(g);
+            gridPnlLong -= gridSize * feeRate;
+          }
+        }
+      } else if (longGridIdx < prevLongIdx) {
+        for (let g = prevLongIdx; g > longGridIdx && g > 0; g--) {
+          if (longOpenBuys.has(g)) {
+            longOpenBuys.delete(g);
+            gridPnlLong += gridProfitPerRoundTrip;
+          }
+        }
+      }
+
+      if (shortGridIdx > prevShortIdx) {
+        for (let g = prevShortIdx + 1; g <= Math.min(shortGridIdx, maxGrids); g++) {
+          if (!shortOpenSells.has(g)) {
+            shortOpenSells.add(g);
+            gridPnlShort -= gridSize * feeRate;
+          }
+        }
+      } else if (shortGridIdx < prevShortIdx) {
+        for (let g = prevShortIdx; g > shortGridIdx && g > 0; g--) {
+          if (shortOpenSells.has(g)) {
+            shortOpenSells.delete(g);
+            gridPnlShort += gridProfitPerRoundTrip;
+          }
+        }
+      }
+
+      prevPrice = price;
+      i++;
+    }
+
+    if (!liquidatedSide || i >= priceHistory.length) break;
+
+    const liquidationLoss = capitalPerSide;
+
+    const survivingSide = liquidatedSide === "LONG" ? "SHORT" : "LONG";
+    const direction = survivingSide === "LONG" ? 1 : -1;
+
+    const cascadeExits: TandemCycle["cascadeExits"] = [];
+    let cascadePnl = 0;
+    let remainingQty = posQty;
+    const portions = [2 / 7, 2 / 7, 2 / 7, 1 / 7];
+    let cascadeStep = 0;
+    const cascadeStartPrice = liquidationPrice;
+    let highWatermark = liquidationPrice;
+
+    i++;
+    while (i < priceHistory.length && remainingQty > 0) {
+      const price = priceHistory[i].price;
+      const profitPerUnit = direction * (price - entryPrice);
+
+      if (survivingSide === "LONG") {
+        highWatermark = Math.max(highWatermark, price);
+      } else {
+        highWatermark = Math.min(highWatermark, price);
+      }
+
+      if (cascadeStep < 3) {
+        const moveBeyondLiq = survivingSide === "LONG"
+          ? (price - cascadeStartPrice) / cascadeStartPrice
+          : (cascadeStartPrice - price) / cascadeStartPrice;
+        const targetPct = (cascadeStep + 1) * 0.01;
+
+        if (moveBeyondLiq >= targetPct) {
+          const sellQty = posQty * portions[cascadeStep];
+          const exitPnl = profitPerUnit * sellQty - sellQty * price * feeRate;
+          cascadePnl += exitPnl;
+          remainingQty -= sellQty;
+          cascadeExits.push({ percent: cascadeStep + 1, price, pnl: exitPnl });
+          cascadeStep++;
+          if (cascadeStep >= 3) {
+            highWatermark = price;
+          }
+        }
+      }
+
+      if (cascadeStep >= 3) {
+        const trailingDrop = survivingSide === "LONG"
+          ? (highWatermark - price) / highWatermark
+          : (price - highWatermark) / highWatermark;
+
+        if (trailingDrop >= 0.005) {
+          const profitPerUnitNow = direction * (price - entryPrice);
+          const exitPnl = profitPerUnitNow * remainingQty - remainingQty * price * feeRate;
+          cascadePnl += exitPnl;
+          cascadeExits.push({ percent: -1, price, pnl: exitPnl });
+          remainingQty = 0;
+          break;
+        }
+      }
+
+      i++;
+    }
+
+    if (remainingQty > 0 && i >= priceHistory.length) {
+      const lastPrice = priceHistory[priceHistory.length - 1].price;
+      const profitPerUnit = direction * (lastPrice - entryPrice);
+      const exitPnl = profitPerUnit * remainingQty - remainingQty * lastPrice * feeRate;
+      cascadePnl += exitPnl;
+      cascadeExits.push({ percent: 0, price: lastPrice, pnl: exitPnl });
+      remainingQty = 0;
+    }
+
+    const cyclePnl = gridPnlLong + gridPnlShort + cascadePnl - liquidationLoss - entryFees;
+    cumulativePnl += cyclePnl;
+
+    peakPnl = Math.max(peakPnl, cumulativePnl);
+    maxDrawdown = Math.max(maxDrawdown, peakPnl - cumulativePnl);
+
+    cycles.push({
+      cycleNum: cycles.length + 1,
+      entryPrice,
+      liquidatedSide,
+      liquidationPrice,
+      gridPnlLong,
+      gridPnlShort,
+      cascadePnl,
+      liquidationLoss: liquidationLoss + entryFees,
+      cyclePnl,
+      cascadeExits,
+    });
+  }
+
+  return {
+    symbol: "",
+    leverage,
+    startPrice: priceHistory[0].price,
+    endPrice: priceHistory[priceHistory.length - 1].price,
+    totalCycles: cycles.length,
+    totalPnl: cumulativePnl,
+    totalGridPnl: cycles.reduce((s, c) => s + c.gridPnlLong + c.gridPnlShort, 0),
+    totalCascadePnl: cycles.reduce((s, c) => s + c.cascadePnl, 0),
+    totalLiquidationLoss: cycles.reduce((s, c) => s + c.liquidationLoss, 0),
+    winCycles: cycles.filter(c => c.cyclePnl > 0).length,
+    lossCycles: cycles.filter(c => c.cyclePnl <= 0).length,
+    maxDrawdown,
+    capitalUsed: totalCapital,
+    roiPercent: totalCapital > 0 ? (cumulativePnl / totalCapital) * 100 : 0,
+    cycles,
+    pricePoints: priceHistory.length,
+  };
+}
+
 export function getActiveGridOrders(strategyId: number): Array<{ orderId: string; price: number; side: string }> {
   const orders = activeGridOrders.get(strategyId);
   if (!orders) return [];

@@ -122,6 +122,8 @@ A full-stack cryptocurrency trading platform with two main features:
 - 2026-02-18: Budget cap system with PnL-based adjustments (profits increase cap, losses decrease it)
 - 2026-02-18: Fixed add-margin 500 error with defensive validation
 - 2026-02-18: Editable gap modifiers (gapGrowthBelow/gapShrinkAbove) while bot is running
+- 2026-02-18: Tandem L/S simulation engine: long+short at 100x+, grid income while waiting for liquidation, cascade TP (2/7, 2/7, 2/7, 1/7 trailing 0.5%)
+- 2026-02-18: TP replanting fix: TPs now rebuild when some are consumed (not just when all are gone)
 - 2026-02-18: PNL gauge side mapping fix (LONG→BUY, SHORT→SELL for Bitunix)
 - 2026-02-17: Fixed buy order sizing to use fixed amountPerGrid (uniform orders)
 - 2026-02-17: Widened TP channel: sell/TP levels cover all grid levels above price up to upperPrice (not just +1%)

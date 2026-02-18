@@ -24,13 +24,14 @@ import {
   useExtendOrders,
   useUpdateStrategyConfig,
   useManualRotation,
+  useTandemSimulation,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Wifi, WifiOff,
   DollarSign, Activity,
   AlertTriangle, ArrowRight, Zap,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, ArrowDownToLine,
-  RefreshCw,
+  RefreshCw, ArrowUpDown,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -766,6 +767,199 @@ function SimulationPanel() {
   );
 }
 
+function TandemSimulationPanel() {
+  const tandem = useTandemSimulation();
+  const [tandemSymbol, setTandemSymbol] = useState("");
+  const [tandemCapital, setTandemCapital] = useState("50");
+  const [tandemLeverage, setTandemLeverage] = useState("100");
+
+  const handleRun = () => {
+    const params: any = {};
+    if (tandemSymbol) params.symbol = tandemSymbol;
+    params.capitalPerSide = parseFloat(tandemCapital) || 50;
+    params.leverage = parseInt(tandemLeverage) || 100;
+    tandem.mutate(params);
+  };
+
+  const results = tandem.data;
+  const isArray = Array.isArray(results);
+
+  return (
+    <Card className="bg-card/30 border-border/40">
+      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <ArrowUpDown className="h-4 w-4 text-cyan-400" />
+          Tandem L/S Sim
+        </CardTitle>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Input
+            data-testid="input-tandem-symbol"
+            placeholder="Pair"
+            value={tandemSymbol}
+            onChange={e => setTandemSymbol(e.target.value)}
+            className="w-20 h-7 text-xs"
+          />
+          <Input
+            data-testid="input-tandem-capital"
+            type="number"
+            value={tandemCapital}
+            onChange={e => setTandemCapital(e.target.value)}
+            className="w-16 h-7 text-xs font-mono"
+            placeholder="$/side"
+          />
+          <Input
+            data-testid="input-tandem-leverage"
+            type="number"
+            value={tandemLeverage}
+            onChange={e => setTandemLeverage(e.target.value)}
+            className="w-16 h-7 text-xs font-mono"
+            placeholder="Lev"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleRun}
+            disabled={tandem.isPending}
+            data-testid="button-run-tandem"
+            className="h-7 text-xs"
+          >
+            <Zap className="h-3 w-3 mr-1" />
+            {tandem.isPending ? "..." : "Run"}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {!results && !tandem.isPending && (
+          <p className="text-xs text-muted-foreground">
+            Simulates long+short at {tandemLeverage}x. One side liquidates, survivor runs TP cascade (2/7, 2/7, 2/7, 1/7 trailing 0.5%).
+          </p>
+        )}
+        {isArray && (
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <div className="min-w-[500px] sm:min-w-0 px-4 sm:px-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Symbol</TableHead>
+                    <TableHead className="text-xs text-right">Cycles</TableHead>
+                    <TableHead className="text-xs text-right">PnL</TableHead>
+                    <TableHead className="text-xs text-right">ROI</TableHead>
+                    <TableHead className="text-xs text-right">W/L</TableHead>
+                    <TableHead className="text-xs text-right">DD</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {results.map((r: any) => (
+                    <TableRow key={r.symbol} data-testid={`tandem-row-${r.symbol}`}>
+                      <TableCell className="font-bold text-xs">{r.symbol}</TableCell>
+                      <TableCell className="text-right font-mono text-xs">{r.totalCycles}</TableCell>
+                      <TableCell className={`text-right font-mono text-xs font-bold ${r.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        ${r.totalPnl.toFixed(2)}
+                      </TableCell>
+                      <TableCell className={`text-right font-mono text-xs ${r.roiPercent >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {r.roiPercent.toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        <span className="text-emerald-400">{r.winCycles}</span>/<span className="text-red-400">{r.lossCycles}</span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-amber-400">${r.maxDrawdown.toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+        {results && !isArray && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[9px] text-muted-foreground">Cycles</p>
+                <p className="font-mono text-xs font-bold" data-testid="text-tandem-cycles">{results.totalCycles}</p>
+              </div>
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[9px] text-muted-foreground">Total PnL</p>
+                <p className={`font-mono text-xs font-bold ${results.totalPnl >= 0 ? "text-emerald-400" : "text-red-400"}`} data-testid="text-tandem-pnl">
+                  ${results.totalPnl.toFixed(2)}
+                </p>
+              </div>
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[9px] text-muted-foreground">ROI</p>
+                <p className={`font-mono text-xs font-bold ${results.roiPercent >= 0 ? "text-emerald-400" : "text-red-400"}`} data-testid="text-tandem-roi">
+                  {results.roiPercent.toFixed(1)}%
+                </p>
+              </div>
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[9px] text-muted-foreground">Max DD</p>
+                <p className="font-mono text-xs font-bold text-amber-400" data-testid="text-tandem-dd">${results.maxDrawdown.toFixed(2)}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[9px] text-muted-foreground">Grid PnL</p>
+                <p className={`font-mono text-xs ${results.totalGridPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  ${results.totalGridPnl.toFixed(2)}
+                </p>
+              </div>
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[9px] text-muted-foreground">Cascade PnL</p>
+                <p className={`font-mono text-xs ${results.totalCascadePnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  ${results.totalCascadePnl.toFixed(2)}
+                </p>
+              </div>
+              <div className="p-2 rounded border border-border/30 text-center">
+                <p className="text-[9px] text-muted-foreground">Liq Losses</p>
+                <p className="font-mono text-xs text-red-400">-${results.totalLiquidationLoss.toFixed(2)}</p>
+              </div>
+            </div>
+            {results.cycles?.length > 0 && (
+              <div className="overflow-x-auto -mx-4 sm:mx-0">
+                <p className="text-[10px] text-muted-foreground mb-1 px-4 sm:px-0">Cycle Details</p>
+                <div className="min-w-[400px] sm:min-w-0 px-4 sm:px-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">#</TableHead>
+                        <TableHead className="text-xs">Entry</TableHead>
+                        <TableHead className="text-xs">Liq Side</TableHead>
+                        <TableHead className="text-xs text-right">Grid</TableHead>
+                        <TableHead className="text-xs text-right">Cascade</TableHead>
+                        <TableHead className="text-xs text-right">Net</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {results.cycles.map((c: any) => (
+                        <TableRow key={c.cycleNum}>
+                          <TableCell className="text-xs font-mono">{c.cycleNum}</TableCell>
+                          <TableCell className="text-xs font-mono">${c.entryPrice.toFixed(2)}</TableCell>
+                          <TableCell>
+                            <Badge variant={c.liquidatedSide === "LONG" ? "destructive" : "default"} className="text-[9px]">
+                              {c.liquidatedSide}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className={`text-right font-mono text-xs ${(c.gridPnlLong + c.gridPnlShort) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            ${(c.gridPnlLong + c.gridPnlShort).toFixed(2)}
+                          </TableCell>
+                          <TableCell className={`text-right font-mono text-xs ${c.cascadePnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            ${c.cascadePnl.toFixed(2)}
+                          </TableCell>
+                          <TableCell className={`text-right font-mono text-xs font-bold ${c.cyclePnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            ${c.cyclePnl.toFixed(2)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function QuickStartPanel() {
   return null;
 }
@@ -829,7 +1023,10 @@ export default function TradingPage() {
           </div>
         </div>
 
-        <SimulationPanel />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <SimulationPanel />
+          <TandemSimulationPanel />
+        </div>
 
         <footer className="pt-4 pb-4 text-center text-[10px] text-muted-foreground/40 font-mono">
           Automated trading involves significant risk.

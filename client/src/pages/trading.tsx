@@ -1016,6 +1016,25 @@ function TandemSimulationPanel() {
   );
 }
 
+function computeGridStats(lev: number, feeMultiplier: number = 3.5) {
+  const feeRate = 0.0006;
+  const roundTripFee = 2 * feeRate;
+  const gridGap = feeMultiplier * roundTripFee;
+  const netPerGrid = gridGap - roundTripFee;
+  const liqDist = 1 / lev;
+  const gridRange = liqDist * 0.85;
+  const gridCount = Math.floor(gridRange / gridGap);
+  const roiPerOscillation = gridCount * netPerGrid * lev * 100;
+  return {
+    gridGapPct: +(gridGap * 100).toFixed(3),
+    liqDistPct: +(liqDist * 100).toFixed(2),
+    gridRangePct: +(gridRange * 100).toFixed(2),
+    gridCount,
+    roiPerOscillation: +roiPerOscillation.toFixed(1),
+    roiPerGrid: +(netPerGrid * lev * 100).toFixed(2),
+  };
+}
+
 function TandemStartPanel() {
   const [symbol, setSymbol] = useState("XRPUSDT");
   const [capital, setCapital] = useState("100");
@@ -1174,6 +1193,33 @@ function TandemStartPanel() {
             placeholder="33x"
           />
         </div>
+        {parseInt(leverage) >= 2 && (
+          <div className="grid grid-cols-4 gap-1" data-testid="tandem-grid-stats">
+            {(() => {
+              const stats = computeGridStats(parseInt(leverage) || 33);
+              return (
+                <>
+                  <div className="p-1 rounded border border-border/20 bg-card/20 text-center">
+                    <p className="text-[8px] text-muted-foreground">Grids</p>
+                    <p className={`font-mono text-[11px] font-bold ${stats.gridCount >= 4 ? "text-emerald-400" : stats.gridCount >= 2 ? "text-yellow-400" : "text-red-400"}`}>{stats.gridCount}</p>
+                  </div>
+                  <div className="p-1 rounded border border-border/20 bg-card/20 text-center">
+                    <p className="text-[8px] text-muted-foreground">Gap</p>
+                    <p className="font-mono text-[11px] font-semibold">{stats.gridGapPct}%</p>
+                  </div>
+                  <div className="p-1 rounded border border-border/20 bg-card/20 text-center">
+                    <p className="text-[8px] text-muted-foreground">Liq</p>
+                    <p className="font-mono text-[11px] font-semibold">{stats.liqDistPct}%</p>
+                  </div>
+                  <div className="p-1 rounded border border-border/20 bg-card/20 text-center">
+                    <p className="text-[8px] text-muted-foreground">ROI/osc</p>
+                    <p className="font-mono text-[11px] font-semibold text-blue-400">{stats.roiPerOscillation}%</p>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
             <input

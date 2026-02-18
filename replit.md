@@ -132,7 +132,18 @@ A full-stack cryptocurrency trading platform with two main features:
 - **UI panel**: Shows live phase, cycle count, entry price, unrealized PnL, child grid IDs, liquidated/survivor sides, cascade progress, HWM, total PnL
 - **Stop cleanup**: cancelAllTandemOrders deletes child grid strategies, cancels all limit orders, TP/SL orders, and flash-closes positions
 
+## Leverage/Grid Optimization Math
+- Fee: 0.06% per trade on notional (qty × price), round-trip = 0.12%
+- Leverage does NOT change fee % — it's always on notional
+- Grid gap = feeMultiplier × roundTripFee (e.g., 3.5 × 0.12% = 0.42%)
+- Tandem child grids: gridRange = 85% of 1/leverage, tpRange = 50% of 1/leverage
+- Uniform spacing (gapGrowth=1.0) for concentrated grids within tight range
+- Sweet spot: 25-40x leverage → 5-8 grids, each netting ~7-12% of margin per trade
+- Endpoint: GET /api/grid/leverage-analysis — full table of leverage vs grids vs ROI
+
 ## Recent Changes
+- 2026-02-18: Leverage optimization: tandem fee multiplier 4.0x→3.5x (gap 0.42%), grid stats preview in UI, leverage analysis endpoint
+- 2026-02-18: Tandem grid ranges derived from leverage (85% of 1/L) instead of hardcoded 10%/2%
 - 2026-02-18: Redesigned tandem to use dual grid bots (LONG grid + SHORT grid) instead of simple positions
 - 2026-02-18: Added SHORT-side grid support: initial sell, sell grid orders above price, buy TPs below entry
 - 2026-02-18: Tandem uses totalCapital (split 50/50) instead of capitalPerSide

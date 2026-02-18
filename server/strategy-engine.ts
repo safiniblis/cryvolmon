@@ -1693,10 +1693,10 @@ export interface TandemConfig {
 
 const tandemEntryLocks: Set<number> = new Set();
 
-function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, leverage: number, budget: number): GridConfig & { initialBuyDone?: boolean; gridSide: "LONG" | "SHORT" } {
+function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, leverage: number, budget: number, feeMultiplier: number = 3.5): GridConfig & { initialBuyDone?: boolean; gridSide: "LONG" | "SHORT" } {
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
-  const gridRatio = 1 + roundTripFee * 4.0;
+  const gridRatio = 1 + roundTripFee * feeMultiplier;
 
   const liqDist = 1 / leverage;
   const gridRange = liqDist * 0.85;
@@ -1809,7 +1809,8 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
 
     console.log(`[Tandem ${strategy.id}] Creating LONG + SHORT grid bots, total=${totalCapital}, ${capitalPerSide}/side, leverage=${leverage}x`);
 
-    const longGridConfig = defaultGridConfigForSide("LONG", currentPrice, leverage, capitalPerSide);
+    const fm = config.feeMultiplier || 3.5;
+    const longGridConfig = defaultGridConfigForSide("LONG", currentPrice, leverage, capitalPerSide, fm);
     (longGridConfig as any).parentTandemId = strategy.id;
     const longGrid = await storage.createStrategy({
       name: `TL ${strategy.symbol}`,
@@ -1821,7 +1822,7 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
     });
     console.log(`[Tandem ${strategy.id}] LONG grid created: #${longGrid.id}`);
 
-    const shortGridConfig = defaultGridConfigForSide("SHORT", currentPrice, leverage, capitalPerSide);
+    const shortGridConfig = defaultGridConfigForSide("SHORT", currentPrice, leverage, capitalPerSide, fm);
     (shortGridConfig as any).parentTandemId = strategy.id;
     const shortGrid = await storage.createStrategy({
       name: `TS ${strategy.symbol}`,

@@ -556,6 +556,7 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const desiredGridPrices = new Set(gridLevels.map(l => roundPrice(l, precision.quotePrecision)));
 
+  const isTandemChild = !!(config as any).parentTandemId;
   const ordersToCancel: string[] = [];
   const coveredGridPrices = new Set<string>();
 
@@ -564,7 +565,9 @@ async function executeGridStrategy(strategy: Strategy) {
     const orderSide = order.side;
 
     if (orderSide === oppositeSide) {
-      ordersToCancel.push(order.orderId);
+      if (!isTandemChild) {
+        ordersToCancel.push(order.orderId);
+      }
       continue;
     }
 
@@ -574,7 +577,7 @@ async function executeGridStrategy(strategy: Strategy) {
       } else {
         coveredGridPrices.add(orderPrice);
       }
-    } else {
+    } else if (orderSide === gridOrderSide) {
       ordersToCancel.push(order.orderId);
     }
   }

@@ -1129,13 +1129,14 @@ export function simulateGridWithGaps(
   marginPerGrid: number,
   gapGrowthBelow: number,
   gapShrinkAbove: number,
-  tpReservePct: number = 0
+  tpReservePct: number = 0,
+  feeMultiplier: number = 2.5
 ): SimulationResult | null {
   if (!priceHistory || priceHistory.length < 3) return null;
 
   const startPrice = priceHistory[0].price;
   const roundTripFee = 2 * feeRate;
-  const gridRatio = 1 + 2.5 * roundTripFee;
+  const gridRatio = 1 + feeMultiplier * roundTripFee;
   const lowerTarget = startPrice * 0.90;
   const upperTarget = startPrice * 1.02;
 
@@ -1312,6 +1313,63 @@ export function optimizeGapSettings(
         score,
       });
     }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return results;
+}
+
+export function optimizeFeeMultiplier(
+  priceHistory: { timestamp: number; price: number }[],
+  feeRate: number = 0.0006,
+  marginPerGrid: number = 10,
+  gapGrowthBelow: number = 1.05,
+  gapShrinkAbove: number = 1.05,
+  tpReservePct: number = 0.10
+) {
+  const multipliers = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4.0, 5.0];
+  const roundTripFee = 2 * feeRate;
+
+  const results: {
+    feeMultiplier: number;
+    gridGap: string;
+    gridCount: number;
+    totalPnl: number;
+    realizedPnl: number;
+    unrealizedPnl: number;
+    maxDrawdown: number;
+    totalTrades: number;
+    buys: number;
+    sells: number;
+    totalFees: number;
+    profitPerTrade: number;
+    score: number;
+  }[] = [];
+
+  for (const mult of multipliers) {
+    const sim = simulateGridWithGaps(priceHistory, feeRate, marginPerGrid, gapGrowthBelow, gapShrinkAbove, tpReservePct, mult);
+    if (!sim) continue;
+
+    const gridGapPct = mult * roundTripFee * 100;
+    const totalFees = sim.totalTrades * marginPerGrid * (sim.leverage || 8) * feeRate;
+    const profitPerTrade = sim.totalTrades > 0 ? sim.realizedPnl / sim.totalTrades : 0;
+    const score = sim.totalPnl - sim.maxDrawdown * 0.5;
+
+    results.push({
+      feeMultiplier: mult,
+      gridGap: `${gridGapPct.toFixed(3)}%`,
+      gridCount: sim.gridCount,
+      totalPnl: sim.totalPnl,
+      realizedPnl: sim.realizedPnl,
+      unrealizedPnl: sim.unrealizedPnl,
+      maxDrawdown: sim.maxDrawdown,
+      totalTrades: sim.totalTrades,
+      buys: sim.buys,
+      sells: sim.sells,
+      totalFees,
+      profitPerTrade,
+      score,
+    });
   }
 
   results.sort((a, b) => b.score - a.score);

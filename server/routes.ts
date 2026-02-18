@@ -2,7 +2,8 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier, executePairRotation, simulateTandem } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, cancelAllTandemOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier, executePairRotation, simulateTandem } from "./strategy-engine";
+import { priceFeed } from "./ws-price-feed";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -221,8 +222,11 @@ export async function registerRoutes(
       const client = getBitunixClient();
       if (client) {
         try {
-          const { cancelAllGridOrders } = await import("./strategy-engine");
-          await cancelAllGridOrders(id, strategy.symbol);
+          if (strategy.type === "tandem") {
+            await cancelAllTandemOrders(id, strategy.symbol);
+          } else {
+            await cancelAllGridOrders(id, strategy.symbol);
+          }
         } catch (e: any) {
           console.error(`[Delete ${id}] Cancel orders error:`, e.message);
         }
@@ -257,6 +261,10 @@ export async function registerRoutes(
       initialBuy = await placeInitialGridBuy({ ...strategy, status: "running" });
     }
 
+    if (strategy.type === "tandem") {
+      priceFeed.subscribe(strategy.symbol);
+    }
+
     startStrategyEngine();
 
     res.json({ ...updated, initialBuy });
@@ -269,6 +277,8 @@ export async function registerRoutes(
 
     if (strategy.type === "grid") {
       await cancelAllGridOrders(id, strategy.symbol);
+    } else if (strategy.type === "tandem") {
+      await cancelAllTandemOrders(id, strategy.symbol);
     }
 
     const updated = await storage.updateStrategy(id, { status: "stopped" });
@@ -539,6 +549,63 @@ export async function registerRoutes(
         },
       });
     } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/strategies/tandem-start", async (req, res) => {
+    try {
+      const schema = z.object({
+        symbol: z.string().min(1),
+        capitalPerSide: z.number().min(5).default(50),
+        leverage: z.number().min(2).max(125).default(33),
+        rotationEnabled: z.boolean().default(false),
+      });
+      const { symbol, capitalPerSide, leverage, rotationEnabled } = schema.parse(req.body);
+
+      const client = getBitunixClient();
+      if (!client) return res.status(400).json({ message: "API keys not configured" });
+
+      const strategy = await storage.createStrategy({
+        name: `Tandem ${symbol}`,
+        type: "tandem",
+        symbol: symbol.toUpperCase(),
+        side: "BOTH",
+        status: "running",
+        config: {
+          leverage,
+          capitalPerSide,
+          feeMultiplier: 4.0,
+          phase: "entry",
+          entryPrice: 0,
+          longPositionId: null,
+          shortPositionId: null,
+          longEntryQty: 0,
+          shortEntryQty: 0,
+          liquidatedSide: null,
+          liquidationPrice: 0,
+          cascadeStep: 0,
+          tpOrderIds: [],
+          highWatermark: 0,
+          remainingQty: 0,
+          survivingSide: null,
+          survivingPositionId: null,
+          cycleCount: 0,
+          totalPnl: 0,
+          lastActionAt: 0,
+          rotationEnabled,
+        },
+      });
+
+      priceFeed.subscribe(symbol.toUpperCase());
+      startStrategyEngine();
+      setTimeout(() => runStrategyCycle(), 2000);
+
+      res.status(201).json(strategy);
+    } catch (e: any) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: e.errors[0].message });
+      }
       res.status(500).json({ message: e.message });
     }
   });

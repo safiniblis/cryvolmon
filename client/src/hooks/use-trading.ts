@@ -334,6 +334,24 @@ export function useManualRotation() {
   });
 }
 
+export function useTandemStart() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { symbol: string; capitalPerSide: number; leverage: number; rotationEnabled?: boolean }) => {
+      const res = await apiRequest("POST", "/api/strategies/tandem-start", data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      toast({ title: "Tandem Started", description: `${data.symbol} tandem L/S running at ${data.config?.leverage}x` });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Tandem Start Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useManualTrade() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

@@ -25,6 +25,7 @@ import {
   useUpdateStrategyConfig,
   useManualRotation,
   useTandemSimulation,
+  useTandemStart,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Wifi, WifiOff,
@@ -305,6 +306,14 @@ function StrategyCard({ s }: { s: Strategy }) {
   const pnlPercent = margin > 0 ? (unrealizedPnl / margin) * 100 : 0;
   const realizedPnl = s.totalPnl || 0;
 
+  const phaseLabels: Record<string, string> = {
+    entry: "Opening L+S",
+    waiting_liquidation: "Waiting Liq",
+    cascade: `TP ${cfg.cascadeStep || 0}/3`,
+    trailing: "Trailing 0.5%",
+    complete: "Cycle Done",
+  };
+
   const gridParams = s.type === "grid" ? [
     { label: "Start", value: `$${Number(cfg.startPrice || 0).toFixed(2)}` },
     { label: "Lower", value: `$${Number(cfg.lowerPrice || 0).toFixed(2)}` },
@@ -318,6 +327,18 @@ function StrategyCard({ s }: { s: Strategy }) {
     { label: "TP Res", value: `${((cfg.tpReservePct ?? 0.10) * 100).toFixed(0)}%` },
     { label: "Rotation", value: cfg.rotationEnabled ? "On" : "Off" },
     ...(cfg.allocatedBudget ? [{ label: "Budget", value: `$${Number(cfg.allocatedBudget).toFixed(2)}` }] : []),
+  ] : s.type === "tandem" ? [
+    { label: "Phase", value: phaseLabels[cfg.phase] || cfg.phase || "—" },
+    { label: "Leverage", value: `${cfg.leverage || 33}x` },
+    { label: "$/Side", value: `$${cfg.capitalPerSide || 0}` },
+    { label: "Cycle", value: `#${cfg.cycleCount || 0}` },
+    { label: "Entry", value: cfg.entryPrice ? `$${Number(cfg.entryPrice).toFixed(4)}` : "—" },
+    ...(cfg.liquidatedSide ? [{ label: "Liq Side", value: cfg.liquidatedSide }] : []),
+    ...(cfg.survivingSide ? [{ label: "Survivor", value: cfg.survivingSide }] : []),
+    ...(cfg.cascadeStep > 0 ? [{ label: "Cascade", value: `${cfg.cascadeStep}/3` }] : []),
+    ...(cfg.highWatermark > 0 ? [{ label: "HWM", value: `$${Number(cfg.highWatermark).toFixed(4)}` }] : []),
+    { label: "Rotation", value: cfg.rotationEnabled ? "On" : "Off" },
+    { label: "Total PnL", value: `$${Number(cfg.totalPnl || 0).toFixed(2)}` },
   ] : Object.entries(cfg).map(([key, val]) => ({ label: key, value: String(val) }));
 
   return (
@@ -339,6 +360,11 @@ function StrategyCard({ s }: { s: Strategy }) {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-sm text-foreground truncate">{s.symbol}</span>
                 <Badge variant="outline" className="text-[10px]">{s.type.toUpperCase()}</Badge>
+                {s.type === "tandem" && cfg.phase && s.status === "running" && (
+                  <Badge variant="secondary" className="text-[10px] bg-orange-500/20 text-orange-300 border-orange-500/30">
+                    {phaseLabels[cfg.phase] || cfg.phase}
+                  </Badge>
+                )}
                 {cfg.leverage && <span className="text-[10px] text-yellow-300 font-mono">{cfg.leverage}x</span>}
                 {cfg.rotationEnabled && (
                   <Badge variant="secondary" className="text-[10px] bg-purple-500/20 text-purple-300 border-purple-500/30">
@@ -988,8 +1014,190 @@ function TandemSimulationPanel() {
   );
 }
 
-function QuickStartPanel() {
-  return null;
+function TandemStartPanel() {
+  const [symbol, setSymbol] = useState("XRPUSDT");
+  const [capital, setCapital] = useState("50");
+  const [leverage, setLeverage] = useState("33");
+  const [rotation, setRotation] = useState(false);
+  const tandemStart = useTandemStart();
+  const stopStrategy = useStopStrategy();
+  const { data: strategies } = useStrategies();
+  const { data: accountData } = useAccount();
+  const runningTandem = strategies?.find(s => s.status === "running" && s.type === "tandem");
+
+  const phaseLabels: Record<string, string> = {
+    entry: "Opening L+S",
+    waiting_liquidation: "Waiting for Liq",
+    cascade: "Cascade TP",
+    trailing: "Trailing Stop",
+    complete: "Cycle Done",
+  };
+
+  if (runningTandem) {
+    const cfg = (runningTandem.config || {}) as Record<string, any>;
+    const phase = cfg.phase || "entry";
+
+    const sideMap: Record<string, string[]> = { BOTH: ["BUY", "SELL", "LONG", "SHORT"] };
+    const matchSides = sideMap["BOTH"];
+    const positions = accountData?.positions?.filter((p: any) => p.symbol === runningTandem.symbol && matchSides.includes(p.side?.toUpperCase())) || [];
+    const totalUnrealized = positions.reduce((sum: number, p: any) => sum + (p.unrealizedPnl || 0), 0);
+
+    return (
+      <Card className="bg-card/30 border-border/40">
+        <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <ArrowUpDown className="h-4 w-4 text-orange-400" />
+            <span>{runningTandem.symbol}</span>
+            <Badge variant="secondary" className="text-[10px] bg-orange-500/20 text-orange-300 border-orange-500/30">
+              {phaseLabels[phase] || phase}
+            </Badge>
+          </CardTitle>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => stopStrategy.mutate(runningTandem.id)}
+            disabled={stopStrategy.isPending}
+            data-testid="button-tandem-stop"
+          >
+            <Square className="h-4 w-4 text-red-400" />
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-cycle">
+              <p className="text-[9px] text-muted-foreground">Cycle</p>
+              <p className="font-mono text-[11px] font-semibold">#{cfg.cycleCount || 0}</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-leverage">
+              <p className="text-[9px] text-muted-foreground">Leverage</p>
+              <p className="font-mono text-[11px] font-semibold">{cfg.leverage || 33}x</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-capital">
+              <p className="text-[9px] text-muted-foreground">$/Side</p>
+              <p className="font-mono text-[11px] font-semibold">${cfg.capitalPerSide || 0}</p>
+            </div>
+          </div>
+          {cfg.entryPrice > 0 && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-entry">
+                <p className="text-[9px] text-muted-foreground">Entry</p>
+                <p className="font-mono text-[11px] font-semibold">${Number(cfg.entryPrice).toFixed(4)}</p>
+              </div>
+              <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-unrealized">
+                <p className="text-[9px] text-muted-foreground">Unrealized</p>
+                <p className={`font-mono text-[11px] font-bold ${totalUnrealized >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {totalUnrealized >= 0 ? "+" : ""}{formatCurrency(totalUnrealized)}
+                </p>
+              </div>
+            </div>
+          )}
+          {cfg.liquidatedSide && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-liq-side">
+                <p className="text-[9px] text-muted-foreground">Liquidated</p>
+                <p className="font-mono text-[11px] font-semibold text-red-400">{cfg.liquidatedSide}</p>
+              </div>
+              <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-survivor">
+                <p className="text-[9px] text-muted-foreground">Survivor</p>
+                <p className="font-mono text-[11px] font-semibold text-emerald-400">{cfg.survivingSide}</p>
+              </div>
+            </div>
+          )}
+          {cfg.cascadeStep > 0 && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-cascade">
+                <p className="text-[9px] text-muted-foreground">Cascade</p>
+                <p className="font-mono text-[11px] font-semibold">{cfg.cascadeStep}/3</p>
+              </div>
+              {cfg.highWatermark > 0 && (
+                <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-hwm">
+                  <p className="text-[9px] text-muted-foreground">HWM</p>
+                  <p className="font-mono text-[11px] font-semibold">${Number(cfg.highWatermark).toFixed(4)}</p>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/20">
+            <span>Total PnL: <span className={`font-mono font-bold ${(cfg.totalPnl || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>{formatCurrency(cfg.totalPnl || 0)}</span></span>
+            <span>Last: {runningTandem.lastRunAt ? (() => {
+              const ago = Math.round((Date.now() - new Date(runningTandem.lastRunAt).getTime()) / 1000);
+              return ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+            })() : "—"}</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="bg-card/30 border-border/40">
+      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <ArrowUpDown className="h-4 w-4 text-orange-400" />
+          Tandem L/S
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            data-testid="input-tandem-symbol"
+            value={symbol}
+            onChange={e => setSymbol(e.target.value.toUpperCase())}
+            className="w-28 text-xs font-mono"
+            placeholder="XRPUSDT"
+          />
+          <Input
+            data-testid="input-tandem-capital"
+            type="number"
+            min="5"
+            value={capital}
+            onChange={e => setCapital(e.target.value)}
+            className="w-16 text-xs font-mono"
+            placeholder="$/side"
+          />
+          <Input
+            data-testid="input-tandem-leverage"
+            type="number"
+            min="2"
+            max="125"
+            value={leverage}
+            onChange={e => setLeverage(e.target.value)}
+            className="w-16 text-xs font-mono"
+            placeholder="33x"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={rotation}
+              onChange={e => setRotation(e.target.checked)}
+              className="rounded"
+              data-testid="input-tandem-rotation"
+            />
+            Auto-rotate
+          </label>
+          <Button
+            data-testid="button-tandem-start"
+            size="sm"
+            disabled={tandemStart.isPending || !symbol || parseFloat(capital) < 5}
+            onClick={() => tandemStart.mutate({
+              symbol,
+              capitalPerSide: parseFloat(capital),
+              leverage: parseInt(leverage),
+              rotationEnabled: rotation,
+            })}
+          >
+            {tandemStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Zap className="h-3 w-3 mr-1" />}
+            Start
+          </Button>
+        </div>
+        <p className="text-[9px] text-muted-foreground/60">
+          L+S entry, wait liq, cascade 2/7 at 1%/2%/3%, trail 0.5%
+        </p>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function TradingPage() {
@@ -1047,6 +1255,7 @@ export default function TradingPage() {
           </div>
 
           <div className="space-y-4">
+            <TandemStartPanel />
             <VolatilityScoresPanel />
           </div>
         </div>

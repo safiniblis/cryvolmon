@@ -1698,19 +1698,23 @@ function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, 
   const roundTripFee = 2 * feeRate;
   const gridRatio = 1 + roundTripFee * 4.0;
 
+  const liqDist = 1 / leverage;
+  const gridRange = liqDist * 0.85;
+  const tpRange = liqDist * 0.5;
+
   if (side === "LONG") {
     return {
       startPrice: currentPrice,
-      lowerPrice: currentPrice * 0.90,
-      upperPrice: currentPrice * 1.02,
-      liquidationPrice: currentPrice * 0.88,
+      lowerPrice: currentPrice * (1 - gridRange),
+      upperPrice: currentPrice * (1 + tpRange),
+      liquidationPrice: currentPrice * (1 - liqDist),
       leverage,
       gridRatio,
       gridCount: 20,
       amountPerGrid: 2,
       geometric: true,
-      gapGrowthBelow: 1.05,
-      gapShrinkAbove: 1.05,
+      gapGrowthBelow: 1.0,
+      gapShrinkAbove: 1.0,
       gridsAbove: 10,
       gridsBelow: 10,
       extensionsBelow: 0,
@@ -1722,16 +1726,16 @@ function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, 
   } else {
     return {
       startPrice: currentPrice,
-      lowerPrice: currentPrice * 0.98,
-      upperPrice: currentPrice * 1.10,
-      liquidationPrice: currentPrice * 1.12,
+      lowerPrice: currentPrice * (1 - tpRange),
+      upperPrice: currentPrice * (1 + gridRange),
+      liquidationPrice: currentPrice * (1 + liqDist),
       leverage,
       gridRatio,
       gridCount: 20,
       amountPerGrid: 2,
       geometric: true,
-      gapGrowthBelow: 1.05,
-      gapShrinkAbove: 1.05,
+      gapGrowthBelow: 1.0,
+      gapShrinkAbove: 1.0,
       gridsAbove: 10,
       gridsBelow: 10,
       extensionsBelow: 0,

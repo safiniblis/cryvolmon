@@ -112,7 +112,21 @@ A full-stack cryptocurrency trading platform with two main features:
 - Bot spending capped at `min(accountAvailable, allocatedBudget)` — new deposits won't be spent unless user explicitly adds margin
 - Budget Cap shown in strategy card params
 
+## Tandem L/S Live Strategy
+- **State machine**: entry → waiting_liquidation → cascade → trailing → complete → restart
+- **Entry**: Opens simultaneous LONG + SHORT market orders with isolated margin, same qty
+- **Waiting**: Polls getPositions every 15s; detects liquidation when one side's positionId disappears
+- **Cascade**: Market-closes 2/7 of original qty at 1%, 2%, 3% beyond liquidation price
+- **Trailing**: Tracks high watermark, closes remaining 1/7 on 0.5% pullback
+- **Complete**: Cleans up orders/positions, optionally rotates pair, resets to entry for next cycle
+- **Config**: Stored in strategy.config JSON (TandemConfig interface) — no new DB tables
+- **API route**: `POST /api/strategies/tandem-start` (symbol, capitalPerSide, leverage, rotationEnabled)
+- **UI panel**: Shows live phase, cycle count, entry price, unrealized PnL, liquidated/survivor sides, cascade progress, HWM, total PnL
+- **Stop cleanup**: cancelAllTandemOrders cancels all limit orders, TP/SL orders, and flash-closes positions
+
 ## Recent Changes
+- 2026-02-18: Live tandem L/S executor with 5-phase state machine, cascade TP, trailing stop, auto-restart cycles
+- 2026-02-18: Tandem start panel with live bot status display (phase, PnL, positions, cascade progress)
 - 2026-02-18: UI cleanup: minimal Quick Start ($ + Start), PNL on running bot, 4h vol scores, 24h% change, manual rotation buttons, mobile-friendly tables
 - 2026-02-18: Fee multiplier changed from 2.5x to 4.0x (grid gap 0.48% vs 0.30%) — fewer but more profitable trades
 - 2026-02-18: Added manual pair rotation endpoint (POST /api/strategies/:id/rotate)

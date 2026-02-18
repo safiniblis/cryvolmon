@@ -1645,10 +1645,607 @@ async function guardedExecuteGridStrategy(strategy: Strategy) {
   await executeGridStrategy(strategy);
 }
 
+export interface TandemConfig {
+  leverage: number;
+  capitalPerSide: number;
+  feeMultiplier: number;
+  phase: "entry" | "waiting_liquidation" | "cascade" | "trailing" | "complete";
+  entryPrice: number;
+  longPositionId: string | null;
+  shortPositionId: string | null;
+  longEntryQty: number;
+  shortEntryQty: number;
+  liquidatedSide: "LONG" | "SHORT" | null;
+  liquidationPrice: number;
+  cascadeStep: number;
+  tpOrderIds: string[];
+  highWatermark: number;
+  remainingQty: number;
+  survivingSide: "LONG" | "SHORT" | null;
+  survivingPositionId: string | null;
+  cycleCount: number;
+  totalPnl: number;
+  lastActionAt: number;
+  rotationEnabled?: boolean;
+}
+
+const tandemEntryLocks: Set<number> = new Set();
+
+async function executeTandemStrategy(strategy: Strategy) {
+  const client = getBitunixClient();
+  if (!client) throw new Error("Bitunix client not configured");
+
+  const config = strategy.config as TandemConfig;
+  const phase = config.phase || "entry";
+
+  console.log(`[Tandem ${strategy.id}] Phase: ${phase} | Cycle: ${config.cycleCount || 0} | Symbol: ${strategy.symbol}`);
+
+  switch (phase) {
+    case "entry":
+      await tandemEntry(strategy, config, client);
+      break;
+    case "waiting_liquidation":
+      await tandemWaitLiquidation(strategy, config, client);
+      break;
+    case "cascade":
+      await tandemCascade(strategy, config, client);
+      break;
+    case "trailing":
+      await tandemTrailing(strategy, config, client);
+      break;
+    case "complete":
+      await tandemComplete(strategy, config, client);
+      break;
+  }
+
+  await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
+}
+
+async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any) {
+  if (tandemEntryLocks.has(strategy.id)) {
+    console.log(`[Tandem ${strategy.id}] Entry already in progress, skipping...`);
+    return;
+  }
+  tandemEntryLocks.add(strategy.id);
+
+  try {
+    const precision = await getPairPrecision(strategy.symbol);
+    const ticker = await getTickerPrice(strategy.symbol);
+    if (!ticker) throw new Error(`Cannot get price for ${strategy.symbol}`);
+
+    const currentPrice = ticker.lastPrice;
+    const leverage = config.leverage || 33;
+    const capitalPerSide = config.capitalPerSide || 50;
+
+    const accountRes = await client.getAccount();
+    if (accountRes?.code !== 0 || !accountRes?.data) throw new Error("Cannot fetch account balance");
+    const accountAvailable = parseFloat(accountRes.data.available || "0");
+    const totalNeeded = capitalPerSide * 2;
+    if (accountAvailable < totalNeeded) {
+      throw new Error(`Insufficient balance: ${accountAvailable.toFixed(2)} USDT, need ${totalNeeded.toFixed(2)} for both sides`);
+    }
+
+    try { await client.setMarginMode(strategy.symbol, "ISOLATION"); } catch (e: any) {
+      console.log(`[Tandem ${strategy.id}] Margin mode note:`, e.message);
+    }
+    try { await client.setLeverage(strategy.symbol, leverage); } catch (e: any) {
+      console.log(`[Tandem ${strategy.id}] Leverage note:`, e.message);
+    }
+
+    const notionalPerSide = capitalPerSide * leverage * 0.95;
+    const qty = notionalPerSide / currentPrice;
+    const qtyStr = roundQty(qty, precision.basePrecision);
+
+    console.log(`[Tandem ${strategy.id}] Opening LONG + SHORT at ${currentPrice}, qty=${qtyStr}, leverage=${leverage}x, capital/side=${capitalPerSide}`);
+
+    const longResult = await client.placeOrder({
+      symbol: strategy.symbol,
+      qty: qtyStr,
+      side: "BUY",
+      tradeSide: "OPEN",
+      orderType: "MARKET",
+    });
+    console.log(`[Tandem ${strategy.id}] LONG result:`, JSON.stringify(longResult));
+
+    if (longResult?.code !== 0) throw new Error(`LONG order failed: ${longResult?.msg}`);
+
+    const shortResult = await client.placeOrder({
+      symbol: strategy.symbol,
+      qty: qtyStr,
+      side: "SELL",
+      tradeSide: "OPEN",
+      orderType: "MARKET",
+    });
+    console.log(`[Tandem ${strategy.id}] SHORT result:`, JSON.stringify(shortResult));
+
+    if (shortResult?.code !== 0) {
+      console.error(`[Tandem ${strategy.id}] SHORT failed, closing LONG...`);
+      try { await client.flashClose(strategy.symbol); } catch {}
+      throw new Error(`SHORT order failed: ${shortResult?.msg}`);
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+
+    let longPosId: string | null = null;
+    let shortPosId: string | null = null;
+    let longQty = 0;
+    let shortQty = 0;
+    try {
+      const posRes = await client.getPositions(strategy.symbol);
+      if (posRes?.code === 0 && Array.isArray(posRes.data)) {
+        for (const pos of posRes.data) {
+          const posQty = parseFloat(pos.qty || "0");
+          if (pos.side === "BUY" && posQty > 0) {
+            longPosId = pos.positionId;
+            longQty = posQty;
+          } else if (pos.side === "SELL" && posQty > 0) {
+            shortPosId = pos.positionId;
+            shortQty = posQty;
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error(`[Tandem ${strategy.id}] Position fetch error:`, e.message);
+    }
+
+    const updatedConfig: TandemConfig = {
+      ...config,
+      phase: "waiting_liquidation",
+      entryPrice: currentPrice,
+      longPositionId: longPosId,
+      shortPositionId: shortPosId,
+      longEntryQty: longQty || qty,
+      shortEntryQty: shortQty || qty,
+      liquidatedSide: null,
+      liquidationPrice: 0,
+      cascadeStep: 0,
+      tpOrderIds: [],
+      highWatermark: 0,
+      remainingQty: 0,
+      survivingSide: null,
+      survivingPositionId: null,
+      cycleCount: (config.cycleCount || 0) + 1,
+      lastActionAt: Date.now(),
+    };
+
+    await storage.updateStrategy(strategy.id, { config: updatedConfig });
+
+    await storage.createTradeLog({
+      strategyId: strategy.id,
+      symbol: strategy.symbol,
+      side: "BUY",
+      orderType: "MARKET",
+      quantity: qty,
+      price: currentPrice,
+      status: "filled",
+      orderId: longResult.data?.orderId || null,
+      pnl: null,
+      errorMsg: `Tandem cycle ${updatedConfig.cycleCount}: LONG opened`,
+    });
+    await storage.createTradeLog({
+      strategyId: strategy.id,
+      symbol: strategy.symbol,
+      side: "SELL",
+      orderType: "MARKET",
+      quantity: qty,
+      price: currentPrice,
+      status: "filled",
+      orderId: shortResult.data?.orderId || null,
+      pnl: null,
+      errorMsg: `Tandem cycle ${updatedConfig.cycleCount}: SHORT opened`,
+    });
+
+    console.log(`[Tandem ${strategy.id}] Cycle ${updatedConfig.cycleCount} started: LONG ${longPosId}, SHORT ${shortPosId} @ ${currentPrice}`);
+  } finally {
+    tandemEntryLocks.delete(strategy.id);
+  }
+}
+
+async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, client: any) {
+  const posRes = await client.getPositions(strategy.symbol);
+  if (posRes?.code !== 0 || !Array.isArray(posRes.data)) {
+    console.log(`[Tandem ${strategy.id}] Position fetch failed, retrying next cycle`);
+    return;
+  }
+
+  let longAlive = false;
+  let shortAlive = false;
+  let longPos: any = null;
+  let shortPos: any = null;
+
+  for (const pos of posRes.data) {
+    const posQty = parseFloat(pos.qty || "0");
+    if (posQty <= 0) continue;
+    if (pos.side === "BUY") { longAlive = true; longPos = pos; }
+    if (pos.side === "SELL") { shortAlive = true; shortPos = pos; }
+  }
+
+  if (longAlive && shortAlive) {
+    const ticker = await getTickerPrice(strategy.symbol);
+    if (ticker) {
+      const liqDist = 1 / config.leverage;
+      const longLiqPrice = config.entryPrice * (1 - liqDist);
+      const shortLiqPrice = config.entryPrice * (1 + liqDist);
+      console.log(`[Tandem ${strategy.id}] Both alive @ ${ticker.lastPrice.toFixed(4)} | LongLiq=${longLiqPrice.toFixed(4)} ShortLiq=${shortLiqPrice.toFixed(4)}`);
+    }
+    return;
+  }
+
+  if (!longAlive && !shortAlive) {
+    console.log(`[Tandem ${strategy.id}] Both liquidated! Resetting to entry phase.`);
+    await storage.updateStrategy(strategy.id, {
+      config: { ...config, phase: "complete", lastActionAt: Date.now() },
+    });
+    await storage.createTradeLog({
+      strategyId: strategy.id,
+      symbol: strategy.symbol,
+      side: "BUY",
+      orderType: "MARKET",
+      quantity: 0,
+      price: config.entryPrice,
+      status: "filled",
+      orderId: null,
+      pnl: -(config.capitalPerSide * 2),
+      errorMsg: `Tandem cycle ${config.cycleCount}: BOTH liquidated`,
+    });
+    return;
+  }
+
+  const liquidatedSide: "LONG" | "SHORT" = longAlive ? "SHORT" : "LONG";
+  const survivingSide: "LONG" | "SHORT" = longAlive ? "LONG" : "SHORT";
+  const survivingPos = longAlive ? longPos : shortPos;
+  const survivingPositionId = survivingPos?.positionId || null;
+  const survivingQty = parseFloat(survivingPos?.qty || "0");
+
+  const ticker = await getTickerPrice(strategy.symbol);
+  const liquidationPrice = ticker?.lastPrice || config.entryPrice;
+
+  console.log(`[Tandem ${strategy.id}] ${liquidatedSide} LIQUIDATED @ ~${liquidationPrice.toFixed(4)} | Survivor: ${survivingSide} (qty=${survivingQty}, posId=${survivingPositionId})`);
+
+  await storage.updateStrategy(strategy.id, {
+    config: {
+      ...config,
+      phase: "cascade",
+      liquidatedSide,
+      liquidationPrice,
+      survivingSide,
+      survivingPositionId,
+      remainingQty: survivingQty,
+      cascadeStep: 0,
+      tpOrderIds: [],
+      highWatermark: liquidationPrice,
+      lastActionAt: Date.now(),
+    },
+  });
+
+  await storage.createTradeLog({
+    strategyId: strategy.id,
+    symbol: strategy.symbol,
+    side: liquidatedSide === "LONG" ? "BUY" : "SELL",
+    orderType: "MARKET",
+    quantity: 0,
+    price: liquidationPrice,
+    status: "filled",
+    orderId: null,
+    pnl: -config.capitalPerSide,
+    errorMsg: `Tandem cycle ${config.cycleCount}: ${liquidatedSide} liquidated`,
+  });
+}
+
+async function tandemCascade(strategy: Strategy, config: TandemConfig, client: any) {
+  const posRes = await client.getPositions(strategy.symbol);
+  if (posRes?.code !== 0 || !Array.isArray(posRes.data)) return;
+
+  const survivingSide = config.survivingSide;
+  const posSide = survivingSide === "LONG" ? "BUY" : "SELL";
+  const survivingPos = posRes.data.find((p: any) => p.side === posSide && parseFloat(p.qty || "0") > 0);
+
+  if (!survivingPos) {
+    console.log(`[Tandem ${strategy.id}] Surviving position gone (liquidated during cascade)`);
+    await storage.updateStrategy(strategy.id, {
+      config: { ...config, phase: "complete", lastActionAt: Date.now() },
+    });
+    await storage.createTradeLog({
+      strategyId: strategy.id,
+      symbol: strategy.symbol,
+      side: posSide,
+      orderType: "MARKET",
+      quantity: 0,
+      price: config.liquidationPrice,
+      status: "filled",
+      orderId: null,
+      pnl: -config.capitalPerSide,
+      errorMsg: `Tandem cycle ${config.cycleCount}: survivor also liquidated`,
+    });
+    return;
+  }
+
+  const ticker = await getTickerPrice(strategy.symbol);
+  if (!ticker) return;
+  const currentPrice = ticker.lastPrice;
+  const currentQty = parseFloat(survivingPos.qty || "0");
+  const positionId = survivingPos.positionId;
+  const precision = await getPairPrecision(strategy.symbol);
+
+  const direction = survivingSide === "LONG" ? 1 : -1;
+  const cascadeStartPrice = config.liquidationPrice;
+
+  const moveBeyondLiq = survivingSide === "LONG"
+    ? (currentPrice - cascadeStartPrice) / cascadeStartPrice
+    : (cascadeStartPrice - currentPrice) / cascadeStartPrice;
+
+  const cascadeStep = config.cascadeStep || 0;
+
+  if (cascadeStep < 3) {
+    const targetPct = (cascadeStep + 1) * 0.01;
+
+    if (moveBeyondLiq >= targetPct) {
+      const originalQty = config.longEntryQty || config.remainingQty;
+      const portionQty = originalQty * (2 / 7);
+      const sellQty = Math.min(portionQty, currentQty);
+      const qtyStr = roundQty(sellQty, precision.basePrecision);
+
+      if (sellQty < precision.minTradeVolume) {
+        console.log(`[Tandem ${strategy.id}] Cascade step ${cascadeStep + 1} qty too small (${sellQty}), skipping`);
+      } else {
+        const closeSide = survivingSide === "LONG" ? "SELL" : "BUY";
+        console.log(`[Tandem ${strategy.id}] CASCADE TP ${cascadeStep + 1}/3: ${closeSide} ${qtyStr} @ MARKET (move=${(moveBeyondLiq * 100).toFixed(2)}% beyond liq)`);
+
+        try {
+          const result = await client.placeOrder({
+            symbol: strategy.symbol,
+            qty: qtyStr,
+            side: closeSide,
+            tradeSide: "CLOSE",
+            orderType: "MARKET",
+          });
+
+          const profitPerUnit = direction * (currentPrice - config.entryPrice);
+          const exitPnl = profitPerUnit * sellQty;
+
+          if (result?.code === 0) {
+            const newStep = cascadeStep + 1;
+            const newRemainingQty = currentQty - sellQty;
+
+            await storage.updateStrategy(strategy.id, {
+              config: {
+                ...config,
+                cascadeStep: newStep,
+                remainingQty: newRemainingQty,
+                highWatermark: currentPrice,
+                phase: newStep >= 3 ? "trailing" : "cascade",
+                lastActionAt: Date.now(),
+              },
+              totalPnl: (strategy.totalPnl || 0) + exitPnl,
+            });
+
+            await storage.createTradeLog({
+              strategyId: strategy.id,
+              symbol: strategy.symbol,
+              side: closeSide,
+              orderType: "MARKET",
+              quantity: sellQty,
+              price: currentPrice,
+              status: "filled",
+              orderId: result.data?.orderId || null,
+              pnl: exitPnl,
+              errorMsg: `Tandem cascade TP ${newStep}/3 (${(targetPct * 100).toFixed(0)}% beyond liq)`,
+            });
+
+            console.log(`[Tandem ${strategy.id}] Cascade TP ${newStep}/3 filled: pnl=${exitPnl.toFixed(4)}, remaining=${newRemainingQty.toFixed(precision.basePrecision)}`);
+          } else {
+            console.error(`[Tandem ${strategy.id}] Cascade TP failed: ${result?.msg}`);
+          }
+        } catch (e: any) {
+          console.error(`[Tandem ${strategy.id}] Cascade TP error:`, e.message);
+        }
+      }
+    } else {
+      console.log(`[Tandem ${strategy.id}] Cascade waiting: step ${cascadeStep + 1} needs ${((cascadeStep + 1) * 1).toFixed(0)}% move, current=${(moveBeyondLiq * 100).toFixed(2)}%`);
+    }
+  }
+}
+
+async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: any) {
+  const posRes = await client.getPositions(strategy.symbol);
+  if (posRes?.code !== 0 || !Array.isArray(posRes.data)) return;
+
+  const posSide = config.survivingSide === "LONG" ? "BUY" : "SELL";
+  const survivingPos = posRes.data.find((p: any) => p.side === posSide && parseFloat(p.qty || "0") > 0);
+
+  if (!survivingPos) {
+    console.log(`[Tandem ${strategy.id}] Trailing: position gone, completing cycle`);
+    await storage.updateStrategy(strategy.id, {
+      config: { ...config, phase: "complete", lastActionAt: Date.now() },
+    });
+    return;
+  }
+
+  const ticker = await getTickerPrice(strategy.symbol);
+  if (!ticker) return;
+  const currentPrice = ticker.lastPrice;
+  const currentQty = parseFloat(survivingPos.qty || "0");
+  const precision = await getPairPrecision(strategy.symbol);
+
+  let hwm = config.highWatermark || currentPrice;
+  if (config.survivingSide === "LONG") {
+    hwm = Math.max(hwm, currentPrice);
+  } else {
+    hwm = Math.min(hwm, currentPrice);
+  }
+
+  const trailingDrop = config.survivingSide === "LONG"
+    ? (hwm - currentPrice) / hwm
+    : (currentPrice - hwm) / hwm;
+
+  console.log(`[Tandem ${strategy.id}] Trailing: price=${currentPrice.toFixed(4)} hwm=${hwm.toFixed(4)} drop=${(trailingDrop * 100).toFixed(3)}% (trigger=0.5%)`);
+
+  if (trailingDrop >= 0.005) {
+    const closeSide = config.survivingSide === "LONG" ? "SELL" : "BUY";
+    const qtyStr = roundQty(currentQty, precision.basePrecision);
+
+    console.log(`[Tandem ${strategy.id}] TRAILING STOP triggered: ${closeSide} ${qtyStr} @ MARKET`);
+
+    try {
+      const result = await client.placeOrder({
+        symbol: strategy.symbol,
+        qty: qtyStr,
+        side: closeSide,
+        tradeSide: "CLOSE",
+        orderType: "MARKET",
+      });
+
+      const direction = config.survivingSide === "LONG" ? 1 : -1;
+      const profitPerUnit = direction * (currentPrice - config.entryPrice);
+      const exitPnl = profitPerUnit * currentQty;
+
+      if (result?.code === 0) {
+        await storage.updateStrategy(strategy.id, {
+          config: { ...config, phase: "complete", highWatermark: hwm, lastActionAt: Date.now() },
+          totalPnl: (strategy.totalPnl || 0) + exitPnl,
+        });
+
+        await storage.createTradeLog({
+          strategyId: strategy.id,
+          symbol: strategy.symbol,
+          side: closeSide,
+          orderType: "MARKET",
+          quantity: currentQty,
+          price: currentPrice,
+          status: "filled",
+          orderId: result.data?.orderId || null,
+          pnl: exitPnl,
+          errorMsg: `Tandem trailing stop (0.5% pullback from ${hwm.toFixed(4)})`,
+        });
+
+        console.log(`[Tandem ${strategy.id}] Trailing close: pnl=${exitPnl.toFixed(4)}`);
+      } else {
+        console.error(`[Tandem ${strategy.id}] Trailing close failed: ${result?.msg}`);
+      }
+    } catch (e: any) {
+      console.error(`[Tandem ${strategy.id}] Trailing close error:`, e.message);
+    }
+  } else {
+    await storage.updateStrategy(strategy.id, {
+      config: { ...config, highWatermark: hwm },
+    });
+  }
+}
+
+async function tandemComplete(strategy: Strategy, config: TandemConfig, client: any) {
+  console.log(`[Tandem ${strategy.id}] Cycle ${config.cycleCount} complete. Cleaning up and restarting...`);
+
+  try { await client.cancelAllOrders(strategy.symbol); } catch {}
+  try {
+    const tpRes = await client.getPendingTpslOrders(strategy.symbol);
+    if (tpRes?.code === 0) {
+      let tpList = tpRes.data;
+      if (tpList && !Array.isArray(tpList) && Array.isArray(tpList.orderList)) tpList = tpList.orderList;
+      if (Array.isArray(tpList)) {
+        for (const tp of tpList) {
+          const tpId = tp.id || tp.orderId;
+          if (tpId) try { await client.cancelTpslOrder(strategy.symbol, tpId); } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    const posRes = await client.getPositions(strategy.symbol);
+    if (posRes?.code === 0 && Array.isArray(posRes.data)) {
+      for (const pos of posRes.data) {
+        if (parseFloat(pos.qty || "0") > 0) {
+          try { await client.flashClose(strategy.symbol, pos.positionId); } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  const checkRotation = config.rotationEnabled;
+  if (checkRotation) {
+    const rotation = await checkPairRotation(strategy);
+    if (rotation.shouldRotate && rotation.newSymbol) {
+      console.log(`[Tandem ${strategy.id}] Rotating to ${rotation.newSymbol}: ${rotation.reason}`);
+      await storage.updateStrategy(strategy.id, {
+        symbol: rotation.newSymbol,
+        config: {
+          ...config,
+          phase: "entry",
+          entryPrice: 0,
+          longPositionId: null,
+          shortPositionId: null,
+          liquidatedSide: null,
+          survivingSide: null,
+          survivingPositionId: null,
+          cascadeStep: 0,
+          tpOrderIds: [],
+          highWatermark: 0,
+          remainingQty: 0,
+          lastActionAt: Date.now(),
+        },
+      });
+      priceFeed.subscribe(rotation.newSymbol);
+      return;
+    }
+  }
+
+  await storage.updateStrategy(strategy.id, {
+    config: {
+      ...config,
+      phase: "entry",
+      entryPrice: 0,
+      longPositionId: null,
+      shortPositionId: null,
+      liquidatedSide: null,
+      survivingSide: null,
+      survivingPositionId: null,
+      cascadeStep: 0,
+      tpOrderIds: [],
+      highWatermark: 0,
+      remainingQty: 0,
+      lastActionAt: Date.now(),
+    },
+  });
+
+  console.log(`[Tandem ${strategy.id}] Reset to entry phase for next cycle`);
+}
+
+export async function cancelAllTandemOrders(strategyId: number, symbol: string) {
+  const client = getBitunixClient();
+  if (!client) return;
+
+  try { await client.cancelAllOrders(symbol); } catch {}
+  try {
+    const tpRes = await client.getPendingTpslOrders(symbol);
+    if (tpRes?.code === 0) {
+      let tpList = tpRes.data;
+      if (tpList && !Array.isArray(tpList) && Array.isArray(tpList.orderList)) tpList = tpList.orderList;
+      if (Array.isArray(tpList)) {
+        for (const tp of tpList) {
+          const tpId = tp.id || tp.orderId;
+          if (tpId) try { await client.cancelTpslOrder(symbol, tpId); } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    const posRes = await client.getPositions(symbol);
+    if (posRes?.code === 0 && Array.isArray(posRes.data)) {
+      for (const pos of posRes.data) {
+        if (parseFloat(pos.qty || "0") > 0) {
+          try { await client.flashClose(symbol, pos.positionId); } catch {}
+        }
+      }
+    }
+  } catch {}
+}
+
 const strategyExecutors: Record<string, (strategy: Strategy) => Promise<void>> = {
   grid: guardedExecuteGridStrategy,
   dca: executeDCAStrategy,
   momentum: executeMomentumStrategy,
+  tandem: executeTandemStrategy,
 };
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -1754,7 +2351,7 @@ export function startStrategyEngine() {
 
   const strategies = storage.getStrategiesByStatus("running").then((strats) => {
     for (const s of strats) {
-      if (s.type === "grid") {
+      if (s.type === "grid" || s.type === "tandem") {
         priceFeed.subscribe(s.symbol);
       }
     }

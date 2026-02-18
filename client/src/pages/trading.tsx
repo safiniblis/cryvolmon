@@ -1146,11 +1146,11 @@ function TandemStartPanel() {
               </div>
             </div>
           )}
-          {cfg.cascadeStep > 0 && (
+          {(cfg.cascadeStep > 0 || cfg.phase === "cascade" || cfg.phase === "trailing") && (
             <div className="grid grid-cols-2 gap-1.5">
               <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-cascade">
                 <p className="text-[9px] text-muted-foreground">Cascade</p>
-                <p className="font-mono text-[11px] font-semibold">{cfg.cascadeStep}/3</p>
+                <p className="font-mono text-[11px] font-semibold">{cfg.cascadeStep}/3 {cfg.phase === "trailing" ? "+ trail" : ""}</p>
               </div>
               {cfg.highWatermark > 0 && (
                 <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-hwm">

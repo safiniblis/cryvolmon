@@ -25,6 +25,7 @@ import {
   useRemoveMargin,
   useMarginInfo,
   useExtendOrders,
+  useUpdateStrategyConfig,
 } from "@/hooks/use-trading";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -154,6 +155,71 @@ function PositionsTable() {
   );
 }
 
+function GapModifiers({ strategy }: { strategy: Strategy }) {
+  const cfg = (strategy.config || {}) as Record<string, any>;
+  const [gapBelow, setGapBelow] = useState(String(cfg.gapGrowthBelow || 1.07));
+  const [gapAbove, setGapAbove] = useState(String(cfg.gapShrinkAbove || 0.96));
+  const updateConfig = useUpdateStrategyConfig();
+
+  const handleSave = () => {
+    const below = parseFloat(gapBelow);
+    const above = parseFloat(gapAbove);
+    if (isNaN(below) || isNaN(above) || below < 1 || above > 1 || above <= 0) return;
+    updateConfig.mutate({ id: strategy.id, config: { gapGrowthBelow: below, gapShrinkAbove: above } });
+  };
+
+  const changed = parseFloat(gapBelow) !== (cfg.gapGrowthBelow || 1.07) || parseFloat(gapAbove) !== (cfg.gapShrinkAbove || 0.96);
+
+  return (
+    <div className="mt-3 p-3 rounded border border-border/30 bg-card/10">
+      <p className="text-xs font-semibold text-muted-foreground mb-2">Grid Spacing Modifiers</p>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Gap Below</Label>
+          <Input
+            type="number"
+            min="1.00"
+            max="2.00"
+            step="0.01"
+            value={gapBelow}
+            onChange={(e) => setGapBelow(e.target.value)}
+            className="w-20 text-xs"
+            data-testid={`input-gap-below-${strategy.id}`}
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Gap Above</Label>
+          <Input
+            type="number"
+            min="0.50"
+            max="1.00"
+            step="0.01"
+            value={gapAbove}
+            onChange={(e) => setGapAbove(e.target.value)}
+            className="w-20 text-xs"
+            data-testid={`input-gap-above-${strategy.id}`}
+          />
+        </div>
+        {changed && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleSave}
+            disabled={updateConfig.isPending}
+            data-testid={`button-save-gaps-${strategy.id}`}
+          >
+            {updateConfig.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+            Save
+          </Button>
+        )}
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-1.5">
+        Below: wider grids downward ({">"} 1.0). Above: tighter grids upward ({"<"} 1.0). Applied next cycle.
+      </p>
+    </div>
+  );
+}
+
 function MarginControls({ strategy }: { strategy: Strategy }) {
   const [addAmount, setAddAmount] = useState("1");
   const [removeCount, setRemoveCount] = useState("1");
@@ -264,7 +330,9 @@ function StrategyCard({ s }: { s: Strategy }) {
   const { data: accountData } = useAccount();
   const cfg = (s.config || {}) as Record<string, any>;
 
-  const position = accountData?.positions?.find((p: any) => p.symbol === s.symbol && p.side?.toUpperCase() === s.side?.toUpperCase());
+  const sideMap: Record<string, string[]> = { LONG: ["BUY", "LONG"], SHORT: ["SELL", "SHORT"], BOTH: ["BUY", "SELL", "LONG", "SHORT"] };
+  const matchSides = sideMap[s.side?.toUpperCase()] || [s.side?.toUpperCase()];
+  const position = accountData?.positions?.find((p: any) => p.symbol === s.symbol && matchSides.includes(p.side?.toUpperCase()));
   const unrealizedPnl = position?.unrealizedPnl || 0;
   const posLeverage = position?.leverage || cfg.leverage || 1;
   const margin = position?.entryPrice && position?.quantity
@@ -328,7 +396,7 @@ function StrategyCard({ s }: { s: Strategy }) {
           </div>
           <div className="flex items-center gap-4">
             {s.status === "running" && position && (
-              <div className="hidden sm:flex flex-col items-center gap-1 mr-2" data-testid={`pnl-meter-${s.id}`}>
+              <div className="flex flex-col items-center gap-1 mr-2" data-testid={`pnl-meter-${s.id}`}>
                 <div className="relative w-12 h-12">
                   <svg viewBox="0 0 36 36" className="w-12 h-12 -rotate-90">
                     <circle
@@ -422,7 +490,10 @@ function StrategyCard({ s }: { s: Strategy }) {
             ))}
           </div>
           {s.type === "grid" && s.status === "running" && (
-            <MarginControls strategy={s} />
+            <>
+              <GapModifiers strategy={s} />
+              <MarginControls strategy={s} />
+            </>
           )}
           <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
             <span>Created: {s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}</span>

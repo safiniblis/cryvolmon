@@ -1494,19 +1494,29 @@ export async function extendOrdersToLowerBand(strategy: Strategy): Promise<{ suc
 
 export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): Promise<{ success: boolean; message: string; ordersPlaced: number }> {
   const client = getBitunixClient();
-  if (!client) throw new Error("Bitunix client not configured");
+  if (!client) return { success: false, message: "Bitunix client not configured", ordersPlaced: 0 };
 
   const config = (strategy.config || {}) as GridConfig & Record<string, any>;
+
+  if (!config.startPrice || !config.gridRatio || !config.lowerPrice || !config.upperPrice) {
+    return { success: false, message: "Strategy config missing required grid parameters (startPrice, gridRatio, lowerPrice, upperPrice)", ordersPlaced: 0 };
+  }
+
   const precision = await getPairPrecision(strategy.symbol);
   const ticker = await getTickerPrice(strategy.symbol);
-  if (!ticker) throw new Error("Could not get current price");
+  if (!ticker) return { success: false, message: `Could not get current price for ${strategy.symbol}`, ordersPlaced: 0 };
   const currentPrice = ticker.lastPrice;
 
-  const openRes = await client.getOpenOrders(strategy.symbol);
   let openOrders: any[] = [];
-  if (openRes?.code === 0) {
-    if (Array.isArray(openRes.data)) openOrders = openRes.data;
-    else if (openRes.data?.orderList) openOrders = openRes.data.orderList;
+  try {
+    const openRes = await client.getOpenOrders(strategy.symbol);
+    if (openRes?.code === 0) {
+      if (Array.isArray(openRes.data)) openOrders = openRes.data;
+      else if (openRes.data?.orderList) openOrders = openRes.data.orderList;
+    }
+  } catch (e: any) {
+    console.error(`[AddMargin ${strategy.id}] Failed to fetch open orders:`, e.message);
+    return { success: false, message: `Failed to fetch open orders: ${e.message}`, ordersPlaced: 0 };
   }
 
   const existingBuyPrices = new Set(
@@ -1519,7 +1529,7 @@ export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): P
   const bandLow = currentPrice * 0.99;
   const lowerBound = config.lowerPrice || 0;
   const buyLevels = allLevels
-    .filter(l => l < currentPrice && l >= bandLow && l >= lowerBound)
+    .filter(l => l < currentPrice && l >= bandLow && l >= lowerBound && !isNaN(l))
     .filter(l => !existingBuyPrices.has(roundPrice(l, precision.quotePrecision)));
 
   if (buyLevels.length === 0) {
@@ -1528,6 +1538,7 @@ export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): P
 
   const marginPerOrder = amountUsdt / buyLevels.length;
   let placed = 0;
+  const errors: string[] = [];
   for (const level of buyLevels) {
     const notional = marginPerOrder * (config.leverage || 8) * 0.95;
     const qtyBase = notional / level;
@@ -1549,14 +1560,21 @@ export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): P
         placed++;
         console.log(`[AddMargin ${strategy.id}] Placed BUY ${qtyStr} @ ${priceStr}`);
       } else {
-        console.error(`[AddMargin ${strategy.id}] BUY failed @ ${priceStr}: ${result?.msg}`);
+        const msg = `BUY failed @ ${priceStr}: ${result?.msg || "unknown"}`;
+        errors.push(msg);
+        console.error(`[AddMargin ${strategy.id}] ${msg}`);
       }
     } catch (e: any) {
-      console.error(`[AddMargin ${strategy.id}] BUY error @ ${priceStr}:`, e.message);
+      const msg = `BUY error @ ${priceStr}: ${e.message}`;
+      errors.push(msg);
+      console.error(`[AddMargin ${strategy.id}] ${msg}`);
     }
   }
 
-  return { success: true, message: `Placed ${placed} additional buy orders`, ordersPlaced: placed };
+  const message = placed > 0
+    ? `Placed ${placed}/${buyLevels.length} buy orders` + (errors.length > 0 ? ` (${errors.length} failed)` : "")
+    : `No orders placed. ${errors[0] || "All levels covered"}`;
+  return { success: placed > 0, message, ordersPlaced: placed };
 }
 
 export async function removeMarginFromGrid(strategy: Strategy, count: number): Promise<{ success: boolean; message: string; ordersCancelled: number; freedMargin: number }> {

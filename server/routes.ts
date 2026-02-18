@@ -197,6 +197,11 @@ export async function registerRoutes(
     });
     try {
       const updates = patchSchema.parse(req.body);
+      if (updates.config) {
+        const existing = await storage.getStrategy(id);
+        if (!existing) return res.status(404).json({ message: "Strategy not found" });
+        updates.config = { ...(existing.config as Record<string, any> || {}), ...updates.config };
+      }
       const updated = await storage.updateStrategy(id, updates);
       if (!updated) return res.status(404).json({ message: "Strategy not found" });
       res.json(updated);

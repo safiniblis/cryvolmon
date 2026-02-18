@@ -2204,6 +2204,12 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
 
   const capitalPerSide = (config.totalCapital || 100) / 2;
 
+  const cascadePortions = [3/7, 2/7, 1/7];
+  const cascadeTargetPcts = [0, 0.01, 0.02];
+  const cascadeLabels = ["immediate recovery", "1% beyond liq", "2% beyond liq"];
+  const TOTAL_CASCADE_STEPS = 3;
+  const TRAILING_PULLBACK = 0.003;
+
   if (!survivingPos) {
     console.log(`[Tandem ${strategy.id}] Surviving position gone (liquidated during cascade)`);
     await stopChildGrids(config);
@@ -2240,20 +2246,29 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
 
   const cascadeStep = config.cascadeStep || 0;
 
-  if (cascadeStep < 3) {
-    const targetPct = (cascadeStep + 1) * 0.01;
+  if (cascadeStep < TOTAL_CASCADE_STEPS) {
+    const targetPct = cascadeTargetPcts[cascadeStep];
 
     if (moveBeyondLiq >= targetPct) {
       const originalQty = config.longEntryQty || config.shortEntryQty || config.remainingQty;
-      const portionQty = originalQty * (2 / 7);
+      const portionQty = originalQty * cascadePortions[cascadeStep];
       const sellQty = Math.min(portionQty, currentQty);
       const qtyStr = roundQty(sellQty, precision.basePrecision);
 
       if (sellQty < precision.minTradeVolume) {
         console.log(`[Tandem ${strategy.id}] Cascade step ${cascadeStep + 1} qty too small (${sellQty}), skipping`);
+        const newStep = cascadeStep + 1;
+        await storage.updateStrategy(strategy.id, {
+          config: {
+            ...config,
+            cascadeStep: newStep,
+            phase: newStep >= TOTAL_CASCADE_STEPS ? "trailing" : "cascade",
+            lastActionAt: Date.now(),
+          },
+        });
       } else {
         const closeSide = survivingSide === "LONG" ? "SELL" : "BUY";
-        console.log(`[Tandem ${strategy.id}] CASCADE TP ${cascadeStep + 1}/3: ${closeSide} ${qtyStr} @ MARKET (move=${(moveBeyondLiq * 100).toFixed(2)}% beyond liq)`);
+        console.log(`[Tandem ${strategy.id}] CASCADE ${cascadeStep + 1}/${TOTAL_CASCADE_STEPS}: ${closeSide} ${qtyStr} (${(cascadePortions[cascadeStep] * 100).toFixed(0)}%) @ MARKET — ${cascadeLabels[cascadeStep]} (move=${(moveBeyondLiq * 100).toFixed(2)}%)`);
 
         try {
           const result = await client.placeOrder({
@@ -2277,7 +2292,7 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
                 cascadeStep: newStep,
                 remainingQty: newRemainingQty,
                 highWatermark: currentPrice,
-                phase: newStep >= 3 ? "trailing" : "cascade",
+                phase: newStep >= TOTAL_CASCADE_STEPS ? "trailing" : "cascade",
                 lastActionAt: Date.now(),
               },
               totalPnl: (strategy.totalPnl || 0) + exitPnl,
@@ -2293,10 +2308,10 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
               status: "filled",
               orderId: result.data?.orderId || null,
               pnl: exitPnl,
-              errorMsg: `Tandem cascade TP ${newStep}/3 (${(targetPct * 100).toFixed(0)}% beyond liq)`,
+              errorMsg: `Tandem cascade ${newStep}/${TOTAL_CASCADE_STEPS}: ${cascadeLabels[cascadeStep]} (${(cascadePortions[cascadeStep] * 7).toFixed(0)}/7)`,
             });
 
-            console.log(`[Tandem ${strategy.id}] Cascade TP ${newStep}/3 filled: pnl=${exitPnl.toFixed(4)}, remaining=${newRemainingQty.toFixed(precision.basePrecision)}`);
+            console.log(`[Tandem ${strategy.id}] Cascade ${newStep}/${TOTAL_CASCADE_STEPS} filled: pnl=${exitPnl.toFixed(4)}, remaining=${newRemainingQty.toFixed(precision.basePrecision)}`);
           } else {
             console.error(`[Tandem ${strategy.id}] Cascade TP failed: ${result?.msg}`);
           }
@@ -2305,7 +2320,7 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
         }
       }
     } else {
-      console.log(`[Tandem ${strategy.id}] Cascade waiting: step ${cascadeStep + 1} needs ${((cascadeStep + 1) * 1).toFixed(0)}% move, current=${(moveBeyondLiq * 100).toFixed(2)}%`);
+      console.log(`[Tandem ${strategy.id}] Cascade waiting: step ${cascadeStep + 1} needs ${(targetPct * 100).toFixed(0)}% move, current=${(moveBeyondLiq * 100).toFixed(2)}%`);
     }
   }
 }
@@ -2343,9 +2358,10 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
     ? (hwm - currentPrice) / hwm
     : (currentPrice - hwm) / hwm;
 
-  console.log(`[Tandem ${strategy.id}] Trailing: price=${currentPrice.toFixed(4)} hwm=${hwm.toFixed(4)} drop=${(trailingDrop * 100).toFixed(3)}% (trigger=0.5%)`);
+  const TRAILING_TRIGGER = 0.003;
+  console.log(`[Tandem ${strategy.id}] Trailing 1/7: price=${currentPrice.toFixed(4)} hwm=${hwm.toFixed(4)} drop=${(trailingDrop * 100).toFixed(3)}% (trigger=${(TRAILING_TRIGGER * 100).toFixed(1)}%)`);
 
-  if (trailingDrop >= 0.005) {
+  if (trailingDrop >= TRAILING_TRIGGER) {
     const survivingGridId = config.survivingSide === "LONG" ? config.longGridId : config.shortGridId;
     if (survivingGridId) {
       try { await storage.updateStrategy(survivingGridId, { status: "stopped" }); } catch {}
@@ -2385,7 +2401,7 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
           status: "filled",
           orderId: result.data?.orderId || null,
           pnl: exitPnl,
-          errorMsg: `Tandem trailing stop (0.5% pullback from ${hwm.toFixed(4)})`,
+          errorMsg: `Tandem trailing stop 1/7 (0.3% pullback from HWM ${hwm.toFixed(4)})`,
         });
 
         console.log(`[Tandem ${strategy.id}] Trailing close: pnl=${exitPnl.toFixed(4)}`);
@@ -3085,7 +3101,10 @@ export function simulateTandem(
     const cascadeExits: TandemCycle["cascadeExits"] = [];
     let cascadePnl = 0;
     let remainingQty = posQty;
-    const portions = [2 / 7, 2 / 7, 2 / 7, 1 / 7];
+    const portions = [3 / 7, 2 / 7, 1 / 7];
+    const targetPcts = [0, 0.01, 0.02];
+    const TOTAL_STEPS = 3;
+    const TRAILING_PULLBACK_SIM = 0.003;
     let cascadeStep = 0;
     const cascadeStartPrice = liquidationPrice;
     let highWatermark = liquidationPrice;
@@ -3116,31 +3135,30 @@ export function simulateTandem(
         highWatermark = Math.min(highWatermark, price);
       }
 
-      if (cascadeStep < 3) {
+      if (cascadeStep < TOTAL_STEPS) {
         const moveBeyondLiq = survivingSide === "LONG"
           ? (price - cascadeStartPrice) / cascadeStartPrice
           : (cascadeStartPrice - price) / cascadeStartPrice;
-        const targetPct = (cascadeStep + 1) * 0.01;
 
-        if (moveBeyondLiq >= targetPct) {
+        if (moveBeyondLiq >= targetPcts[cascadeStep]) {
           const sellQty = posQty * portions[cascadeStep];
           const exitPnl = profitPerUnit * sellQty - sellQty * price * feeRate;
           cascadePnl += exitPnl;
           remainingQty -= sellQty;
           cascadeExits.push({ percent: cascadeStep + 1, price, pnl: exitPnl });
           cascadeStep++;
-          if (cascadeStep >= 3) {
+          if (cascadeStep >= TOTAL_STEPS) {
             highWatermark = price;
           }
         }
       }
 
-      if (cascadeStep >= 3) {
+      if (cascadeStep >= TOTAL_STEPS) {
         const trailingDrop = survivingSide === "LONG"
           ? (highWatermark - price) / highWatermark
           : (price - highWatermark) / highWatermark;
 
-        if (trailingDrop >= 0.005) {
+        if (trailingDrop >= TRAILING_PULLBACK_SIM) {
           const profitPerUnitNow = direction * (price - entryPrice);
           const exitPnl = profitPerUnitNow * remainingQty - remainingQty * price * feeRate;
           cascadePnl += exitPnl;

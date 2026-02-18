@@ -125,8 +125,8 @@ A full-stack cryptocurrency trading platform with two main features:
 - **Entry**: Creates 2 child grid strategies (LONG grid + SHORT grid), each with 50% of totalCapital
 - **Child grids**: Run as independent grid bots via the normal strategy cycle engine
 - **Waiting**: Polls getPositions every 15s; detects liquidation when one side's position disappears
-- **Cascade**: Stops liquidated child grid; market-closes 2/7 of survivor qty at 1%, 2%, 3% beyond liquidation price
-- **Trailing**: Tracks high watermark, closes remaining 1/7 on 0.5% pullback
+- **Cascade**: Stops liquidated child grid; step 0: immediate market-close 3/7 (recover liq cost), step 1: close 2/7 at +1%, step 2: close 1/7 at +2%
+- **Trailing**: Tracks high watermark, closes remaining 1/7 on 0.3% pullback (tight since recovery already secured)
 - **Complete**: Cleans up orders/positions, optionally rotates pair, resets to entry for next cycle
 - **Config**: Stored in strategy.config JSON (TandemConfig interface) — totalCapital, longGridId, shortGridId
 - **API route**: `POST /api/strategies/tandem-start` (symbol, totalCapital, leverage, rotationEnabled)
@@ -143,6 +143,7 @@ A full-stack cryptocurrency trading platform with two main features:
 - Endpoint: GET /api/grid/leverage-analysis — full table of leverage vs grids vs ROI
 
 ## Recent Changes
+- 2026-02-18: Cascade redesign: 3/7 immediate close at liquidation (recover cost), 2/7 at +1%, 1/7 at +2%, trail 1/7 at 0.3% pullback. Simulation engine updated to match.
 - 2026-02-18: Dynamic rebalancing: tandem trims larger side when positions diverge >10% (or >5% if liq is close), escalating cooldown (2→4→8→15min), 50% partial trim (75% if urgent), price velocity gate skips rebalance during fast moves (>0.5%), resets when balanced
 - 2026-02-18: Fixed tandem budget leak: grid orders now subtract position margin from allocatedBudget so total (position + orders) never exceeds per-side budget
 - 2026-02-18: Leverage optimization: tandem fee multiplier 4.0x→3.5x (gap 0.42%), grid stats preview in UI, leverage analysis endpoint

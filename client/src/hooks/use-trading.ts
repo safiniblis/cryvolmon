@@ -21,6 +21,8 @@ export function useVolatilityScores() {
     riskGauge: number;
     currentPrice: number;
     bitunixSymbol: string;
+    score4h: number;
+    priceChange24h: number;
   }[]>({
     queryKey: ["/api/volatility/scores"],
     refetchInterval: 60000,
@@ -295,6 +297,26 @@ export function useRemoveMargin() {
     },
     onError: (e: Error) => {
       toast({ title: "Remove Margin Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useManualRotation() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ id, newSymbol }: { id: number; newSymbol: string }) => {
+      const res = await apiRequest("POST", `/api/strategies/${id}/rotate`, { newSymbol });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account"] });
+      toast({ title: "Rotation Started", description: data.message });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Rotation Failed", description: e.message, variant: "destructive" });
     },
   });
 }

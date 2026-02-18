@@ -95,7 +95,7 @@ async function getTickerPrice(symbol: string): Promise<TickerData | null> {
 
 export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0.0006) {
   const roundTripFee = 2 * feeRate;
-  const targetProfitFeeRatio = 2.5;
+  const targetProfitFeeRatio = 4.0;
   const baseGridRatio = 1 + targetProfitFeeRatio * roundTripFee;
 
   const gapGrowthBelow = 1.05;
@@ -462,7 +462,7 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
-  const minProfitableGap = roundTripFee * 2.5;
+  const minProfitableGap = roundTripFee * 4.0;
 
   const buyLevels = levels.filter(l => l < currentPrice && l >= bandLow).reverse();
 
@@ -1386,6 +1386,28 @@ export interface VolatilityScore {
   riskGauge: number;
   currentPrice: number;
   bitunixSymbol: string;
+  score4h: number;
+  priceChange24h: number;
+}
+
+function computeSwings(history: { timestamp: number; price: number }[], startIdx: number = 0) {
+  let swings1to5 = 0;
+  let largeSwingsUp = 0;
+  let largeSwingsDown = 0;
+  for (let i = Math.max(startIdx, 1); i < history.length; i++) {
+    const prev = history[i - 1].price;
+    const curr = history[i].price;
+    if (!prev) continue;
+    const changePct = ((curr - prev) / prev) * 100;
+    const absChange = Math.abs(changePct);
+    if (absChange >= 1 && absChange <= 5) {
+      swings1to5++;
+    } else if (absChange > 5) {
+      if (changePct > 0) largeSwingsUp++;
+      else largeSwingsDown++;
+    }
+  }
+  return { swings1to5, largeSwingsUp, largeSwingsDown };
 }
 
 export function computeVolatilityScores(
@@ -1397,28 +1419,20 @@ export function computeVolatilityScores(
     const history = coin.priceHistory;
     if (!history || history.length < 2) continue;
 
-    let swings1to5 = 0;
-    let largeSwingsUp = 0;
-    let largeSwingsDown = 0;
+    const full = computeSwings(history);
 
-    for (let i = 1; i < history.length; i++) {
-      const prev = history[i - 1].price;
-      const curr = history[i].price;
-      if (!prev) continue;
-      const changePct = ((curr - prev) / prev) * 100;
-      const absChange = Math.abs(changePct);
+    const now = Date.now();
+    const fourHoursAgo = now - 4 * 60 * 60 * 1000;
+    const idx4h = history.findIndex(h => h.timestamp >= fourHoursAgo);
+    const swings4h = idx4h >= 1 ? computeSwings(history, idx4h) : { swings1to5: 0, largeSwingsUp: 0, largeSwingsDown: 0 };
 
-      if (absChange >= 1 && absChange <= 5) {
-        swings1to5++;
-      } else if (absChange > 5) {
-        if (changePct > 0) largeSwingsUp++;
-        else largeSwingsDown++;
-      }
-    }
+    const oldestPrice = history[0]?.price || 0;
+    const latestPrice = history[history.length - 1]?.price || coin.currentPrice || 0;
+    const priceChange24h = oldestPrice > 0 ? ((latestPrice - oldestPrice) / oldestPrice) * 100 : 0;
 
-    const riskGauge = largeSwingsDown > 0
-      ? largeSwingsUp / largeSwingsDown
-      : (largeSwingsUp > 0 ? 10 : 1);
+    const riskGauge = full.largeSwingsDown > 0
+      ? full.largeSwingsUp / full.largeSwingsDown
+      : (full.largeSwingsUp > 0 ? 10 : 1);
 
     const sym = coin.symbol.toUpperCase();
     const bitunixSymbol = sym + "USDT";
@@ -1426,13 +1440,15 @@ export function computeVolatilityScores(
     scores.push({
       symbol: coin.symbol,
       name: coin.name,
-      score: swings1to5,
-      swings1to5,
-      largeSwingsUp,
-      largeSwingsDown,
+      score: full.swings1to5,
+      swings1to5: full.swings1to5,
+      largeSwingsUp: full.largeSwingsUp,
+      largeSwingsDown: full.largeSwingsDown,
       riskGauge,
       currentPrice: coin.currentPrice || 0,
       bitunixSymbol,
+      score4h: swings4h.swings1to5,
+      priceChange24h,
     });
   }
 

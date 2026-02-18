@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier, executePairRotation } from "./strategy-engine";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -628,6 +628,26 @@ export async function registerRoutes(
         }))
       );
       res.json(scores);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // === Manual Pair Rotation ===
+  const rotateSchema = z.object({ newSymbol: z.string().min(1).max(20) });
+  app.post("/api/strategies/:id/rotate", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const parsed = rotateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "newSymbol required (string)" });
+      const { newSymbol } = parsed.data;
+
+      const strategy = await storage.getStrategy(id);
+      if (!strategy) return res.status(404).json({ message: "Strategy not found" });
+      if (strategy.status !== "running") return res.status(400).json({ message: "Strategy must be running to rotate" });
+
+      await executePairRotation(strategy, newSymbol, `Manual rotation to ${newSymbol}`);
+      res.json({ success: true, message: `Rotating to ${newSymbol}` });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }

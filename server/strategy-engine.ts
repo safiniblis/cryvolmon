@@ -1540,21 +1540,29 @@ export async function runStrategyCycle() {
       try {
         console.log(`[Strategy ${strategy.id}] Executing ${strategy.name} (${strategy.symbol})`);
         await executor(strategy);
+        (strategy as any)._consecutiveErrors = 0;
       } catch (e: any) {
-        console.error(`Error executing strategy ${strategy.id} (${strategy.name}):`, e.message);
-        await storage.updateStrategy(strategy.id, { status: "error" });
-        await storage.createTradeLog({
-          strategyId: strategy.id,
-          symbol: strategy.symbol,
-          side: "BUY",
-          orderType: "MARKET",
-          quantity: 0,
-          price: null,
-          status: "error",
-          orderId: null,
-          pnl: null,
-          errorMsg: e.message,
-        });
+        const errorCount = ((strategy as any)._consecutiveErrors || 0) + 1;
+        (strategy as any)._consecutiveErrors = errorCount;
+        console.error(`Error executing strategy ${strategy.id} (${strategy.name}) [${errorCount}/5]:`, e.message);
+        if (errorCount >= 5) {
+          await storage.updateStrategy(strategy.id, { status: "error" });
+          await storage.createTradeLog({
+            strategyId: strategy.id,
+            symbol: strategy.symbol,
+            side: "BUY",
+            orderType: "MARKET",
+            quantity: 0,
+            price: null,
+            status: "error",
+            orderId: null,
+            pnl: null,
+            errorMsg: `${errorCount} consecutive errors: ${e.message}`,
+          });
+        } else {
+          console.log(`[Strategy ${strategy.id}] Will retry next cycle (${errorCount}/5 before error state)`);
+          try { await storage.updateStrategy(strategy.id, { lastRunAt: new Date() }); } catch {}
+        }
       }
     }
   } finally {

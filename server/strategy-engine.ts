@@ -608,8 +608,9 @@ async function executeGridStrategy(strategy: Strategy) {
   } catch {}
 
   let allocatedBudget = config.allocatedBudget || 0;
+  const isTandemChildBudget = !!(config as any).parentTandemId;
 
-  if (allocatedBudget > 0) {
+  if (allocatedBudget > 0 && !isTandemChildBudget) {
     const lastTrackedPnl = config.lastTrackedPnl ?? 0;
     const lastTrackedPositionId = config.lastTrackedPositionId || null;
 

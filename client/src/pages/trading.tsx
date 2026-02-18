@@ -355,6 +355,7 @@ function StrategyCard({ s }: { s: Strategy }) {
     { label: "Gap Shrink Above", value: `${cfg.gapShrinkAbove || 1}x` },
     { label: "Extensions", value: `${cfg.extensionsBelow || 0} below / ${cfg.extensionsAbove || 0} above` },
     { label: "Pair Rotation", value: cfg.rotationEnabled ? "Enabled" : "Disabled" },
+    ...(cfg.allocatedBudget ? [{ label: "Budget Cap", value: `$${Number(cfg.allocatedBudget).toFixed(2)}` }] : []),
   ] : Object.entries(cfg).map(([key, val]) => ({ label: key, value: String(val) }));
 
   return (

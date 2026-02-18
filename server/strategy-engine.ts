@@ -245,6 +245,7 @@ export interface GridConfig {
   gridsBelow: number;
   extensionsBelow: number;
   extensionsAbove: number;
+  allocatedBudget?: number;
   lastTpEntryPrice?: number;
   lastTpPositionQty?: number;
   lastTpPlacedAt?: number;
@@ -333,11 +334,10 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
 
     if (success) {
       config.allocatedBudget = available;
-      config.budgetUsed = available;
       console.log(`[InitialBuy ${strategy.id}] Set allocatedBudget=${available.toFixed(2)} USDT`);
       await storage.updateStrategy(strategy.id, {
         totalTrades: (strategy.totalTrades || 0) + 1,
-        config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid, allocatedBudget: config.allocatedBudget, budgetUsed: config.budgetUsed },
+        config: { ...config, initialBuyDone: true, startPrice: currentPrice, lowerPrice: config.lowerPrice, upperPrice: config.upperPrice, liquidationPrice: config.liquidationPrice, amountPerGrid: config.amountPerGrid, allocatedBudget: config.allocatedBudget },
       });
 
       let remainingBalance = 0;
@@ -540,12 +540,10 @@ async function executeGridStrategy(strategy: Strategy) {
   } catch {}
 
   const allocatedBudget = config.allocatedBudget || 0;
-  const budgetUsed = config.budgetUsed || 0;
-  const budgetRemaining = Math.max(0, allocatedBudget - budgetUsed);
-  const availableBalance = Math.min(accountAvailable, budgetRemaining);
+  const availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, allocatedBudget) : accountAvailable;
 
-  if (allocatedBudget > 0 && accountAvailable > budgetRemaining + 0.5) {
-    console.log(`[Grid ${strategy.id}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, used=${budgetUsed.toFixed(2)}, remaining=${budgetRemaining.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
+  if (allocatedBudget > 0 && accountAvailable > allocatedBudget + 0.5) {
+    console.log(`[Grid ${strategy.id}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
   }
 
   const lastTpPosQty = config.lastTpPositionQty || 0;
@@ -595,9 +593,6 @@ async function executeGridStrategy(strategy: Strategy) {
       if (result?.code === 0 && result.data?.orderId) {
         placedBuys++;
         availableBalance -= effectiveMargin;
-        if (config.allocatedBudget) {
-          config.budgetUsed = (config.budgetUsed || 0) + effectiveMargin;
-        }
       } else {
         console.error(`[Grid ${strategy.id}] BUY failed @ ${priceStr}: ${result?.msg}`);
       }
@@ -739,14 +734,10 @@ async function executeGridStrategy(strategy: Strategy) {
   }
 
   const tpUpperBound = config.upperPrice ? config.upperPrice.toFixed(precision.quotePrecision) : bandHigh.toFixed(precision.quotePrecision);
-  const budgetInfo = config.allocatedBudget ? ` | Budget=${config.allocatedBudget.toFixed(2)}/Used=${(config.budgetUsed || 0).toFixed(2)}` : "";
+  const budgetInfo = config.allocatedBudget ? ` | Budget=${config.allocatedBudget.toFixed(2)}` : "";
   console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${currentPrice.toFixed(precision.quotePrecision)}-${tpUpperBound}] | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}(+${placedTps}/-${cancelledTps}) | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
 
-  if (placedBuys > 0 && config.allocatedBudget) {
-    await storage.updateStrategy(strategy.id, { config, lastRunAt: new Date() });
-  } else {
-    await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
-  }
+  await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 }
 
 async function executeDCAStrategy(strategy: Strategy) {
@@ -1593,9 +1584,8 @@ export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): P
 
   if (placed > 0) {
     config.allocatedBudget = (config.allocatedBudget || 0) + amountUsdt;
-    config.budgetUsed = (config.budgetUsed || 0) + amountUsdt;
     await storage.updateStrategy(strategy.id, { config });
-    console.log(`[AddMargin ${strategy.id}] Budget updated: allocated=${config.allocatedBudget.toFixed(2)}, used=${config.budgetUsed.toFixed(2)}`);
+    console.log(`[AddMargin ${strategy.id}] Budget updated: allocated=${config.allocatedBudget.toFixed(2)}`);
   }
 
   const message = placed > 0
@@ -1657,9 +1647,8 @@ export async function removeMarginFromGrid(strategy: Strategy, count: number): P
 
       if (config.allocatedBudget && freedMargin > 0) {
         config.allocatedBudget = Math.max(0, (config.allocatedBudget || 0) - freedMargin);
-        config.budgetUsed = Math.max(0, (config.budgetUsed || 0) - freedMargin);
         await storage.updateStrategy(strategy.id, { config });
-        console.log(`[RemoveMargin ${strategy.id}] Budget updated: allocated=${config.allocatedBudget.toFixed(2)}, used=${config.budgetUsed.toFixed(2)}`);
+        console.log(`[RemoveMargin ${strategy.id}] Budget updated: allocated=${config.allocatedBudget.toFixed(2)}`);
       }
     }
   } catch (e: any) {

@@ -792,7 +792,7 @@ async function executeGridStrategy(strategy: Strategy) {
   }
 
   const budgetInfo = config.allocatedBudget ? ` | Budget=${config.allocatedBudget.toFixed(2)}` : "";
-  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${minTpPrice.toFixed(precision.quotePrecision)}-${tpUpperLimit.toFixed(precision.quotePrecision)}] step=${tpStep.toFixed(precision.quotePrecision)} | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}/${allSellLevels.length}(+${placedTps}/-${cancelledTps}) maxByQty=${maxTpLevels} | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
+  console.log(`[Grid ${strategy.id}] Price=${currentPrice.toFixed(precision.quotePrecision)} | BuyBand=[${bandLow.toFixed(precision.quotePrecision)}-${currentPrice.toFixed(precision.quotePrecision)}] TpRange=[${minTpPrice.toFixed(precision.quotePrecision)}-${tpUpperLimit.toFixed(precision.quotePrecision)}] gap=${(minProfitableGap*100).toFixed(2)}% | Buys=${buyLevels.length}(live=${coveredBuyPrices.size}+${placedBuys}) TPs=${sellLevels.length}/${allSellLevels.length}(+${placedTps}/-${cancelledTps}) maxByQty=${maxTpLevels} | Cancelled=${ordersToCancel.length} | PosQty=${positionQty} | Avail=${availableBalance.toFixed(2)}${budgetInfo}`);
 
   await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
 }

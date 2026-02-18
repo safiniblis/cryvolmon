@@ -356,7 +356,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
         }
       } catch {}
 
-      const remainingBudget = Math.min(remainingBalance, budget - initialMargin);
+      const remainingBudget = Math.min(remainingBalance, budget - marginPerGrid);
       const gridMarginEach = gridBuyCount > 0 ? Math.max(0, remainingBudget) / gridBuyCount : marginPerGrid;
       console.log(`[InitialBuy ${strategy.id}] Now placing ${gridBuyCount} limit BUY orders within 1% below entry... (remainingBudget=${remainingBudget.toFixed(2)}, marginEach=${gridMarginEach.toFixed(4)} USDT)`);
       let placed = 0;

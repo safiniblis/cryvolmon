@@ -1874,6 +1874,35 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
 }
 
 async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, client: any) {
+  const timeSinceEntry = Date.now() - (config.lastActionAt || 0);
+  const GRACE_PERIOD_MS = 120_000;
+
+  let longGridReady = false;
+  let shortGridReady = false;
+  if (config.longGridId) {
+    try {
+      const lg = await storage.getStrategy(config.longGridId);
+      if (lg) {
+        const lgCfg = lg.config as any;
+        longGridReady = !!lgCfg?.initialBuyDone;
+      }
+    } catch {}
+  }
+  if (config.shortGridId) {
+    try {
+      const sg = await storage.getStrategy(config.shortGridId);
+      if (sg) {
+        const sgCfg = sg.config as any;
+        shortGridReady = !!sgCfg?.initialBuyDone;
+      }
+    } catch {}
+  }
+
+  if ((!longGridReady || !shortGridReady) && timeSinceEntry < GRACE_PERIOD_MS) {
+    console.log(`[Tandem ${strategy.id}] Waiting for child grids to open initial positions (L=${longGridReady}, S=${shortGridReady}, ${Math.round(timeSinceEntry / 1000)}s elapsed)`);
+    return;
+  }
+
   const posRes = await client.getPositions(strategy.symbol);
   if (posRes?.code !== 0 || !Array.isArray(posRes.data)) {
     console.log(`[Tandem ${strategy.id}] Position fetch failed, retrying next cycle`);
@@ -1890,6 +1919,15 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
     if (posQty <= 0) continue;
     if (pos.side === "BUY") { longAlive = true; longPos = pos; }
     if (pos.side === "SELL") { shortAlive = true; shortPos = pos; }
+  }
+
+  if (!longGridReady || !shortGridReady) {
+    if (longAlive) longGridReady = true;
+    if (shortAlive) shortGridReady = true;
+    if (!longGridReady || !shortGridReady) {
+      console.log(`[Tandem ${strategy.id}] Child grids still initializing after grace period (L=${longGridReady}, S=${shortGridReady}), waiting...`);
+      return;
+    }
   }
 
   if (config.longEntryQty === 0 && longPos) {

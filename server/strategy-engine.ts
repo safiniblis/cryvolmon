@@ -668,9 +668,12 @@ async function executeGridStrategy(strategy: Strategy) {
   const missingGridLevels = gridLevels.filter(l => !coveredGridPrices.has(roundPrice(l, precision.quotePrecision)));
   const leverage = config.leverage || 8;
   const minMarginPerOrder = (precision.minTradeVolume * currentPrice) / (leverage * 0.95);
-  const marginPerOrder = missingGridLevels.length > 0
-    ? Math.max(minMarginPerOrder, (availableBalance - 0.1) / missingGridLevels.length)
-    : minMarginPerOrder;
+  const storedAmountPerGrid = config.amountPerGrid || 0;
+  const marginPerOrder = storedAmountPerGrid > minMarginPerOrder
+    ? storedAmountPerGrid
+    : (missingGridLevels.length > 0
+      ? Math.max(minMarginPerOrder, (availableBalance - 0.1) / Math.max(missingGridLevels.length, gridLevels.length))
+      : minMarginPerOrder);
   const usableBalance = availableBalance - 0.1;
 
   const levelsToFill = usableBalance >= minMarginPerOrder

@@ -327,6 +327,34 @@ function StrategyCard({ s }: { s: Strategy }) {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            {s.status === "running" && position && (
+              <div className="hidden sm:flex flex-col items-center gap-1 mr-2" data-testid={`pnl-meter-${s.id}`}>
+                <div className="relative w-12 h-12">
+                  <svg viewBox="0 0 36 36" className="w-12 h-12 -rotate-90">
+                    <circle
+                      cx="18" cy="18" r="15"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      className="text-border/30"
+                    />
+                    <circle
+                      cx="18" cy="18" r="15"
+                      fill="none"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeDasharray={`${Math.min(Math.abs(pnlPercent), 100) * 0.94} 94`}
+                      className={unrealizedPnl >= 0 ? "stroke-emerald-400" : "stroke-red-400"}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className={`text-[9px] font-bold font-mono ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {pnlPercent > 0 ? "+" : ""}{pnlPercent.toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="text-right hidden sm:block">
               <div className="text-sm font-mono">
                 <span className={`font-bold ${(s.totalPnl || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
@@ -338,7 +366,9 @@ function StrategyCard({ s }: { s: Strategy }) {
                   <span className={`font-bold ${unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                     {unrealizedPnl >= 0 ? "+" : ""}{pnlPercent.toFixed(2)}%
                   </span>
-                  <span className="text-muted-foreground ml-1">uPnL</span>
+                  <span className="text-muted-foreground ml-1">
+                    {unrealizedPnl >= 0 ? "+" : ""}{formatCurrency(unrealizedPnl)}
+                  </span>
                 </div>
               )}
               {!(s.status === "running" && position) && (

@@ -302,16 +302,23 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     if (!config.upperPrice) config.upperPrice = currentPrice * 1.02;
     if (!config.liquidationPrice) config.liquidationPrice = currentPrice * 0.88;
 
-    const marginPerGrid = budget / (totalGridCount + 1);
+    const minTpCount = 5;
+    const tpReserve = config.tpReservePct || 0.10;
+    const minInitialQty = (minTpCount * precision.minTradeVolume) / (1 - tpReserve);
+    const minInitialMargin = (minInitialQty * currentPrice) / (leverage * 0.95);
+    const initialBuyShare = Math.max(minInitialMargin, budget * 0.25);
+    const remainingForGrids = budget - initialBuyShare;
+    const marginPerGrid = totalGridCount > 0 ? remainingForGrids / totalGridCount : remainingForGrids;
     config.amountPerGrid = marginPerGrid;
-    const initialNotional = marginPerGrid * leverage * 0.95;
-    const baseQty = Math.max(initialNotional / currentPrice, precision.minTradeVolume);
+
+    const initialNotional = initialBuyShare * leverage * 0.95;
+    const baseQty = Math.max(initialNotional / currentPrice, minInitialQty);
     const qtyStr = roundQty(baseQty, precision.basePrecision);
 
     const buyLevelsIn1Pct = allBuyLevels.filter(l => l >= currentPrice * (1 - bandPct));
     const gridBuyCount = buyLevelsIn1Pct.length;
 
-    console.log(`[InitialBuy ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, totalGridLevels=${totalGridCount}, marginPerGrid=${marginPerGrid.toFixed(4)}, gridBuysIn1%=${gridBuyCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
+    console.log(`[InitialBuy ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, totalGridLevels=${totalGridCount}, initialBuyShare=${initialBuyShare.toFixed(2)}, marginPerGrid=${marginPerGrid.toFixed(4)}, gridBuysIn1%=${gridBuyCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, minInitialQty=${minInitialQty.toFixed(2)}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
 
     const result = await client.placeOrder({
       symbol: strategy.symbol,
@@ -356,7 +363,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
         }
       } catch {}
 
-      const remainingBudget = Math.min(remainingBalance, budget - marginPerGrid);
+      const remainingBudget = Math.min(remainingBalance, budget - initialBuyShare);
       const gridMarginEach = gridBuyCount > 0 ? Math.max(0, remainingBudget) / gridBuyCount : marginPerGrid;
       console.log(`[InitialBuy ${strategy.id}] Now placing ${gridBuyCount} limit BUY orders within 1% below entry... (remainingBudget=${remainingBudget.toFixed(2)}, marginEach=${gridMarginEach.toFixed(4)} USDT)`);
       let placed = 0;

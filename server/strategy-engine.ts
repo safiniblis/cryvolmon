@@ -2960,19 +2960,42 @@ async function hedgePairEntry(strategy: Strategy, config: HedgePairConfig, clien
   if (!ticker) return;
   const currentPrice = ticker.lastPrice;
   const precision = await getPairPrecision(strategy.symbol);
-  const leverage = config.leverage || 100;
+  let requestedLeverage = config.leverage || 100;
 
   try { await client.setMarginMode(strategy.symbol, "ISOLATION"); } catch (e: any) {
     console.log(`[${tag}] Margin mode note:`, e.message);
   }
-  try { await client.setLeverage(strategy.symbol, leverage); } catch (e: any) {
+  try { await client.setLeverage(strategy.symbol, requestedLeverage); } catch (e: any) {
     console.log(`[${tag}] Leverage note:`, e.message);
   }
 
+  let actualLeverage = requestedLeverage;
+  try {
+    const levRes = await client.getLeverageMarginMode(strategy.symbol);
+    if (levRes?.code === 0 && levRes.data) {
+      const reportedLev = parseInt(levRes.data.leverage || levRes.data.longLeverage || "0");
+      if (reportedLev > 0) {
+        actualLeverage = reportedLev;
+        if (actualLeverage !== requestedLeverage) {
+          console.log(`[${tag}] Exchange capped leverage: requested ${requestedLeverage}x, got ${actualLeverage}x`);
+        }
+      }
+    }
+  } catch (e: any) {
+    console.log(`[${tag}] Could not verify leverage, using requested ${requestedLeverage}x`);
+  }
+
+  const leverage = actualLeverage;
   const capitalPerSide = config.capitalPerSide || 2;
   const notional = capitalPerSide * leverage;
   const qty = notional / currentPrice;
   const qtyStr = roundQty(qty, precision.basePrecision);
+
+  if (actualLeverage !== requestedLeverage) {
+    await storage.updateStrategy(strategy.id, {
+      config: { ...config, leverage: actualLeverage },
+    });
+  }
 
   console.log(`[${tag}] Opening LONG + SHORT: ${qtyStr} @ ${currentPrice.toFixed(precision.quotePrecision)}, ${leverage}x, $${capitalPerSide}/side`);
 

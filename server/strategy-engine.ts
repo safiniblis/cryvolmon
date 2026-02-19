@@ -520,12 +520,26 @@ async function executeGridStrategy(strategy: Strategy) {
     if (config.lowerPrice && config.upperPrice) {
       const oldMid = (config.lowerPrice + config.upperPrice) / 2;
       const drift = Math.abs(currentPrice - oldMid) / oldMid;
-      if (drift > 0.005) {
-        config.startPrice = currentPrice;
-        config.lowerPrice = newLower;
-        config.upperPrice = newUpper;
-        config.liquidationPrice = isShort ? currentPrice * (1 + liqDist) : currentPrice * (1 - liqDist);
-        await storage.updateStrategy(strategy.id, { config });
+      const lastRangeShift = (config as any).lastRangeShiftAt || 0;
+      const rangeShiftCooldown = 120_000;
+      const timeSinceShift = Date.now() - lastRangeShift;
+      const driftThreshold = 0.008;
+
+      if (drift > driftThreshold && timeSinceShift >= rangeShiftCooldown) {
+        const lastShiftPrice = (config as any).lastRangeShiftPrice || oldMid;
+        const priceVelocity = Math.abs(currentPrice - lastShiftPrice) / lastShiftPrice;
+        if (priceVelocity > 0.005 && timeSinceShift < rangeShiftCooldown * 3) {
+          (config as any).lastRangeShiftPrice = currentPrice;
+          await storage.updateStrategy(strategy.id, { config });
+        } else {
+          config.startPrice = currentPrice;
+          config.lowerPrice = newLower;
+          config.upperPrice = newUpper;
+          config.liquidationPrice = isShort ? currentPrice * (1 + liqDist) : currentPrice * (1 - liqDist);
+          (config as any).lastRangeShiftAt = Date.now();
+          (config as any).lastRangeShiftPrice = currentPrice;
+          await storage.updateStrategy(strategy.id, { config });
+        }
       }
     }
   }

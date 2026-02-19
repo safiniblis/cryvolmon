@@ -53,10 +53,14 @@ The application is built as a full-stack solution. The frontend is developed wit
 - Leverage-derived ranges: lower = price * (1 - 0.85/leverage), upper = price * (1 + 0.85/leverage)
 - Symmetric spacing: 1.05x growth per step
 - TP channel: geometrically spaced sell TPs up to 3% above current price
+- Full-position TP rebuild: when all TPs consumed, rebuilds for the entire position after 2-min cooldown (not just growth delta)
+- Trailing TP: tracks high watermark per grid, places/updates a trailing TP order on the reserve portion (default 0.5% pullback from HWM). Cancels and replaces when HWM advances. Only triggers when trail price is profitable vs entry.
 - Budget cap: allocatedBudget tracks capital per strategy, adjusts with PnL for standalone grids
 - Sweet spot: 25-40x leverage → 5-8 grids, each netting ~7-12% of margin per trade
 
 ## Recent Changes
+- 2026-02-19: Trailing TP: reserve portion (10%) now gets a trailing TP order that follows the high watermark (0.5% pullback default). Updates when price makes new highs, only triggers when profitable vs entry.
+- 2026-02-19: Full-position TP rebuild: when all TPs consumed, rebuilds TPs for the entire position (not just growth delta) after 2-min cooldown. Eliminates the gap where most of the position had zero TP coverage.
 - 2026-02-19: Configurable capital split: tandem now supports longWeight/shortWeight (default 4/7 long, 3/7 short) for asymmetric allocation matching crypto's upward bias
 - 2026-02-19: Grid order window: tandem child grids cap active orders to 6 closest to current price, preventing order accumulation at range extremes
 - 2026-02-19: Order sizing bias: soft rebalancing via gridSizeMultiplier — larger side gets smaller grid orders, smaller side gets larger orders, naturally converging positions toward target weight ratio

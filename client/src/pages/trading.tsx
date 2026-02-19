@@ -1040,6 +1040,8 @@ function TandemStartPanel() {
   const [capital, setCapital] = useState("100");
   const [leverage, setLeverage] = useState("33");
   const [rotation, setRotation] = useState(false);
+  const [longWeight, setLongWeight] = useState("4");
+  const [shortWeight, setShortWeight] = useState("3");
   const tandemStart = useTandemStart();
   const stopStrategy = useStopStrategy();
   const { data: strategies } = useStrategies();
@@ -1094,8 +1096,8 @@ function TandemStartPanel() {
               <p className="font-mono text-[11px] font-semibold">{cfg.leverage || 33}x</p>
             </div>
             <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-capital">
-              <p className="text-[9px] text-muted-foreground">Total $</p>
-              <p className="font-mono text-[11px] font-semibold">${cfg.totalCapital || (cfg.capitalPerSide ? cfg.capitalPerSide * 2 : 0)}</p>
+              <p className="text-[9px] text-muted-foreground">Capital (L/S)</p>
+              <p className="font-mono text-[11px] font-semibold">${cfg.totalCapital || 0} ({cfg.longWeight || 4}/{cfg.shortWeight || 3})</p>
             </div>
             {cfg.longGridId && (
               <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-grids">
@@ -1209,6 +1211,37 @@ function TandemStartPanel() {
             placeholder="33x"
           />
         </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] text-muted-foreground">Split:</span>
+          <Input
+            data-testid="input-tandem-long-weight"
+            type="number"
+            min="1"
+            max="10"
+            value={longWeight}
+            onChange={e => setLongWeight(e.target.value)}
+            className="w-12 text-xs font-mono"
+          />
+          <span className="text-[10px] text-muted-foreground">L /</span>
+          <Input
+            data-testid="input-tandem-short-weight"
+            type="number"
+            min="1"
+            max="10"
+            value={shortWeight}
+            onChange={e => setShortWeight(e.target.value)}
+            className="w-12 text-xs font-mono"
+          />
+          <span className="text-[10px] text-muted-foreground">S</span>
+          <span className="text-[9px] text-muted-foreground/60 ml-auto">
+            {(() => {
+              const lw = parseInt(longWeight) || 4;
+              const sw = parseInt(shortWeight) || 3;
+              const t = lw + sw;
+              return `L:${((lw / t) * 100).toFixed(0)}% S:${((sw / t) * 100).toFixed(0)}%`;
+            })()}
+          </span>
+        </div>
         {parseInt(leverage) >= 2 && (
           <div className="grid grid-cols-4 gap-1" data-testid="tandem-grid-stats">
             {(() => {
@@ -1256,6 +1289,8 @@ function TandemStartPanel() {
               totalCapital: parseFloat(capital),
               leverage: parseInt(leverage),
               rotationEnabled: rotation,
+              longWeight: parseInt(longWeight) || 4,
+              shortWeight: parseInt(shortWeight) || 3,
             })}
           >
             {tandemStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Zap className="h-3 w-3 mr-1" />}
@@ -1263,7 +1298,7 @@ function TandemStartPanel() {
           </Button>
         </div>
         <p className="text-[9px] text-muted-foreground/60">
-          L+S entry, wait liq, cascade 2/7 at 1%/2%/3%, trail 0.5%
+          L+S entry, weighted split, order window 6, cascade 3/7+2/7+1/7, trail 0.3%
         </p>
       </CardContent>
     </Card>

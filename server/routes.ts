@@ -599,8 +599,10 @@ export async function registerRoutes(
         totalCapital: z.number().min(10).default(100),
         leverage: z.number().min(2).max(125).default(33),
         rotationEnabled: z.boolean().default(false),
+        longWeight: z.number().min(1).max(10).default(4),
+        shortWeight: z.number().min(1).max(10).default(3),
       });
-      const { symbol, totalCapital, leverage, rotationEnabled } = schema.parse(req.body);
+      const { symbol, totalCapital, leverage, rotationEnabled, longWeight, shortWeight } = schema.parse(req.body);
 
       const client = getBitunixClient();
       if (!client) return res.status(400).json({ message: "API keys not configured" });
@@ -615,6 +617,8 @@ export async function registerRoutes(
           leverage,
           totalCapital,
           feeMultiplier: 3.5,
+          longWeight,
+          shortWeight,
           phase: "entry",
           entryPrice: 0,
           longGridId: null,

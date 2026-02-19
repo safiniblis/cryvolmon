@@ -562,9 +562,15 @@ async function executeGridStrategy(strategy: Strategy) {
     console.error(`[${tag}] Failed to fetch positions:`, e.message);
   }
 
-  const desiredGridPrices = new Set(gridLevels.map(l => roundPrice(l, precision.quotePrecision)));
-
   const isTandemChild = !!(config as any).parentTandemId;
+
+  const maxGridWindow = isTandemChild ? 6 : gridLevels.length;
+  const windowedGridLevels = gridLevels
+    .map(l => ({ level: l, dist: Math.abs(l - currentPrice) }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, maxGridWindow)
+    .map(g => g.level);
+  const desiredGridPrices = new Set(windowedGridLevels.map(l => roundPrice(l, precision.quotePrecision)));
   const ordersToCancel: string[] = [];
   const coveredGridPrices = new Set<string>();
 
@@ -666,7 +672,8 @@ async function executeGridStrategy(strategy: Strategy) {
     console.log(`[${tag}] TP hit detected: position ${lastTpPosQty} -> ${positionQty} (freed ${qtyFreed.toFixed(precision.basePrecision)} qty).`);
   }
 
-  const missingGridLevels = gridLevels.filter(l => !coveredGridPrices.has(roundPrice(l, precision.quotePrecision)));
+  const activeGridLevels = isTandemChild ? windowedGridLevels : gridLevels;
+  const missingGridLevels = activeGridLevels.filter(l => !coveredGridPrices.has(roundPrice(l, precision.quotePrecision)));
   const leverage = config.leverage || 8;
   const minMarginPerOrder = (precision.minTradeVolume * currentPrice) / (leverage * 0.95);
   const storedAmountPerGrid = config.amountPerGrid || 0;
@@ -686,9 +693,12 @@ async function executeGridStrategy(strategy: Strategy) {
     console.log(`[${tag}] No balance for grid orders: ${availableBalance.toFixed(2)} USDT (need ${minMarginPerOrder.toFixed(2)} min per grid)`);
   }
 
+  const gridSizeMultiplier = Math.max(0.5, Math.min(1.5, (config as any).gridSizeMultiplier || 1));
+
   let placedGrids = 0;
   for (const level of gridSlice) {
-    const effectiveMargin = Math.min(marginPerOrder, (availableBalance - 0.1) * 0.95);
+    const rawMargin = Math.min(marginPerOrder, (availableBalance - 0.1) * 0.95);
+    const effectiveMargin = Math.min(rawMargin * gridSizeMultiplier, (availableBalance - 0.1) * 0.95);
     if (effectiveMargin < minMarginPerOrder * 0.9) break;
     const notional = effectiveMargin * leverage * 0.95;
     const qtyBase = notional / level;
@@ -1749,6 +1759,8 @@ export interface TandemConfig {
   lastActionAt: number;
   rotationEnabled?: boolean;
   capitalPerSide?: number;
+  longWeight?: number;
+  shortWeight?: number;
   lastRebalanceAt?: number;
   rebalanceCount?: number;
   consecutiveRebalances?: number;
@@ -1855,7 +1867,11 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
     const currentPrice = ticker.lastPrice;
     const leverage = config.leverage || 33;
     const totalCapital = config.totalCapital || (config.capitalPerSide ? config.capitalPerSide * 2 : 100);
-    const capitalPerSide = totalCapital / 2;
+    const longWeight = config.longWeight || 4;
+    const shortWeight = config.shortWeight || 3;
+    const totalWeight = longWeight + shortWeight;
+    const longCapital = totalCapital * (longWeight / totalWeight);
+    const shortCapital = totalCapital * (shortWeight / totalWeight);
 
     const accountRes = await client.getAccount();
     if (accountRes?.code !== 0 || !accountRes?.data) throw new Error("Cannot fetch account balance");
@@ -1871,10 +1887,10 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
       console.log(`[Tandem ${strategy.id}] Leverage note:`, e.message);
     }
 
-    console.log(`[Tandem ${strategy.id}] Creating LONG + SHORT grid bots, total=${totalCapital}, ${capitalPerSide}/side, leverage=${leverage}x`);
+    console.log(`[Tandem ${strategy.id}] Creating LONG + SHORT grid bots, total=${totalCapital}, L=${longCapital.toFixed(1)}(${longWeight}/${totalWeight}) S=${shortCapital.toFixed(1)}(${shortWeight}/${totalWeight}), leverage=${leverage}x`);
 
     const fm = config.feeMultiplier || 3.5;
-    const longGridConfig = defaultGridConfigForSide("LONG", currentPrice, leverage, capitalPerSide, fm);
+    const longGridConfig = defaultGridConfigForSide("LONG", currentPrice, leverage, longCapital, fm);
     (longGridConfig as any).parentTandemId = strategy.id;
     const longGrid = await storage.createStrategy({
       name: `TL ${strategy.symbol}`,
@@ -1886,7 +1902,7 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
     });
     console.log(`[Tandem ${strategy.id}] LONG grid created: #${longGrid.id}`);
 
-    const shortGridConfig = defaultGridConfigForSide("SHORT", currentPrice, leverage, capitalPerSide, fm);
+    const shortGridConfig = defaultGridConfigForSide("SHORT", currentPrice, leverage, shortCapital, fm);
     (shortGridConfig as any).parentTandemId = strategy.id;
     const shortGrid = await storage.createStrategy({
       name: `TS ${strategy.symbol}`,
@@ -1936,7 +1952,7 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
       status: "filled",
       orderId: null,
       pnl: null,
-      errorMsg: `Tandem cycle ${updatedConfig.cycleCount}: LONG grid #${longGrid.id} + SHORT grid #${shortGrid.id} created (${capitalPerSide.toFixed(0)}/side)`,
+      errorMsg: `Tandem cycle ${updatedConfig.cycleCount}: LONG grid #${longGrid.id}(${longCapital.toFixed(0)}) + SHORT grid #${shortGrid.id}(${shortCapital.toFixed(0)}) created`,
     });
 
     console.log(`[Tandem ${strategy.id}] Cycle ${updatedConfig.cycleCount} started with grid bots #${longGrid.id} (LONG) + #${shortGrid.id} (SHORT) @ ${currentPrice}`);
@@ -2026,6 +2042,62 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
     const shortLiqDist = currentPrice > 0 && shortLiqPrice > 0 ? (shortLiqPrice - currentPrice) / currentPrice : 1;
 
     console.log(`[Tandem ${strategy.id}] Both alive @ ${currentPrice.toFixed(4)} | L=${longQty} liq=${longLiqPrice.toFixed(4)}(${(longLiqDist * 100).toFixed(1)}%) S=${shortQty} liq=${shortLiqPrice.toFixed(4)}(${(shortLiqDist * 100).toFixed(1)}%)`);
+
+    const longW = config.longWeight || 4;
+    const shortW = config.shortWeight || 3;
+    const totalW = longW + shortW;
+    const targetLongRatio = longW / totalW;
+    const totalQtyValue = longQty + shortQty;
+    const actualLongRatio = totalQtyValue > 0 ? longQty / totalQtyValue : targetLongRatio;
+    const divergence = actualLongRatio - targetLongRatio;
+    const absDivergence = Math.abs(divergence);
+
+    if (absDivergence > 0.03 && config.longGridId && config.shortGridId) {
+      const rebalFactor = Math.min(absDivergence * 4, 0.5);
+      const longMultiplier = divergence > 0 ? (1 - rebalFactor) : (1 + rebalFactor);
+      const shortMultiplier = divergence > 0 ? (1 + rebalFactor) : (1 - rebalFactor);
+
+      try {
+        const lg = await storage.getStrategy(config.longGridId);
+        const sg = await storage.getStrategy(config.shortGridId);
+        if (lg) {
+          const lgCfg = lg.config as any;
+          if (Math.abs((lgCfg.gridSizeMultiplier || 1) - longMultiplier) > 0.05) {
+            lgCfg.gridSizeMultiplier = longMultiplier;
+            await storage.updateStrategy(config.longGridId, { config: lgCfg });
+          }
+        }
+        if (sg) {
+          const sgCfg = sg.config as any;
+          if (Math.abs((sgCfg.gridSizeMultiplier || 1) - shortMultiplier) > 0.05) {
+            sgCfg.gridSizeMultiplier = shortMultiplier;
+            await storage.updateStrategy(config.shortGridId, { config: sgCfg });
+          }
+        }
+        console.log(`[Tandem ${strategy.id}] Order sizing bias: L×${longMultiplier.toFixed(2)} S×${shortMultiplier.toFixed(2)} (div=${(divergence * 100).toFixed(1)}% from target ${(targetLongRatio * 100).toFixed(0)}/${(100 - targetLongRatio * 100).toFixed(0)})`);
+      } catch (e: any) {
+        console.error(`[Tandem ${strategy.id}] Grid size multiplier update error:`, e.message);
+      }
+    } else if (absDivergence <= 0.03 && config.longGridId && config.shortGridId) {
+      try {
+        const lg = await storage.getStrategy(config.longGridId);
+        const sg = await storage.getStrategy(config.shortGridId);
+        if (lg) {
+          const lgCfg = lg.config as any;
+          if (lgCfg.gridSizeMultiplier && lgCfg.gridSizeMultiplier !== 1) {
+            lgCfg.gridSizeMultiplier = 1;
+            await storage.updateStrategy(config.longGridId, { config: lgCfg });
+          }
+        }
+        if (sg) {
+          const sgCfg = sg.config as any;
+          if (sgCfg.gridSizeMultiplier && sgCfg.gridSizeMultiplier !== 1) {
+            sgCfg.gridSizeMultiplier = 1;
+            await storage.updateStrategy(config.shortGridId, { config: sgCfg });
+          }
+        }
+      } catch {}
+    }
 
     const consecutiveRebalances = config.consecutiveRebalances || 0;
     const BASE_COOLDOWN_MS = 120_000;

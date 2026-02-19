@@ -19,7 +19,7 @@ The application is built as a full-stack solution. The frontend is developed wit
     - Includes dynamic extension of grid bounds as prices move.
     - Sell-side utilizes Bitunix's TP/SL API for Take Profit orders, geometrically spaced up to 3% above current price, with a configurable TP reserve.
     - Initial market buy logic calculates maximum affordable position with a 5% safety buffer.
-- **Tandem L/S Live Strategy:** A dual-grid bot system for simultaneous LONG and SHORT positions, each receiving 50% of total capital. It operates through a 5-phase state machine (entry, waiting_liquidation, cascade, trailing, complete, restart) with built-in liquidation recovery, reversal bail-out logic, and high-water mark trailing stops.
+- **Tandem L/S Live Strategy:** A dual-grid bot system for simultaneous LONG and SHORT positions with configurable capital split (default 4/7 long, 3/7 short). It operates through a 5-phase state machine (entry, waiting_liquidation, cascade, trailing, complete, restart) with built-in liquidation recovery, reversal bail-out logic, and high-water mark trailing stops.
 - **Budget Cap System:** Each strategy has an `allocatedBudget` for capital management, adjustable through manual 'Add Margin'/'Remove Margin' controls. Budget adjusts with PnL for standalone grids but is fixed for tandem child grids.
 - **Margin Adjustment Controls:** Allows users to add margin by placing new buy orders at uncovered grid levels or remove margin by canceling lowest-performing buy orders.
 - **Pair Rotation Logic:** Automatically switches trading pairs based on volatility scores and risk gauges, checking every 5 minutes.
@@ -34,7 +34,7 @@ The application is built as a full-stack solution. The frontend is developed wit
 
 ## Tandem L/S Strategy Details
 - **State machine**: entry → waiting_liquidation → cascade → trailing → complete → restart
-- **Entry**: Creates 2 child grid strategies (LONG grid + SHORT grid), each with 50% of totalCapital
+- **Entry**: Creates 2 child grid strategies (LONG grid + SHORT grid) with configurable weight split (default 4/7 long, 3/7 short)
 - **Child grids**: Run as independent grid bots via the normal strategy cycle engine
 - **Waiting**: Polls getPositions every 15s; detects liquidation when one side's position disappears
 - **Cascade**: Stops liquidated child grid; step 0: immediate market-close 3/7 (recover liq cost), step 1: close 2/7 at +1%, step 2: close 1/7 at +2%
@@ -45,6 +45,8 @@ The application is built as a full-stack solution. The frontend is developed wit
 - **API route**: `POST /api/strategies/tandem-start` (symbol, totalCapital, leverage, rotationEnabled)
 - **UI panel**: Shows live phase, cycle count, entry price, unrealized PnL, child grid IDs, liquidated/survivor sides, cascade progress, HWM, total PnL
 - **Rebalancing**: Dynamic position rebalancing during waiting_liquidation phase. Trims larger side when positions diverge >10% (or >5% if liq is close). Escalating cooldown (2→4→8→15min), partial trims (50% or 75% if urgent), price velocity gate (>0.5% move skips).
+- **Order sizing bias**: Soft rebalancing via gridSizeMultiplier — larger side gets smaller grid orders, smaller side gets larger orders, naturally converging positions toward target weight ratio.
+- **Grid order window**: Tandem child grids cap active orders to 6 closest to current price, preventing order accumulation at range extremes.
 
 ## Grid Strategy Details
 - Grid ratio: 1 + feeMultiplier * roundTripFee (default fm=3.5, gap ~0.42%)
@@ -55,6 +57,9 @@ The application is built as a full-stack solution. The frontend is developed wit
 - Sweet spot: 25-40x leverage → 5-8 grids, each netting ~7-12% of margin per trade
 
 ## Recent Changes
+- 2026-02-19: Configurable capital split: tandem now supports longWeight/shortWeight (default 4/7 long, 3/7 short) for asymmetric allocation matching crypto's upward bias
+- 2026-02-19: Grid order window: tandem child grids cap active orders to 6 closest to current price, preventing order accumulation at range extremes
+- 2026-02-19: Order sizing bias: soft rebalancing via gridSizeMultiplier — larger side gets smaller grid orders, smaller side gets larger orders, naturally converging positions toward target weight ratio
 - 2026-02-18: Reversal bail-out: if price crosses back past liquidation point after any cascade step, close remaining and restart fresh grids immediately. Prevents double-liquidation by catching trend breaks early.
 - 2026-02-18: Cascade redesign: 3/7 immediate at liq, 2/7 at +1%, 1/7 at +2%, trail 1/7 at 0.3% pullback. Simulation updated.
 - 2026-02-18: Dynamic rebalancing: tandem trims larger side when positions diverge >10% (or >5% if liq is close), escalating cooldown (2→4→8→15min), 50% partial trim (75% if urgent), price velocity gate

@@ -59,7 +59,8 @@ The application is built as a full-stack solution. The frontend is developed wit
 - Sweet spot: 25-40x leverage → 5-8 grids, each netting ~7-12% of margin per trade
 
 ## Recent Changes
-- 2026-02-19: Trailing TP: reserve portion (10%) now gets a trailing TP order that follows the high watermark (0.5% pullback default). Updates when price makes new highs, only triggers when profitable vs entry.
+- 2026-02-19: Tandem TP reserve raised from 10% to 65% — ensures enough position survives for cascade to offset twin liquidation loss. Simulation updated to reflect reserve-aware cascade qty.
+- 2026-02-19: Trailing TP: reserve portion now gets a trailing TP order that follows the high watermark (0.5% pullback default). Updates when price makes new highs, only triggers when profitable vs entry.
 - 2026-02-19: Full-position TP rebuild: when all TPs consumed, rebuilds TPs for the entire position (not just growth delta) after 2-min cooldown. Eliminates the gap where most of the position had zero TP coverage.
 - 2026-02-19: Configurable capital split: tandem now supports longWeight/shortWeight (default 4/7 long, 3/7 short) for asymmetric allocation matching crypto's upward bias
 - 2026-02-19: Grid order window: tandem child grids cap active orders to 6 closest to current price, preventing order accumulation at range extremes

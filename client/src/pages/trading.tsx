@@ -26,6 +26,7 @@ import {
   useManualRotation,
   useTandemSimulation,
   useTandemStart,
+  useHedgePairStart,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Wifi, WifiOff,
@@ -341,6 +342,18 @@ function StrategyCard({ s }: { s: Strategy }) {
     ...(cfg.highWatermark > 0 ? [{ label: "HWM", value: `$${Number(cfg.highWatermark).toFixed(4)}` }] : []),
     { label: "Rotation", value: cfg.rotationEnabled ? "On" : "Off" },
     { label: "Total PnL", value: `$${Number(cfg.totalPnl || 0).toFixed(2)}` },
+  ] : s.type === "hedge_pair" ? [
+    { label: "Phase", value: cfg.phase || "—" },
+    { label: "Leverage", value: `${cfg.leverage || 100}x` },
+    { label: "$/side", value: `$${cfg.capitalPerSide || 0}` },
+    { label: "Entry", value: cfg.entryPrice ? `$${Number(cfg.entryPrice).toFixed(4)}` : "—" },
+    { label: "Cycle", value: `#${cfg.cycleCount || 0}` },
+    ...(cfg.liquidatedSide ? [{ label: "Liq Side", value: cfg.liquidatedSide }] : []),
+    ...(cfg.survivingSide ? [{ label: "Survivor", value: cfg.survivingSide }] : []),
+    { label: "SL Buffer", value: `${((cfg.slBufferPct || 0.002) * 100).toFixed(1)}%` },
+    { label: "Auto", value: cfg.autoRestart ? "On" : "Off" },
+    { label: "Cycle PnL", value: `$${Number(cfg.cyclePnl || 0).toFixed(4)}` },
+    { label: "Total PnL", value: `$${Number(cfg.totalPnl || 0).toFixed(4)}` },
   ] : Object.entries(cfg).map(([key, val]) => ({ label: key, value: String(val) }));
 
   return (
@@ -365,6 +378,11 @@ function StrategyCard({ s }: { s: Strategy }) {
                 {s.type === "tandem" && cfg.phase && s.status === "running" && (
                   <Badge variant="secondary" className="text-[10px] bg-orange-500/20 text-orange-300 border-orange-500/30">
                     {phaseLabels[cfg.phase] || cfg.phase}
+                  </Badge>
+                )}
+                {s.type === "hedge_pair" && cfg.phase && s.status === "running" && (
+                  <Badge variant="secondary" className="text-[10px] bg-cyan-500/20 text-cyan-300 border-cyan-500/30">
+                    {cfg.phase === "entry" ? "Opening" : cfg.phase === "monitoring" ? "Watching" : cfg.phase === "cascade" ? "Cascade" : cfg.phase === "done" ? "Done" : cfg.phase}
                   </Badge>
                 )}
                 {cfg.leverage && <span className="text-[10px] text-yellow-300 font-mono">{cfg.leverage}x</span>}
@@ -1305,6 +1323,218 @@ function TandemStartPanel() {
   );
 }
 
+function HedgePairPanel() {
+  const { data: strategies } = useStrategies();
+  const { data: accountData } = useAccount();
+  const stopStrategy = useStopStrategy();
+  const hedgePairStart = useHedgePairStart();
+
+  const [symbol, setSymbol] = useState("XRPUSDT");
+  const [capitalPerSide, setCapitalPerSide] = useState("2");
+  const [leverage, setLeverage] = useState("100");
+  const [autoRestart, setAutoRestart] = useState(true);
+  const [slBuffer, setSlBuffer] = useState("0.2");
+
+  const runningHedge = strategies?.find((s: Strategy) => s.type === "hedge_pair" && s.status === "running");
+
+  if (runningHedge) {
+    const cfg = (runningHedge.config || {}) as any;
+    const phase = cfg.phase || "entry";
+    const liqDist = (1 / (cfg.leverage || 100) * 100).toFixed(2);
+
+    const hedgePhaseLabels: Record<string, string> = {
+      entry: "Opening L+S",
+      monitoring: "Watching",
+      cascade: "Cascade",
+      done: "Cycle Done",
+    };
+
+    return (
+      <Card className="bg-card/30 border-border/40">
+        <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Shield className="h-4 w-4 text-cyan-400" />
+            <span>{runningHedge.symbol}</span>
+            <Badge variant="secondary" className="text-[10px] bg-cyan-500/20 text-cyan-300 border-cyan-500/30">
+              {hedgePhaseLabels[phase] || phase}
+            </Badge>
+          </CardTitle>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => stopStrategy.mutate(runningHedge.id)}
+            disabled={stopStrategy.isPending}
+            data-testid="button-hedge-stop"
+          >
+            <Square className="h-3.5 w-3.5 text-red-400" />
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="hedge-leverage">
+              <p className="text-[9px] text-muted-foreground">Leverage</p>
+              <p className="font-mono text-[11px] font-semibold text-yellow-300">{cfg.leverage}x</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="hedge-capital">
+              <p className="text-[9px] text-muted-foreground">$/side</p>
+              <p className="font-mono text-[11px] font-semibold">${cfg.capitalPerSide}</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="hedge-cycle">
+              <p className="text-[9px] text-muted-foreground">Cycle</p>
+              <p className="font-mono text-[11px] font-semibold">#{cfg.cycleCount || 0}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="hedge-entry">
+              <p className="text-[9px] text-muted-foreground">Entry</p>
+              <p className="font-mono text-[11px] font-semibold">{cfg.entryPrice ? `$${Number(cfg.entryPrice).toFixed(4)}` : "..."}</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="hedge-liq-dist">
+              <p className="text-[9px] text-muted-foreground">Liq Dist</p>
+              <p className="font-mono text-[11px] font-semibold">{liqDist}%</p>
+            </div>
+          </div>
+          {cfg.liquidatedSide && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                <p className="text-[9px] text-muted-foreground">Liquidated</p>
+                <p className="font-mono text-[11px] font-semibold text-red-400">{cfg.liquidatedSide}</p>
+              </div>
+              <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                <p className="text-[9px] text-muted-foreground">Survivor</p>
+                <p className="font-mono text-[11px] font-semibold text-emerald-400">{cfg.survivingSide}</p>
+              </div>
+            </div>
+          )}
+          {cfg.tpOrderIds?.length > 0 && (
+            <div className="p-1.5 rounded border border-border/20 bg-card/20">
+              <p className="text-[9px] text-muted-foreground">TPs Active</p>
+              <p className="font-mono text-[11px] font-semibold">{cfg.tpOrderIds.length} orders ({cfg.cascadeTargetsPct?.map((t: number) => `+${(t*100).toFixed(1)}%`).join(", ")})</p>
+            </div>
+          )}
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/20">
+            <span>Cycle: <span className={`font-mono font-bold ${(cfg.cyclePnl || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>{formatCurrency(cfg.cyclePnl || 0)}</span></span>
+            <span>Total: <span className={`font-mono font-bold ${(cfg.totalPnl || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>{formatCurrency(cfg.totalPnl || 0)}</span></span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="bg-card/30 border-border/40">
+      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Shield className="h-4 w-4 text-cyan-400" />
+          Hedge Pair
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            data-testid="input-hedge-symbol"
+            value={symbol}
+            onChange={e => setSymbol(e.target.value.toUpperCase())}
+            className="w-28 text-xs font-mono"
+            placeholder="XRPUSDT"
+          />
+          <Input
+            data-testid="input-hedge-capital"
+            type="number"
+            min="0.5"
+            step="0.5"
+            value={capitalPerSide}
+            onChange={e => setCapitalPerSide(e.target.value)}
+            className="w-16 text-xs font-mono"
+            placeholder="$/side"
+          />
+          <Input
+            data-testid="input-hedge-leverage"
+            type="number"
+            min="10"
+            max="125"
+            value={leverage}
+            onChange={e => setLeverage(e.target.value)}
+            className="w-16 text-xs font-mono"
+            placeholder="100x"
+          />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] text-muted-foreground">SL Buffer:</span>
+          <Input
+            data-testid="input-hedge-sl-buffer"
+            type="number"
+            min="0.1"
+            max="5"
+            step="0.1"
+            value={slBuffer}
+            onChange={e => setSlBuffer(e.target.value)}
+            className="w-16 text-xs font-mono"
+          />
+          <span className="text-[10px] text-muted-foreground">%</span>
+        </div>
+        {parseInt(leverage) >= 10 && (
+          <div className="grid grid-cols-3 gap-1" data-testid="hedge-stats-preview">
+            {(() => {
+              const lev = parseInt(leverage) || 100;
+              const cap = parseFloat(capitalPerSide) || 2;
+              const liqDist = (100 / lev).toFixed(2);
+              const notional = (cap * lev).toFixed(0);
+              const maxLoss = (cap * 2).toFixed(2);
+              return (
+                <>
+                  <div className="p-1 rounded border border-border/20 bg-card/20 text-center">
+                    <p className="text-[8px] text-muted-foreground">Liq Dist</p>
+                    <p className="font-mono text-[11px] font-bold text-yellow-300">{liqDist}%</p>
+                  </div>
+                  <div className="p-1 rounded border border-border/20 bg-card/20 text-center">
+                    <p className="text-[8px] text-muted-foreground">Notional</p>
+                    <p className="font-mono text-[11px] font-semibold">${notional}</p>
+                  </div>
+                  <div className="p-1 rounded border border-border/20 bg-card/20 text-center">
+                    <p className="text-[8px] text-muted-foreground">Max Loss</p>
+                    <p className="font-mono text-[11px] font-semibold text-red-400">${maxLoss}</p>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoRestart}
+              onChange={e => setAutoRestart(e.target.checked)}
+              className="rounded"
+              data-testid="input-hedge-auto-restart"
+            />
+            Auto-restart
+          </label>
+          <Button
+            data-testid="button-hedge-start"
+            size="sm"
+            disabled={hedgePairStart.isPending || !symbol || parseFloat(capitalPerSide) < 0.5}
+            onClick={() => hedgePairStart.mutate({
+              symbol,
+              capitalPerSide: parseFloat(capitalPerSide),
+              leverage: parseInt(leverage),
+              autoRestart,
+              slBufferPct: parseFloat(slBuffer) / 100,
+            })}
+          >
+            {hedgePairStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Shield className="h-3 w-3 mr-1" />}
+            Start
+          </Button>
+        </div>
+        <p className="text-[9px] text-muted-foreground/60">
+          Static L+S, high leverage, SL near break-even, TP cascade +0.5/1/2/3% past liq
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function TradingPage() {
   return (
     <div className="min-h-screen w-full bg-[#0a0f1e] text-foreground p-3 sm:p-6 relative overflow-x-hidden">
@@ -1361,6 +1591,7 @@ export default function TradingPage() {
 
           <div className="space-y-4">
             <TandemStartPanel />
+            <HedgePairPanel />
             <VolatilityScoresPanel />
           </div>
         </div>

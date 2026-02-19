@@ -200,6 +200,17 @@ export class BitunixClient {
     return this.get("/api/v1/futures/tpsl/get_pending_orders", params);
   }
 
+  async placePositionTpsl(params: {
+    symbol: string;
+    positionId: string;
+    tpPrice?: string;
+    tpStopType?: string;
+    slPrice?: string;
+    slStopType?: string;
+  }) {
+    return this.post("/api/v1/futures/tpsl/position/place_order", params);
+  }
+
   async cancelTpslOrder(symbol: string, orderId: string) {
     return this.post("/api/v1/futures/tpsl/cancel_order", { symbol, orderId });
   }

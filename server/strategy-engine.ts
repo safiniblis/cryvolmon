@@ -254,6 +254,10 @@ export interface GridConfig {
   lastTpCount?: number;
   tpReservePct?: number;
   tpConsumedAtQty?: number;
+  trailingTpEnabled?: boolean;
+  trailingTpHwm?: number;
+  trailingTpOrderId?: string;
+  trailingTpPct?: number;
   gridSide?: "LONG" | "SHORT";
   parentTandemId?: number;
 }
@@ -824,48 +828,39 @@ async function executeGridStrategy(strategy: Strategy) {
     const tpsMissing = hasTpsPlaced && liveTpCount === 0;
     const hasDuplicates = hasTpsPlaced && liveTpCount > lastTpCount + 2;
     const tpsPartiallyConsumed = hasTpsPlaced && liveTpCount < lastTpCount && liveTpCount > 0;
-    const cooldownOk = (now - lastTpTime) > 60000;
-
-    const tpConsumedAtQty = config.tpConsumedAtQty || 0;
-    const grewBackFromConsumed = tpConsumedAtQty > 0 && positionQty > tpConsumedAtQty;
-    const growthQty = grewBackFromConsumed ? positionQty - tpConsumedAtQty : 0;
+    const cooldownOk = (now - lastTpTime) > 120000;
 
     const needsRebuild = !hasTpsPlaced || hasDuplicates;
-    const needsGrowthTps = grewBackFromConsumed && cooldownOk;
+    const needsFullRebuild = tpsMissing && cooldownOk;
 
-    if (tpsMissing && !grewBackFromConsumed) {
-      config.tpConsumedAtQty = config.tpConsumedAtQty || positionQty;
+    if (tpsMissing && !cooldownOk) {
       config.lastTpCount = 0;
       await storage.updateStrategy(strategy.id, { config });
-      console.log(`[${tag}] All TPs consumed — waiting for position to grow back (baseline=${config.tpConsumedAtQty.toFixed(precision.basePrecision)})`);
-    } else if (tpsPartiallyConsumed && !needsRebuild && !needsGrowthTps) {
+      console.log(`[${tag}] All TPs consumed — cooldown active, will rebuild full position TPs after 2min`);
+    } else if (tpsPartiallyConsumed && !needsRebuild && !needsFullRebuild) {
       config.lastTpCount = liveTpCount;
       config.lastTpPositionQty = positionQty;
       await storage.updateStrategy(strategy.id, { config });
       console.log(`[${tag}] TPs partially filled: ${liveTpCount}/${lastTpCount} remain — keeping existing, updated count`);
-    } else if (!needsRebuild && !needsGrowthTps) {
+    } else if (!needsRebuild && !needsFullRebuild) {
       console.log(`[${tag}] TPs stable: ${liveTpCount} live on exchange (saved=${lastTpCount}) at entry ${lastTpEntry.toFixed(4)} for qty ${lastTpPosQty} — no changes`);
     } else {
-      let tpQtyBasis: number;
+      const tpQtyBasis = positionQty;
       let reason: string;
 
-      if (needsGrowthTps && !needsRebuild) {
-        tpQtyBasis = growthQty;
-        reason = `position grew back ${tpConsumedAtQty.toFixed(precision.basePrecision)}->${positionQty.toFixed(precision.basePrecision)} (+${growthQty.toFixed(precision.basePrecision)}) — adding TPs for growth only`;
+      if (needsFullRebuild) {
+        reason = `all TPs consumed — rebuilding for full position (${positionQty.toFixed(precision.basePrecision)})`;
       } else if (!hasTpsPlaced) {
-        tpQtyBasis = positionQty;
         reason = "first TP placement";
       } else if (hasDuplicates) {
-        tpQtyBasis = positionQty;
         reason = `duplicates (saved=${lastTpCount}, live=${liveTpCount})`;
       } else {
-        tpQtyBasis = positionQty;
         reason = "rebuild";
       }
 
       console.log(`[${tag}] TP action: ${reason}`);
 
-      if (needsRebuild || hasDuplicates) {
+      if (needsRebuild || hasDuplicates || needsFullRebuild) {
         for (const tp of liveTpOrders) {
           const tpId = tp.id || tp.orderId;
           if (tpId) {
@@ -902,8 +897,7 @@ async function executeGridStrategy(strategy: Strategy) {
       }
 
       if (sellableQty < precision.minTradeVolume) {
-        console.log(`[${tag}] Growth qty too small for TPs (${sellableQty.toFixed(precision.basePrecision)} < minVol ${precision.minTradeVolume}) — skipping`);
-        config.tpConsumedAtQty = positionQty;
+        console.log(`[${tag}] Sellable qty too small for TPs (${sellableQty.toFixed(precision.basePrecision)} < minVol ${precision.minTradeVolume}) — skipping`);
         await storage.updateStrategy(strategy.id, { config });
       } else {
         const lastLevelQty = Math.max(
@@ -941,11 +935,118 @@ async function executeGridStrategy(strategy: Strategy) {
         config.lastTpEntryPrice = tpRefPrice;
         config.lastTpPositionQty = positionQty;
         config.lastTpPlacedAt = now;
-        config.lastTpCount = (needsGrowthTps && !needsRebuild) ? liveTpCount + placedTps : placedTps;
+        config.lastTpCount = placedTps;
         config.tpConsumedAtQty = 0;
         await storage.updateStrategy(strategy.id, { config });
         console.log(`[${tag}] TP state saved: entry=${tpRefPrice.toFixed(4)} qty=${positionQty} placed=${placedTps}/${levelsToPlace.length} total_live=${config.lastTpCount}`);
       }
+    }
+
+    const trailingTpPct = config.trailingTpPct ?? 0.005;
+    const trailingEnabled = config.trailingTpEnabled !== false;
+    if (trailingEnabled && positionId && positionQty > 0) {
+      const reserveQty = positionQty * (config.tpReservePct ?? 0.10);
+      const trailingQty = Math.max(
+        Math.floor(reserveQty * Math.pow(10, precision.basePrecision)) / Math.pow(10, precision.basePrecision),
+        precision.minTradeVolume
+      );
+
+      if (trailingQty >= precision.minTradeVolume) {
+        let hwm = config.trailingTpHwm || 0;
+        let existingOrderId = config.trailingTpOrderId || "";
+        let needsUpdate = false;
+
+        if (isShort) {
+          if (hwm === 0 || currentPrice < hwm) {
+            hwm = currentPrice;
+            needsUpdate = true;
+          }
+        } else {
+          if (hwm === 0 || currentPrice > hwm) {
+            hwm = currentPrice;
+            needsUpdate = true;
+          }
+        }
+
+        let trailingStillLive = false;
+        if (existingOrderId) {
+          trailingStillLive = liveTpOrders.some((t: any) => (t.id || t.orderId) === existingOrderId);
+          if (!trailingStillLive) {
+            console.log(`[${tag}] Trailing TP ${existingOrderId} no longer live (filled or cancelled externally)`);
+            existingOrderId = "";
+            config.trailingTpOrderId = "";
+            needsUpdate = true;
+          }
+        }
+
+        const trailingTpPrice = isShort
+          ? hwm * (1 + trailingTpPct)
+          : hwm * (1 - trailingTpPct);
+
+        const shouldBeProfitable = isShort
+          ? trailingTpPrice < tpRefPrice
+          : trailingTpPrice > tpRefPrice;
+
+        if (!shouldBeProfitable && existingOrderId) {
+          try {
+            await client.cancelTpslOrder(strategy.symbol, existingOrderId);
+            console.log(`[${tag}] Cancelled trailing TP ${existingOrderId} — no longer profitable`);
+          } catch (e: any) {
+            console.log(`[${tag}] Trailing TP cancel note:`, e.message);
+          }
+          config.trailingTpOrderId = "";
+          config.trailingTpHwm = 0;
+          await storage.updateStrategy(strategy.id, { config });
+        } else if (shouldBeProfitable && (needsUpdate || !existingOrderId)) {
+          if (existingOrderId) {
+            try {
+              await client.cancelTpslOrder(strategy.symbol, existingOrderId);
+              console.log(`[${tag}] Cancelled old trailing TP ${existingOrderId}`);
+            } catch (e: any) {
+              console.log(`[${tag}] Old trailing TP cancel note:`, e.message);
+            }
+          }
+
+          const trailingPriceStr = roundPrice(trailingTpPrice, precision.quotePrecision);
+          const trailingQtyStr = trailingQty.toFixed(precision.basePrecision);
+          try {
+            const result = await client.placeTpslOrder({
+              symbol: strategy.symbol,
+              positionId,
+              tpPrice: trailingPriceStr,
+              tpStopType: "LAST_PRICE",
+              tpOrderType: "MARKET",
+              tpQty: trailingQtyStr,
+            });
+            if (result?.code === 0) {
+              config.trailingTpHwm = hwm;
+              config.trailingTpOrderId = result.data?.orderId || "";
+              await storage.updateStrategy(strategy.id, { config });
+              console.log(`[${tag}] Trailing TP: price=${trailingPriceStr} qty=${trailingQtyStr} hwm=${hwm.toFixed(4)} pct=${(trailingTpPct * 100).toFixed(2)}%`);
+            } else {
+              console.error(`[${tag}] Trailing TP place failed:`, result?.msg);
+            }
+          } catch (e: any) {
+            console.error(`[${tag}] Trailing TP error:`, e.message);
+          }
+        } else if (!shouldBeProfitable) {
+          config.trailingTpHwm = 0;
+          await storage.updateStrategy(strategy.id, { config });
+          console.log(`[${tag}] Trailing TP: hwm=${hwm.toFixed(4)} but trail price ${trailingTpPrice.toFixed(4)} not profitable vs entry ${tpRefPrice.toFixed(4)} — skipping`);
+        } else {
+          console.log(`[${tag}] Trailing TP: stable at hwm=${hwm.toFixed(4)} trail=${trailingTpPrice.toFixed(4)} orderId=${existingOrderId}`);
+        }
+      }
+    } else if (config.trailingTpOrderId) {
+      try {
+        await client.cancelTpslOrder(strategy.symbol, config.trailingTpOrderId);
+        console.log(`[${tag}] Cleaned up trailing TP ${config.trailingTpOrderId} (no position/disabled)`);
+      } catch (e: any) {
+        console.log(`[${tag}] Trailing TP cleanup note:`, e.message);
+      }
+      config.trailingTpOrderId = "";
+      config.trailingTpHwm = 0;
+      await storage.updateStrategy(strategy.id, { config });
     }
   }
 

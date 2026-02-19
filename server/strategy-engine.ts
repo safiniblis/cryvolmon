@@ -509,6 +509,27 @@ async function executeGridStrategy(strategy: Strategy) {
   if (!ticker) throw new Error(`Cannot get price for ${strategy.symbol}`);
 
   const currentPrice = ticker.lastPrice;
+
+  const isTandemChildEarly = !!(config as any).parentTandemId;
+  if (isTandemChildEarly) {
+    const leverage = config.leverage || 33;
+    const liqDist = 1 / leverage;
+    const gridRange = liqDist * 0.85;
+    const newLower = isShort ? currentPrice * (1 - liqDist * 0.5) : currentPrice * (1 - gridRange);
+    const newUpper = isShort ? currentPrice * (1 + gridRange) : currentPrice * (1 + liqDist * 0.5);
+    if (config.lowerPrice && config.upperPrice) {
+      const oldMid = (config.lowerPrice + config.upperPrice) / 2;
+      const drift = Math.abs(currentPrice - oldMid) / oldMid;
+      if (drift > 0.005) {
+        config.startPrice = currentPrice;
+        config.lowerPrice = newLower;
+        config.upperPrice = newUpper;
+        config.liquidationPrice = isShort ? currentPrice * (1 + liqDist) : currentPrice * (1 - liqDist);
+        await storage.updateStrategy(strategy.id, { config });
+      }
+    }
+  }
+
   const levels = getAsymmetricGridLevels(config);
 
   const lowerBound = config.lowerPrice || currentPrice * (isShort ? 0.98 : 0.90);

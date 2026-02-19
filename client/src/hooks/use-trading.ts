@@ -352,6 +352,24 @@ export function useTandemStart() {
   });
 }
 
+export function useHedgePairStart() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { symbol: string; capitalPerSide: number; leverage: number; autoRestart?: boolean; slBufferPct?: number }) => {
+      const res = await apiRequest("POST", "/api/strategies/hedge-pair-start", data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      toast({ title: "Hedge Pair Started", description: `${data.symbol} L+S opened at ${data.config?.leverage}x` });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Hedge Pair Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useManualTrade() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

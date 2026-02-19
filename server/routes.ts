@@ -655,6 +655,67 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/strategies/hedge-pair-start", async (req, res) => {
+    try {
+      const schema = z.object({
+        symbol: z.string().min(1),
+        capitalPerSide: z.number().min(0.5).max(50).default(2),
+        leverage: z.number().min(10).max(125).default(100),
+        cascadeTargetsPct: z.array(z.number()).default([0.005, 0.01, 0.02, 0.03]),
+        cascadePortions: z.array(z.number()).default([0.3, 0.3, 0.25, 0.15]),
+        slBufferPct: z.number().min(0.001).max(0.05).default(0.002),
+        autoRestart: z.boolean().default(true),
+      });
+      const params = schema.parse(req.body);
+
+      const client = getBitunixClient();
+      if (!client) return res.status(400).json({ message: "API keys not configured" });
+
+      const strategy = await storage.createStrategy({
+        name: `Hedge ${params.symbol}`,
+        type: "hedge_pair",
+        symbol: params.symbol.toUpperCase(),
+        side: "BOTH",
+        status: "running",
+        config: {
+          leverage: params.leverage,
+          capitalPerSide: params.capitalPerSide,
+          phase: "entry",
+          entryPrice: 0,
+          longPositionId: null,
+          shortPositionId: null,
+          longQty: 0,
+          shortQty: 0,
+          liquidatedSide: null,
+          liquidationPrice: 0,
+          survivingSide: null,
+          survivingQty: 0,
+          slOrderId: null,
+          tpOrderIds: [],
+          cascadeTargetsPct: params.cascadeTargetsPct,
+          cascadePortions: params.cascadePortions,
+          slBufferPct: params.slBufferPct,
+          cycleCount: 0,
+          totalPnl: 0,
+          lastActionAt: 0,
+          autoRestart: params.autoRestart,
+          cyclePnl: 0,
+        },
+      });
+
+      priceFeed.subscribe(params.symbol.toUpperCase());
+      startStrategyEngine();
+      setTimeout(() => runStrategyCycle(), 2000);
+
+      res.status(201).json(strategy);
+    } catch (e: any) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: e.errors[0].message });
+      }
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // === Simulation ===
   app.post("/api/grid/optimize-fees", async (req, res) => {
     try {

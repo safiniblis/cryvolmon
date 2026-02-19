@@ -58,7 +58,21 @@ The application is built as a full-stack solution. The frontend is developed wit
 - Budget cap: allocatedBudget tracks capital per strategy, adjusts with PnL for standalone grids
 - Sweet spot: 25-40x leverage → 5-8 grids, each netting ~7-12% of margin per trade
 
+## Hedge Pair Strategy Details
+- **Concept**: Static long + short positions at very high leverage (75-125x), tiny capital ($0.5-$50/side), one side liquidates quickly while survivor profits
+- **State machine**: entry → monitoring → cascade → done (→ restart if autoRestart)
+- **Entry**: Opens simultaneous LONG and SHORT market orders at same price, sets leverage via API
+- **Monitoring**: Polls positions every 15s, detects when one side is liquidated (position disappears)
+- **Cascade**: Places TP orders on surviving side at configurable targets (default +0.5%, +1%, +2%, +3% past liquidation price), portions default 30/30/25/15%
+- **SL protection**: Places stop-loss on survivor at entry price ± slBufferPct (default 0.2%) — near break-even to limit risk if price reverses
+- **Done**: Cleans up, logs PnL, optionally restarts with fresh cycle
+- **Config**: leverage, capitalPerSide, cascadeTargetsPct, cascadePortions, slBufferPct, autoRestart
+- **API route**: `POST /api/strategies/hedge-pair-start` (symbol, capitalPerSide, leverage, autoRestart, slBufferPct)
+- **UI panel**: Shows phase, leverage, capital, entry price, liquidated/survivor sides, TP orders, cycle/total PnL
+- **Math**: At 100x leverage, liq distance ~1%, max loss = 2x capitalPerSide, survivor profits = ~100% of its margin at liq point
+
 ## Recent Changes
+- 2026-02-19: Hedge Pair strategy: full implementation with API route, state machine engine (entry/monitoring/cascade/done), UI panel with start form and running state, strategy card integration with phase badge and params
 - 2026-02-19: Tandem TP reserve raised from 10% to 65% — ensures enough position survives for cascade to offset twin liquidation loss. Simulation updated to reflect reserve-aware cascade qty.
 - 2026-02-19: Trailing TP: reserve portion now gets a trailing TP order that follows the high watermark (0.5% pullback default). Updates when price makes new highs, only triggers when profitable vs entry.
 - 2026-02-19: Full-position TP rebuild: when all TPs consumed, rebuilds TPs for the entire position (not just growth delta) after 2-min cooldown. Eliminates the gap where most of the position had zero TP coverage.

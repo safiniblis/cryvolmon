@@ -1330,7 +1330,7 @@ function HedgePairPanel() {
   const hedgePairStart = useHedgePairStart();
 
   const [symbol, setSymbol] = useState("XRPUSDT");
-  const [capitalPerSide, setCapitalPerSide] = useState("2");
+  const [capitalPerSide, setCapitalPerSide] = useState("10");
   const [leverage, setLeverage] = useState("100");
   const [autoRestart, setAutoRestart] = useState(true);
   const [slBuffer, setSlBuffer] = useState("0.2");
@@ -1441,8 +1441,8 @@ function HedgePairPanel() {
           <Input
             data-testid="input-hedge-capital"
             type="number"
-            min="0.5"
-            step="0.5"
+            min="5"
+            step="1"
             value={capitalPerSide}
             onChange={e => setCapitalPerSide(e.target.value)}
             className="w-16 text-xs font-mono"
@@ -1514,7 +1514,7 @@ function HedgePairPanel() {
           <Button
             data-testid="button-hedge-start"
             size="sm"
-            disabled={hedgePairStart.isPending || !symbol || parseFloat(capitalPerSide) < 0.5}
+            disabled={hedgePairStart.isPending || !symbol || parseFloat(capitalPerSide) < 5}
             onClick={() => hedgePairStart.mutate({
               symbol,
               capitalPerSide: parseFloat(capitalPerSide),
@@ -1528,7 +1528,7 @@ function HedgePairPanel() {
           </Button>
         </div>
         <p className="text-[9px] text-muted-foreground/60">
-          Static L+S, high leverage, SL near break-even, TP cascade +0.5/1/2/3% past liq
+          Static L+S, high leverage, SL near break-even, TP cascade +0.5/1/2/3% past liq. Min $5/side (exchange minimum ~$10).
         </p>
       </CardContent>
     </Card>

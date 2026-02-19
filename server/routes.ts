@@ -659,7 +659,7 @@ export async function registerRoutes(
     try {
       const schema = z.object({
         symbol: z.string().min(1),
-        capitalPerSide: z.number().min(0.5).max(50).default(2),
+        capitalPerSide: z.number().min(5).max(50).default(10),
         leverage: z.number().min(10).max(125).default(100),
         cascadeTargetsPct: z.array(z.number()).default([0.005, 0.01, 0.02, 0.03]),
         cascadePortions: z.array(z.number()).default([0.3, 0.3, 0.25, 0.15]),

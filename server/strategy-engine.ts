@@ -2067,7 +2067,7 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
         const excessQty = maxQty - minQty;
 
         const trimPct = liqUrgency ? 0.75 : 0.50;
-        const precision = await fetchPrecision(strategy.symbol);
+        const precision = await getPairPrecision(strategy.symbol);
         const trimQty = roundQty(excessQty * trimPct, precision.basePrecision);
         const trimQtyNum = parseFloat(trimQty);
 

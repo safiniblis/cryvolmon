@@ -555,7 +555,8 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
-  const minProfitableGap = roundTripFee * 4.0;
+  const cfgFeeMultiplier = config.feeMultiplier || 3.5;
+  const minProfitableGap = roundTripFee * cfgFeeMultiplier;
 
   const gridLevels = isShort
     ? levels.filter(l => l >= currentPrice * (1 + minProfitableGap) && l <= upperBound)
@@ -830,7 +831,23 @@ async function executeGridStrategy(strategy: Strategy) {
     const tpsPartiallyConsumed = hasTpsPlaced && liveTpCount < lastTpCount && liveTpCount > 0;
     const cooldownOk = (now - lastTpTime) > 120000;
 
-    const needsRebuild = !hasTpsPlaced || hasDuplicates;
+    const entryDrifted = hasTpsPlaced && lastTpEntry > 0 && Math.abs(tpRefPrice - lastTpEntry) / lastTpEntry > minProfitableGap * 0.5;
+
+    let staleTpCount = 0;
+    if (liveTpCount > 0 && positionEntryPrice > 0) {
+      const minSafeTp = isShort
+        ? positionEntryPrice * (1 - minProfitableGap)
+        : positionEntryPrice * (1 + minProfitableGap);
+      for (const tp of liveTpOrders) {
+        const tpTrigger = parseFloat(tp.tpPrice || tp.triggerPrice || tp.price || "0");
+        if (tpTrigger > 0) {
+          const isStale = isShort ? tpTrigger > minSafeTp : tpTrigger < minSafeTp;
+          if (isStale) staleTpCount++;
+        }
+      }
+    }
+
+    const needsRebuild = !hasTpsPlaced || hasDuplicates || entryDrifted || staleTpCount > 0;
     const needsFullRebuild = tpsMissing && cooldownOk;
 
     if (tpsMissing && !cooldownOk) {
@@ -850,6 +867,10 @@ async function executeGridStrategy(strategy: Strategy) {
 
       if (needsFullRebuild) {
         reason = `all TPs consumed — rebuilding for full position (${positionQty.toFixed(precision.basePrecision)})`;
+      } else if (staleTpCount > 0) {
+        reason = `${staleTpCount} stale TPs below safe distance from entry ${tpRefPrice.toFixed(4)} (gap=${(minProfitableGap * 100).toFixed(3)}%)`;
+      } else if (entryDrifted) {
+        reason = `entry drifted: was ${lastTpEntry.toFixed(4)} now ${tpRefPrice.toFixed(4)} (>${(minProfitableGap * 50).toFixed(2)}%)`;
       } else if (!hasTpsPlaced) {
         reason = "first TP placement";
       } else if (hasDuplicates) {

@@ -3059,6 +3059,103 @@ async function hedgePairEntry(strategy: Strategy, config: HedgePairConfig, clien
     if (shortPos) { shortPosId = shortPos.positionId; shortEntryQty = parseFloat(shortPos.qty); }
   }
 
+  const slBufferPct = config.slBufferPct || 0.002;
+  const longSlPrice = currentPrice * (1 - slBufferPct);
+  const shortSlPrice = currentPrice * (1 + slBufferPct);
+  const longSlStr = roundPrice(longSlPrice, precision.quotePrecision);
+  const shortSlStr = roundPrice(shortSlPrice, precision.quotePrecision);
+  let longSlOrderId = "", shortSlOrderId = "";
+
+  if (longPosId) {
+    try {
+      const slRes = await client.placeTpslOrder({
+        symbol: strategy.symbol,
+        positionId: longPosId,
+        slPrice: longSlStr,
+        slStopType: "LAST_PRICE",
+        slOrderType: "MARKET",
+      });
+      if (slRes?.code === 0) {
+        longSlOrderId = slRes.data?.orderId || "";
+        console.log(`[${tag}] LONG SL placed @ ${longSlStr}`);
+      } else {
+        console.error(`[${tag}] LONG SL failed:`, slRes?.msg);
+      }
+    } catch (e: any) {
+      console.error(`[${tag}] LONG SL error:`, e.message);
+    }
+  }
+
+  if (shortPosId) {
+    try {
+      const slRes = await client.placeTpslOrder({
+        symbol: strategy.symbol,
+        positionId: shortPosId,
+        slPrice: shortSlStr,
+        slStopType: "LAST_PRICE",
+        slOrderType: "MARKET",
+      });
+      if (slRes?.code === 0) {
+        shortSlOrderId = slRes.data?.orderId || "";
+        console.log(`[${tag}] SHORT SL placed @ ${shortSlStr}`);
+      } else {
+        console.error(`[${tag}] SHORT SL failed:`, slRes?.msg);
+      }
+    } catch (e: any) {
+      console.error(`[${tag}] SHORT SL error:`, e.message);
+    }
+  }
+
+  const cascadeTargets = config.cascadeTargetsPct || [0.005, 0.01, 0.02, 0.03];
+  const cascadePortions = config.cascadePortions || [0.3, 0.3, 0.25, 0.15];
+  const liqDist = 1 / leverage;
+  const longLiqPrice = currentPrice * (1 - liqDist);
+  const shortLiqPrice = currentPrice * (1 + liqDist);
+  const tpOrderIds: string[] = [];
+
+  const entryQty = longEntryQty || parseFloat(qtyStr);
+  for (const [side, liqPrice, posId] of [
+    ["LONG", shortLiqPrice, longPosId] as const,
+    ["SHORT", longLiqPrice, shortPosId] as const,
+  ]) {
+    if (!posId) continue;
+    let remainQty = entryQty;
+    for (let i = 0; i < cascadeTargets.length; i++) {
+      const targetPct = cascadeTargets[i];
+      const portion = cascadePortions[i];
+      const isLast = i === cascadeTargets.length - 1;
+      const portionQty = isLast ? remainQty : Math.floor(entryQty * portion * Math.pow(10, precision.basePrecision)) / Math.pow(10, precision.basePrecision);
+      const clampedQty = Math.min(portionQty, remainQty);
+      if (clampedQty < precision.minTradeVolume) continue;
+
+      const tpPrice = side === "LONG"
+        ? liqPrice * (1 + targetPct)
+        : liqPrice * (1 - targetPct);
+      const tpPriceStr = roundPrice(tpPrice, precision.quotePrecision);
+      const qtyTPStr = roundQty(clampedQty, precision.basePrecision);
+
+      try {
+        const result = await client.placeTpslOrder({
+          symbol: strategy.symbol,
+          positionId: posId,
+          tpPrice: tpPriceStr,
+          tpStopType: "LAST_PRICE",
+          tpOrderType: "MARKET",
+          tpQty: qtyTPStr,
+        });
+        if (result?.code === 0) {
+          tpOrderIds.push(result.data?.orderId || "");
+          remainQty -= clampedQty;
+          console.log(`[${tag}] ${side} TP${i + 1}: ${qtyTPStr} @ ${tpPriceStr} (+${(targetPct * 100).toFixed(1)}% past ${side === "LONG" ? "SHORT" : "LONG"} liq)`);
+        } else {
+          console.error(`[${tag}] ${side} TP${i + 1} failed:`, result?.msg);
+        }
+      } catch (e: any) {
+        console.error(`[${tag}] ${side} TP${i + 1} error:`, e.message);
+      }
+    }
+  }
+
   const updatedConfig: HedgePairConfig = {
     ...config,
     phase: "monitoring",
@@ -3071,8 +3168,8 @@ async function hedgePairEntry(strategy: Strategy, config: HedgePairConfig, clien
     liquidationPrice: 0,
     survivingSide: null,
     survivingQty: 0,
-    slOrderId: null,
-    tpOrderIds: [],
+    slOrderId: `${longSlOrderId}|${shortSlOrderId}`,
+    tpOrderIds,
     cycleCount: (config.cycleCount || 0) + 1,
     cyclePnl: 0,
     lastActionAt: Date.now(),
@@ -3083,10 +3180,10 @@ async function hedgePairEntry(strategy: Strategy, config: HedgePairConfig, clien
     strategyId: strategy.id, symbol: strategy.symbol, side: "BOTH",
     orderType: "MARKET", quantity: parseFloat(qtyStr), price: currentPrice,
     status: "filled", orderId: null, pnl: 0,
-    errorMsg: `Hedge pair cycle ${updatedConfig.cycleCount}: opened L+S @ ${currentPrice.toFixed(4)}`,
+    errorMsg: `Hedge pair cycle ${updatedConfig.cycleCount}: opened L+S @ ${currentPrice.toFixed(4)}, SL @ ${longSlStr}/${shortSlStr}, ${tpOrderIds.length} TPs placed`,
   });
 
-  console.log(`[${tag}] Cycle ${updatedConfig.cycleCount}: LONG=${longPosId} SHORT=${shortPosId} entry=${currentPrice.toFixed(4)}`);
+  console.log(`[${tag}] Cycle ${updatedConfig.cycleCount}: LONG=${longPosId} SHORT=${shortPosId} entry=${currentPrice.toFixed(4)}, SLs+${tpOrderIds.length} TPs placed`);
 }
 
 async function hedgePairMonitor(strategy: Strategy, config: HedgePairConfig, client: any) {

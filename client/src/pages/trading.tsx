@@ -27,6 +27,7 @@ import {
   useTandemSimulation,
   useTandemStart,
   useHedgePairStart,
+  usePairInfo,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Wifi, WifiOff,
@@ -1064,6 +1065,8 @@ function TandemStartPanel() {
   const stopStrategy = useStopStrategy();
   const { data: strategies } = useStrategies();
   const { data: accountData } = useAccount();
+  const { data: pairInfo } = usePairInfo(symbol);
+  const maxLev = (pairInfo as any)?.maxLeverage || 125;
   const runningTandem = strategies?.find(s => s.status === "running" && s.type === "tandem");
 
   const phaseLabels: Record<string, string> = {
@@ -1218,16 +1221,27 @@ function TandemStartPanel() {
             className="w-16 text-xs font-mono"
             placeholder="Total $"
           />
-          <Input
-            data-testid="input-tandem-leverage"
-            type="number"
-            min="2"
-            max="125"
-            value={leverage}
-            onChange={e => setLeverage(e.target.value)}
-            className="w-16 text-xs font-mono"
-            placeholder="33x"
-          />
+          <div className="flex items-center gap-1">
+            <Input
+              data-testid="input-tandem-leverage"
+              type="number"
+              min="2"
+              max={maxLev}
+              value={leverage}
+              onChange={e => setLeverage(e.target.value)}
+              className="w-16 text-xs font-mono"
+              placeholder="33x"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-[10px] px-1.5"
+              onClick={() => setLeverage(String(maxLev))}
+              data-testid="button-tandem-max-leverage"
+            >
+              Max {maxLev}x
+            </Button>
+          </div>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] text-muted-foreground">Split:</span>
@@ -1334,6 +1348,9 @@ function HedgePairPanel() {
   const [leverage, setLeverage] = useState("100");
   const [autoRestart, setAutoRestart] = useState(true);
   const [slBuffer, setSlBuffer] = useState("0.2");
+
+  const { data: pairInfo } = usePairInfo(symbol);
+  const maxLev = (pairInfo as any)?.maxLeverage || 125;
 
   const runningHedge = strategies?.find((s: Strategy) => s.type === "hedge_pair" && s.status === "running");
 
@@ -1448,16 +1465,27 @@ function HedgePairPanel() {
             className="w-16 text-xs font-mono"
             placeholder="$/side"
           />
-          <Input
-            data-testid="input-hedge-leverage"
-            type="number"
-            min="10"
-            max="125"
-            value={leverage}
-            onChange={e => setLeverage(e.target.value)}
-            className="w-16 text-xs font-mono"
-            placeholder="100x"
-          />
+          <div className="flex items-center gap-1">
+            <Input
+              data-testid="input-hedge-leverage"
+              type="number"
+              min="10"
+              max={maxLev}
+              value={leverage}
+              onChange={e => setLeverage(e.target.value)}
+              className="w-16 text-xs font-mono"
+              placeholder="100x"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-[10px] px-1.5"
+              onClick={() => setLeverage(String(maxLev))}
+              data-testid="button-hedge-max-leverage"
+            >
+              Max {maxLev}x
+            </Button>
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] text-muted-foreground">SL Buffer:</span>

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
-import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, cancelAllTandemOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier, executePairRotation, simulateTandem } from "./strategy-engine";
+import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, cancelAllTandemOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier, executePairRotation, simulateTandem, getPairPrecision } from "./strategy-engine";
 import { priceFeed } from "./ws-price-feed";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
@@ -651,6 +651,22 @@ export async function registerRoutes(
       if (e instanceof z.ZodError) {
         return res.status(400).json({ message: e.errors[0].message });
       }
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.get("/api/pair-info/:symbol", async (req, res) => {
+    try {
+      const symbol = req.params.symbol.toUpperCase();
+      const precision = await getPairPrecision(symbol);
+      res.json({
+        symbol,
+        maxLeverage: precision.maxLeverage,
+        basePrecision: precision.basePrecision,
+        quotePrecision: precision.quotePrecision,
+        minTradeVolume: precision.minTradeVolume,
+      });
+    } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
   });

@@ -370,6 +370,14 @@ export function useHedgePairStart() {
   });
 }
 
+export function usePairInfo(symbol: string) {
+  return useQuery({
+    queryKey: ["/api/pair-info", symbol],
+    enabled: !!symbol && symbol.length >= 4,
+    staleTime: 60000,
+  });
+}
+
 export function useManualTrade() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

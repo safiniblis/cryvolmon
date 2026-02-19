@@ -1935,6 +1935,8 @@ function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, 
   const gridRange = liqDist * 0.85;
   const tpRange = liqDist * 0.5;
 
+  const tandemReservePct = 0.65;
+
   if (side === "LONG") {
     return {
       startPrice: currentPrice,
@@ -1953,7 +1955,7 @@ function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, 
       extensionsBelow: 0,
       extensionsAbove: 0,
       allocatedBudget: budget,
-      tpReservePct: 0.10,
+      tpReservePct: tandemReservePct,
       gridSide: "LONG",
     };
   } else {
@@ -1974,7 +1976,7 @@ function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, 
       extensionsBelow: 0,
       extensionsAbove: 0,
       allocatedBudget: budget,
-      tpReservePct: 0.10,
+      tpReservePct: tandemReservePct,
       gridSide: "SHORT",
     };
   }
@@ -3460,9 +3462,13 @@ export function simulateTandem(
     const survivingSide = liquidatedSide === "LONG" ? "SHORT" : "LONG";
     const direction = survivingSide === "LONG" ? 1 : -1;
 
+    const tandemReservePct = 0.65;
+    const tpSoldQty = posQty * (1 - tandemReservePct);
+    const tpSoldPnl = tpSoldQty * Math.abs(liquidationPrice - entryPrice) * 0.5 - tpSoldQty * entryPrice * roundTripFee;
+
     const cascadeExits: TandemCycle["cascadeExits"] = [];
-    let cascadePnl = 0;
-    let remainingQty = posQty;
+    let cascadePnl = tpSoldPnl;
+    let remainingQty = posQty * tandemReservePct;
     const portions = [3 / 7, 2 / 7, 1 / 7];
     const targetPcts = [0, 0.01, 0.02];
     const TOTAL_STEPS = 3;

@@ -681,8 +681,8 @@ export async function registerRoutes(
         totalCapital: z.number().min(10).default(100),
         leverage: z.number().min(2).max(125).default(33),
         rotationEnabled: z.boolean().default(false),
-        longWeight: z.number().min(1).max(10).default(4),
-        shortWeight: z.number().min(1).max(10).default(3),
+        longWeight: z.number().min(1).max(10).default(1),
+        shortWeight: z.number().min(1).max(10).default(1),
       });
       const { symbol, totalCapital, leverage, rotationEnabled, longWeight, shortWeight } = schema.parse(req.body);
 

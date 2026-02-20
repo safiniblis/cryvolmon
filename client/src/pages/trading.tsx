@@ -328,6 +328,7 @@ function StrategyCard({ s }: { s: Strategy }) {
     { label: "Gap", value: `${cfg.gapGrowthBelow || 1}x / ${cfg.gapShrinkAbove || 1}x` },
     { label: "TP Res", value: `${((cfg.tpReservePct ?? 0.10) * 100).toFixed(0)}%` },
     { label: "Rotation", value: cfg.rotationEnabled ? "On" : "Off" },
+    ...(cfg.twinMode ? [{ label: "Twin", value: `${((cfg.twinGapPct || 0.006) * 100).toFixed(1)}% gap` }] : []),
     ...(cfg.allocatedBudget ? [{ label: "Budget", value: `$${Number(cfg.allocatedBudget).toFixed(2)}` }] : []),
   ] : s.type === "tandem" ? [
     { label: "Phase", value: phaseLabels[cfg.phase] || cfg.phase || "—" },
@@ -568,6 +569,7 @@ function VolatilityScoresPanel() {
   const quickStart = useQuickStart();
   const [amount, setAmount] = useState("40");
   const [startingSymbol, setStartingSymbol] = useState<string | null>(null);
+  const [twinMode, setTwinMode] = useState(true);
 
   const runningStrategy = strategies?.find(s => s.status === "running" && s.type === "grid");
   const hasRunning = !!runningStrategy;
@@ -576,7 +578,7 @@ function VolatilityScoresPanel() {
     const val = parseFloat(amount);
     if (isNaN(val) || val <= 0) return;
     setStartingSymbol(bitunixSymbol);
-    quickStart.mutate({ amount: val, symbol: bitunixSymbol }, {
+    quickStart.mutate({ amount: val, symbol: bitunixSymbol, twinMode, twinGapPct: 0.006 }, {
       onSettled: () => setStartingSymbol(null),
     });
   };
@@ -590,6 +592,16 @@ function VolatilityScoresPanel() {
         </CardTitle>
         {!hasRunning && (
           <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant={twinMode ? "default" : "outline"}
+              onClick={() => setTwinMode(!twinMode)}
+              className="h-6 px-2 text-[10px]"
+              data-testid="button-twin-mode"
+            >
+              <ArrowUpDown className="h-3 w-3 mr-1" />
+              Twin {twinMode ? "On" : "Off"}
+            </Button>
             <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
             <Input
               data-testid="input-quickstart-amount"

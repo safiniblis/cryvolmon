@@ -93,9 +93,9 @@ async function getTickerPrice(symbol: string): Promise<TickerData | null> {
   return null;
 }
 
-export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0.0006) {
+export function calculateOptimizedGrid(currentPrice: number, feeRate: number = 0.0006, overrideFeeMultiplier?: number) {
   const roundTripFee = 2 * feeRate;
-  const targetProfitFeeRatio = 4.0;
+  const targetProfitFeeRatio = overrideFeeMultiplier ?? 4.0;
   const baseGridRatio = 1 + targetProfitFeeRatio * roundTripFee;
 
   const gapGrowthBelow = 1.05;
@@ -258,8 +258,11 @@ export interface GridConfig {
   trailingTpHwm?: number;
   trailingTpOrderId?: string;
   trailingTpPct?: number;
+  feeMultiplier?: number;
   gridSide?: "LONG" | "SHORT";
   parentTandemId?: number;
+  twinMode?: boolean;
+  twinGapPct?: number;
 }
 
 export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
@@ -556,7 +559,10 @@ async function executeGridStrategy(strategy: Strategy) {
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
   const cfgFeeMultiplier = config.feeMultiplier || 3.5;
-  const minProfitableGap = roundTripFee * cfgFeeMultiplier;
+  const twinMode = config.twinMode === true;
+  const twinGapPct = config.twinGapPct || 0.006;
+  const minProfitableGap = twinMode ? twinGapPct / 2 : roundTripFee * cfgFeeMultiplier;
+  const tpStartGap = twinMode ? twinGapPct : minProfitableGap;
 
   const gridLevels = isShort
     ? levels.filter(l => l >= currentPrice * (1 + minProfitableGap) && l <= upperBound)
@@ -775,7 +781,7 @@ async function executeGridStrategy(strategy: Strategy) {
   const tpLevels: number[] = [];
 
   if (isShort) {
-    const maxTpPrice = tpRefPrice * (1 - minProfitableGap);
+    const maxTpPrice = tpRefPrice * (1 - tpStartGap);
     const tpLowerLimit = Math.min(currentPrice * 0.97, maxTpPrice * 0.995);
     let tp = maxTpPrice;
     while (tp >= tpLowerLimit) {
@@ -783,7 +789,7 @@ async function executeGridStrategy(strategy: Strategy) {
       tp /= (1 + minProfitableGap);
     }
   } else {
-    const minTpPrice = tpRefPrice * (1 + minProfitableGap);
+    const minTpPrice = tpRefPrice * (1 + tpStartGap);
     const tpUpperLimit = Math.max(currentPrice * 1.03, minTpPrice * 1.005);
     let tp = minTpPrice;
     while (tp <= tpUpperLimit) {
@@ -836,8 +842,8 @@ async function executeGridStrategy(strategy: Strategy) {
     let staleTpCount = 0;
     if (liveTpCount > 0 && positionEntryPrice > 0) {
       const minSafeTp = isShort
-        ? positionEntryPrice * (1 - minProfitableGap)
-        : positionEntryPrice * (1 + minProfitableGap);
+        ? positionEntryPrice * (1 - tpStartGap)
+        : positionEntryPrice * (1 + tpStartGap);
       for (const tp of liveTpOrders) {
         const tpTrigger = parseFloat(tp.tpPrice || tp.triggerPrice || tp.price || "0");
         if (tpTrigger > 0) {
@@ -1926,10 +1932,11 @@ export interface TandemConfig {
 
 const tandemEntryLocks: Set<number> = new Set();
 
-function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, leverage: number, budget: number, feeMultiplier: number = 3.5): GridConfig & { initialBuyDone?: boolean; gridSide: "LONG" | "SHORT" } {
+function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, leverage: number, budget: number, feeMultiplier: number = 3.5, twinMode: boolean = false, twinGapPct: number = 0.006): GridConfig & { initialBuyDone?: boolean; gridSide: "LONG" | "SHORT" } {
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
-  const gridRatio = 1 + roundTripFee * feeMultiplier;
+  const effectiveFm = twinMode ? (twinGapPct / 2) / roundTripFee : feeMultiplier;
+  const gridRatio = 1 + roundTripFee * effectiveFm;
 
   const liqDist = 1 / leverage;
   const gridRange = liqDist * 0.85;
@@ -1957,6 +1964,7 @@ function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, 
       allocatedBudget: budget,
       tpReservePct: tandemReservePct,
       gridSide: "LONG",
+      ...(twinMode ? { twinMode: true, twinGapPct, feeMultiplier: effectiveFm } : {}),
     };
   } else {
     return {
@@ -1978,6 +1986,7 @@ function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, 
       allocatedBudget: budget,
       tpReservePct: tandemReservePct,
       gridSide: "SHORT",
+      ...(twinMode ? { twinMode: true, twinGapPct, feeMultiplier: effectiveFm } : {}),
     };
   }
 }
@@ -2990,6 +2999,7 @@ async function hedgePairEntry(strategy: Strategy, config: HedgePairConfig, clien
   const notional = capitalPerSide * leverage;
   const qty = notional / currentPrice;
   const qtyStr = roundQty(qty, precision.basePrecision);
+  console.log(`[${tag}] Capital calc: capitalPerSide=${capitalPerSide}, leverage=${leverage}x, notional=${notional.toFixed(2)}, qty=${qtyStr}, margin≈$${(parseFloat(qtyStr) * currentPrice / leverage).toFixed(4)}/side`);
 
   if (actualLeverage !== requestedLeverage) {
     await storage.updateStrategy(strategy.id, {
@@ -3379,6 +3389,7 @@ export async function runStrategyCycle() {
 
       try {
         console.log(`[Strategy ${strategy.id}] Executing ${strategy.name} (${strategy.symbol})`);
+        await storage.updateStrategy(strategy.id, { lastRunAt: new Date() });
         await executor(strategy);
         (strategy as any)._consecutiveErrors = 0;
       } catch (e: any) {

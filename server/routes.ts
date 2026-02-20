@@ -432,7 +432,7 @@ export async function registerRoutes(
   // === Quick Start (auto-select best pair + create + start) ===
   app.post("/api/strategies/quickstart", async (req, res) => {
     try {
-      const { amount = 100, symbol: requestedSymbol } = req.body;
+      const { amount = 100, symbol: requestedSymbol, twinMode = false, twinGapPct = 0.006 } = req.body;
       const usdtAmount = parseFloat(amount);
       if (isNaN(usdtAmount) || usdtAmount <= 0) {
         return res.status(400).json({ message: "Invalid USDT amount" });
@@ -496,7 +496,8 @@ export async function registerRoutes(
 
       const symbol = bestPair.bitunixSymbol;
       const feeRate = 0.0006;
-      const grid = calculateOptimizedGrid(bestPair.currentPrice, feeRate);
+      const twinFeeMultiplier = twinMode ? (twinGapPct / 2) / (2 * feeRate) : undefined;
+      const grid = calculateOptimizedGrid(bestPair.currentPrice, feeRate, twinFeeMultiplier);
 
       const amountPerGrid = usdtAmount / (grid.gridCount + 1);
 
@@ -528,6 +529,7 @@ export async function registerRoutes(
           extensionsAbove: 0,
           rotationEnabled: true,
           allocatedBudget: usdtAmount,
+          ...(twinMode ? { twinMode: true, twinGapPct, feeMultiplier: twinFeeMultiplier } : {}),
         },
       });
 

@@ -354,9 +354,11 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     const baseQty = Math.max(initialNotional / currentPrice, minInitialQty);
     const qtyStr = fixedInitialQty || roundQty(baseQty, precision.basePrecision);
 
+    const gridGapPct = (config.feeMultiplier || 3.5) * 2 * 0.0006;
+    const safeMinDist = gridGapPct * 2;
     const gridLevelsIn1Pct = isShort
-      ? gridLevels.filter(l => l <= currentPrice * (1 + bandPct))
-      : gridLevels.filter(l => l >= currentPrice * (1 - bandPct));
+      ? gridLevels.filter(l => l >= currentPrice * (1 + safeMinDist) && l <= currentPrice * (1 + bandPct))
+      : gridLevels.filter(l => l <= currentPrice * (1 - safeMinDist) && l >= currentPrice * (1 - bandPct));
     const gridInitCount = gridLevelsIn1Pct.length;
 
     console.log(`[${label} ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, side=${posSide}, totalGridLevels=${totalGridCount}, initialShare=${initialShare.toFixed(2)}, marginPerGrid=${marginPerGrid.toFixed(4)}, gridOrdersIn1%=${gridInitCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr}${fixedInitialQty ? ' (fixed)' : ''} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
@@ -566,9 +568,10 @@ async function executeGridStrategy(strategy: Strategy) {
   const minProfitableGap = twinMode ? twinGapPct / 2 : roundTripFee * cfgFeeMultiplier;
   const tpStartGap = twinMode ? twinGapPct : minProfitableGap;
 
+  const safeGridDist = minProfitableGap * 2;
   const gridLevels = isShort
-    ? levels.filter(l => l >= currentPrice * (1 + minProfitableGap) && l <= upperBound)
-    : levels.filter(l => l <= currentPrice * (1 - minProfitableGap) && l >= lowerBound).reverse();
+    ? levels.filter(l => l >= currentPrice * (1 + safeGridDist) && l <= upperBound)
+    : levels.filter(l => l <= currentPrice * (1 - safeGridDist) && l >= lowerBound).reverse();
 
   let openOrders: any[] = [];
   try {
@@ -704,12 +707,12 @@ async function executeGridStrategy(strategy: Strategy) {
     : (positionQty > 0 && positionEntryPrice > 0
       ? (positionQty * positionEntryPrice) / (config.leverage || 8)
       : 0);
-  const effectiveAllocated = isTandemChildBudget && allocatedBudget > 0
+  const effectiveAllocated = allocatedBudget > 0
     ? Math.max(0, allocatedBudget - positionMargin)
-    : allocatedBudget;
+    : 0;
   let availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, effectiveAllocated) : accountAvailable;
 
-  if (allocatedBudget > 0 && (accountAvailable > effectiveAllocated + 0.5 || isTandemChildBudget)) {
+  if (allocatedBudget > 0) {
     console.log(`[${tag}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, posMargin=${positionMargin.toFixed(2)}, effective=${effectiveAllocated.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
   }
 

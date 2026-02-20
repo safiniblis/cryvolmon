@@ -71,6 +71,9 @@ The application is built as a full-stack solution. The frontend is developed wit
 - **Math**: At 100x leverage, liq distance ~1%, max loss = 2x capitalPerSide, survivor profits = ~100% of its margin at liq point
 
 ## Recent Changes
+- 2026-02-20: Modularized strategy engine: extracted tandem code into server/tandem-engine.ts (~1360 lines) and hedge pair code into server/hedge-pair-engine.ts (~432 lines). strategy-engine.ts reduced from 4031 to ~2340 lines. Re-exports maintain backward compatibility.
+- 2026-02-20: Fixed grid budget cap bug: standalone grids now subtract position margin from allocatedBudget to compute effective available balance, preventing grids from consuming entire account when budget is set.
+- 2026-02-20: Fixed grid order cascade bug: added 2x grid gap minimum distance filter for grid orders during both initial buy and ongoing cycles, preventing orders from being placed close enough to fill instantly and cascade.
 - 2026-02-20: Tandem rebalanced to 50/50 default (was 4/7 long, 3/7 short). Cascade portions updated to 1/2, 1/4, 1/4.
 - 2026-02-20: Hedge Pair strategy rewritten: removed cascade TP scheme, replaced with software-based trailing SL (0.33% default). No TPs/SLs at entry — after one side liquidates, trailing SL tracks HWM on survivor, updating every 15s poll cycle.
 - 2026-02-19: Hedge Pair strategy: full implementation with API route, state machine engine (entry/monitoring/cascade/done), UI panel with start form and running state, strategy card integration with phase badge and params

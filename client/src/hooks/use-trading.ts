@@ -404,3 +404,23 @@ export function useManualTrade() {
     },
   });
 }
+
+export function useEmergencyStop() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/emergency-stop");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account"] });
+      toast({ title: "Emergency Stop", description: data.message });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Emergency Stop Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}

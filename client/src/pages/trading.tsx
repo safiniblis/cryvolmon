@@ -28,13 +28,14 @@ import {
   useTandemStart,
   useHedgePairStart,
   usePairInfo,
+  useEmergencyStop,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Wifi, WifiOff,
   DollarSign, Activity,
   AlertTriangle, ArrowRight, Zap,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, ArrowDownToLine,
-  RefreshCw, ArrowUpDown,
+  RefreshCw, ArrowUpDown, OctagonX,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -1583,6 +1584,8 @@ function HedgePairPanel() {
 }
 
 export default function TradingPage() {
+  const emergencyStop = useEmergencyStop();
+
   return (
     <div className="min-h-screen w-full bg-[#0a0f1e] text-foreground p-3 sm:p-6 relative overflow-x-hidden">
       <div className="absolute top-0 left-0 w-full h-[300px] bg-gradient-to-b from-purple-900/10 to-transparent pointer-events-none" />
@@ -1594,6 +1597,20 @@ export default function TradingPage() {
             <h1 className="text-xl font-extrabold text-foreground">Trading Agent</h1>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="destructive"
+              size="sm"
+              data-testid="button-emergency-stop"
+              disabled={emergencyStop.isPending}
+              onClick={() => {
+                if (confirm("EMERGENCY STOP: This will stop ALL strategies and cancel ALL open orders. Continue?")) {
+                  emergencyStop.mutate();
+                }
+              }}
+            >
+              <OctagonX className="h-3 w-3 mr-1" />
+              {emergencyStop.isPending ? "Stopping..." : "Emergency Stop"}
+            </Button>
             <ConnectionBanner />
             <Link href="/">
               <Button variant="outline" size="sm" data-testid="link-dashboard">

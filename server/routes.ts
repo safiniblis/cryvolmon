@@ -228,11 +228,32 @@ export async function registerRoutes(
         try {
           if (strategy.type === "tandem") {
             await cancelAllTandemOrders(id, strategy.symbol);
+            const config = strategy.config as any;
+            const childIds = [config?.longGridId, config?.shortGridId].filter(Boolean) as number[];
+            for (const childId of childIds) {
+              try {
+                const child = await storage.getStrategy(childId);
+                if (child) {
+                  await cancelAllGridOrders(childId, child.symbol);
+                  await storage.deleteStrategy(childId);
+                  console.log(`[Delete ${id}] Deleted child grid #${childId}`);
+                }
+              } catch (ce: any) {
+                console.error(`[Delete ${id}] Child #${childId} cleanup error:`, ce.message);
+              }
+            }
           } else {
             await cancelAllGridOrders(id, strategy.symbol);
           }
         } catch (e: any) {
           console.error(`[Delete ${id}] Cancel orders error:`, e.message);
+        }
+
+        try {
+          await client.cancelAllOrders(strategy.symbol);
+          console.log(`[Delete ${id}] Cancelled all orders for ${strategy.symbol}`);
+        } catch (e: any) {
+          console.error(`[Delete ${id}] Cancel all orders error:`, e.message);
         }
 
         try {
@@ -315,6 +336,65 @@ export async function registerRoutes(
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
+  });
+
+  app.post("/api/emergency-stop", async (req, res) => {
+    const client = getBitunixClient();
+    console.log("[Emergency Stop] Triggered");
+
+    stopStrategyEngine();
+
+    const allStrategies = await storage.getStrategies();
+    const running = allStrategies.filter(s => s.status === "running");
+    for (const s of running) {
+      try {
+        await storage.updateStrategy(s.id, { status: "stopped" });
+        console.log(`[Emergency Stop] Stopped strategy #${s.id} (${s.type} ${s.symbol})`);
+      } catch (e: any) {
+        console.error(`[Emergency Stop] Failed to stop strategy #${s.id}:`, e.message);
+      }
+    }
+
+    const cancelledSymbols: string[] = [];
+    if (client) {
+      try {
+        const openRes = await client.getOpenOrders();
+        if (openRes?.code === 0) {
+          const orders = openRes.data?.orderList || openRes.data || [];
+          const symbolsWithOrders = [...new Set(
+            (Array.isArray(orders) ? orders : []).map((o: any) => o.symbol).filter(Boolean)
+          )] as string[];
+
+          const dbSymbols = [...new Set(allStrategies.map(s => s.symbol))];
+          const allSymbols = [...new Set([...symbolsWithOrders, ...dbSymbols])];
+
+          for (const symbol of allSymbols) {
+            try {
+              await client.cancelAllOrders(symbol);
+              cancelledSymbols.push(symbol);
+              console.log(`[Emergency Stop] Cancelled all orders for ${symbol}`);
+            } catch (e: any) {
+              console.error(`[Emergency Stop] Cancel orders for ${symbol} failed:`, e.message);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.error(`[Emergency Stop] Failed to fetch open orders:`, e.message);
+        const dbSymbols = [...new Set(allStrategies.map(s => s.symbol))];
+        for (const symbol of dbSymbols) {
+          try {
+            await client.cancelAllOrders(symbol);
+            cancelledSymbols.push(symbol);
+          } catch {}
+        }
+      }
+    }
+
+    res.json({
+      stopped: running.length,
+      cancelledSymbols,
+      message: `Emergency stop: ${running.length} strategies stopped, orders cancelled for ${cancelledSymbols.length} symbols`
+    });
   });
 
   // === Trade Logs ===

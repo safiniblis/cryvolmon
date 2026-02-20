@@ -677,11 +677,9 @@ export async function registerRoutes(
     try {
       const schema = z.object({
         symbol: z.string().min(1),
-        capitalPerSide: z.number().min(1).max(50).default(5),
+        capitalPerSide: z.number().min(0.5).max(50).default(5),
         leverage: z.number().min(10).max(125).default(100),
-        cascadeTargetsPct: z.array(z.number()).default([0.005, 0.01, 0.02, 0.03]),
-        cascadePortions: z.array(z.number()).default([0.3, 0.3, 0.25, 0.15]),
-        slBufferPct: z.number().min(0.001).max(0.05).default(0.002),
+        trailingPct: z.number().min(0.001).max(0.05).default(0.0033),
         autoRestart: z.boolean().default(true),
       });
       const params = schema.parse(req.body);
@@ -709,10 +707,8 @@ export async function registerRoutes(
           survivingSide: null,
           survivingQty: 0,
           slOrderId: null,
-          tpOrderIds: [],
-          cascadeTargetsPct: params.cascadeTargetsPct,
-          cascadePortions: params.cascadePortions,
-          slBufferPct: params.slBufferPct,
+          trailingPct: params.trailingPct,
+          trailingHwm: 0,
           cycleCount: 0,
           totalPnl: 0,
           lastActionAt: 0,

@@ -339,25 +339,27 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     if (!config.upperPrice) config.upperPrice = currentPrice * (isShort ? 1.10 : 1.02);
     if (!config.liquidationPrice) config.liquidationPrice = currentPrice * (isShort ? 1.12 : 0.88);
 
+    const fixedInitialQty = (config as any).fixedInitialQty;
+    const fixedInitialShare = (config as any).fixedInitialShare;
     const minTpCount = 5;
     const tpReserve = config.tpReservePct || 0.10;
     const minInitialQty = (minTpCount * precision.minTradeVolume) / (1 - tpReserve);
     const minInitialMargin = (minInitialQty * currentPrice) / (leverage * 0.95);
-    const initialShare = Math.max(minInitialMargin, budget * 0.25);
+    const initialShare = fixedInitialShare || Math.max(minInitialMargin, budget * 0.25);
     const remainingForGrids = budget - initialShare;
     const marginPerGrid = totalGridCount > 0 ? remainingForGrids / totalGridCount : remainingForGrids;
     config.amountPerGrid = marginPerGrid;
 
     const initialNotional = initialShare * leverage * 0.95;
     const baseQty = Math.max(initialNotional / currentPrice, minInitialQty);
-    const qtyStr = roundQty(baseQty, precision.basePrecision);
+    const qtyStr = fixedInitialQty || roundQty(baseQty, precision.basePrecision);
 
     const gridLevelsIn1Pct = isShort
       ? gridLevels.filter(l => l <= currentPrice * (1 + bandPct))
       : gridLevels.filter(l => l >= currentPrice * (1 - bandPct));
     const gridInitCount = gridLevelsIn1Pct.length;
 
-    console.log(`[${label} ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, side=${posSide}, totalGridLevels=${totalGridCount}, initialShare=${initialShare.toFixed(2)}, marginPerGrid=${marginPerGrid.toFixed(4)}, gridOrdersIn1%=${gridInitCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
+    console.log(`[${label} ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, side=${posSide}, totalGridLevels=${totalGridCount}, initialShare=${initialShare.toFixed(2)}, marginPerGrid=${marginPerGrid.toFixed(4)}, gridOrdersIn1%=${gridInitCount}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr}${fixedInitialQty ? ' (fixed)' : ''} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
 
     const result = await client.placeOrder({
       symbol: strategy.symbol,
@@ -377,7 +379,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       symbol: strategy.symbol,
       side: posSide,
       orderType: "MARKET",
-      quantity: baseQty,
+      quantity: fixedInitialQty ? parseFloat(fixedInitialQty) : baseQty,
       price: currentPrice,
       status: success ? "filled" : "error",
       orderId: orderId || null,
@@ -2055,11 +2057,25 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
       console.log(`[Tandem ${strategy.id}] Leverage note:`, e.message);
     }
 
-    console.log(`[Tandem ${strategy.id}] Creating LONG + SHORT grid bots, total=${totalCapital}, L=${longCapital.toFixed(1)}(${longWeight}/${totalWeight}) S=${shortCapital.toFixed(1)}(${shortWeight}/${totalWeight}), leverage=${leverage}x`);
+    const precision = await getPairPrecision(strategy.symbol);
+    const tandemReservePct = 0.65;
+    const minTpCount = 5;
+    const minInitialQty = (minTpCount * precision.minTradeVolume) / (1 - tandemReservePct);
+    const perSideCapital = Math.min(longCapital, shortCapital);
+    const minInitialMargin = (minInitialQty * currentPrice) / (leverage * 0.95);
+    const initialShare = Math.max(minInitialMargin, perSideCapital * 0.25);
+    const initialNotional = initialShare * leverage * 0.95;
+    const symmetricQty = Math.max(initialNotional / currentPrice, minInitialQty);
+    const symmetricQtyStr = roundQty(symmetricQty, precision.basePrecision);
+    const symmetricQtyNum = parseFloat(symmetricQtyStr);
+
+    console.log(`[Tandem ${strategy.id}] Creating LONG + SHORT grid bots, total=${totalCapital}, L=${longCapital.toFixed(1)}(${longWeight}/${totalWeight}) S=${shortCapital.toFixed(1)}(${shortWeight}/${totalWeight}), leverage=${leverage}x, symmetricQty=${symmetricQtyStr}`);
 
     const fm = config.feeMultiplier || 3.5;
     const longGridConfig = defaultGridConfigForSide("LONG", currentPrice, leverage, longCapital, fm);
     (longGridConfig as any).parentTandemId = strategy.id;
+    (longGridConfig as any).fixedInitialQty = symmetricQtyStr;
+    (longGridConfig as any).fixedInitialShare = initialShare;
     const longGrid = await storage.createStrategy({
       name: `TL ${strategy.symbol}`,
       type: "grid",
@@ -2072,6 +2088,8 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
 
     const shortGridConfig = defaultGridConfigForSide("SHORT", currentPrice, leverage, shortCapital, fm);
     (shortGridConfig as any).parentTandemId = strategy.id;
+    (shortGridConfig as any).fixedInitialQty = symmetricQtyStr;
+    (shortGridConfig as any).fixedInitialShare = initialShare;
     const shortGrid = await storage.createStrategy({
       name: `TS ${strategy.symbol}`,
       type: "grid",

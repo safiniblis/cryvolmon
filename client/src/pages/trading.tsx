@@ -1073,8 +1073,8 @@ function TandemStartPanel() {
   const [capital, setCapital] = useState("100");
   const [leverage, setLeverage] = useState("33");
   const [rotation, setRotation] = useState(false);
-  const [longWeight, setLongWeight] = useState("4");
-  const [shortWeight, setShortWeight] = useState("3");
+  const [longWeight, setLongWeight] = useState("1");
+  const [shortWeight, setShortWeight] = useState("1");
   const tandemStart = useTandemStart();
   const stopStrategy = useStopStrategy();
   const { data: strategies } = useStrategies();
@@ -1132,7 +1132,7 @@ function TandemStartPanel() {
             </div>
             <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-capital">
               <p className="text-[9px] text-muted-foreground">Capital (L/S)</p>
-              <p className="font-mono text-[11px] font-semibold">${cfg.totalCapital || 0} ({cfg.longWeight || 4}/{cfg.shortWeight || 3})</p>
+              <p className="font-mono text-[11px] font-semibold">${cfg.totalCapital || 0} ({cfg.longWeight || 1}/{cfg.shortWeight || 1})</p>
             </div>
             {cfg.longGridId && (
               <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-grids">
@@ -1281,8 +1281,8 @@ function TandemStartPanel() {
           <span className="text-[10px] text-muted-foreground">S</span>
           <span className="text-[9px] text-muted-foreground/60 ml-auto">
             {(() => {
-              const lw = parseInt(longWeight) || 4;
-              const sw = parseInt(shortWeight) || 3;
+              const lw = parseInt(longWeight) || 1;
+              const sw = parseInt(shortWeight) || 1;
               const t = lw + sw;
               return `L:${((lw / t) * 100).toFixed(0)}% S:${((sw / t) * 100).toFixed(0)}%`;
             })()}
@@ -1335,8 +1335,8 @@ function TandemStartPanel() {
               totalCapital: parseFloat(capital),
               leverage: parseInt(leverage),
               rotationEnabled: rotation,
-              longWeight: parseInt(longWeight) || 4,
-              shortWeight: parseInt(shortWeight) || 3,
+              longWeight: parseInt(longWeight) || 1,
+              shortWeight: parseInt(shortWeight) || 1,
             })}
           >
             {tandemStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Zap className="h-3 w-3 mr-1" />}

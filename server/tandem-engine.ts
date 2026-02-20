@@ -483,12 +483,14 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
           console.log(`[Tandem ${strategy.id}] REBALANCE #${(config.rebalanceCount || 0) + 1}: ${largerSide} ${maxQty} vs ${minQty} (ratio ${ratio.toFixed(2)}, trim ${(trimPct * 100).toFixed(0)}%=${trimQty}, liqUrg=${liqUrgency}, priceVel=${(priceMove * 100).toFixed(2)}%, nextCooldown=${Math.round(nextCooldown / 1000)}s)`);
 
           try {
+            const posToTrim = largerSide === "LONG" ? longPos : shortPos;
             const result = await client.placeOrder({
               symbol: strategy.symbol,
               qty: trimQty,
               side: closeSide,
               tradeSide: "CLOSE",
               orderType: "MARKET",
+              ...(posToTrim?.positionId ? { positionId: posToTrim.positionId } : {}),
             });
 
             if (result?.code === 0) {
@@ -657,6 +659,7 @@ async function bailOutAndRestart(
       side: closeSide,
       tradeSide: "CLOSE",
       orderType: "MARKET",
+      ...(config.survivingPositionId ? { positionId: config.survivingPositionId } : {}),
     });
 
     const profitPerUnit = direction * (currentPrice - config.entryPrice);
@@ -803,6 +806,7 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
             side: closeSide,
             tradeSide: "CLOSE",
             orderType: "MARKET",
+            ...(config.survivingPositionId ? { positionId: config.survivingPositionId } : {}),
           });
 
           const profitPerUnit = direction * (currentPrice - config.entryPrice);
@@ -916,6 +920,7 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
         side: closeSide,
         tradeSide: "CLOSE",
         orderType: "MARKET",
+        ...(survivingPos?.positionId ? { positionId: survivingPos.positionId } : {}),
       });
 
       const direction = config.survivingSide === "LONG" ? 1 : -1;

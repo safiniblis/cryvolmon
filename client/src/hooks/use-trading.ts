@@ -356,7 +356,7 @@ export function useHedgePairStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
-    mutationFn: async (data: { symbol: string; capitalPerSide: number; leverage: number; autoRestart?: boolean; slBufferPct?: number }) => {
+    mutationFn: async (data: { symbol: string; capitalPerSide: number; leverage: number; autoRestart?: boolean; trailingPct?: number }) => {
       const res = await apiRequest("POST", "/api/strategies/hedge-pair-start", data);
       return res.json();
     },

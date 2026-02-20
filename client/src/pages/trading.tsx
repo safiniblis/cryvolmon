@@ -352,7 +352,8 @@ function StrategyCard({ s }: { s: Strategy }) {
     { label: "Cycle", value: `#${cfg.cycleCount || 0}` },
     ...(cfg.liquidatedSide ? [{ label: "Liq Side", value: cfg.liquidatedSide }] : []),
     ...(cfg.survivingSide ? [{ label: "Survivor", value: cfg.survivingSide }] : []),
-    { label: "SL Buffer", value: `${((cfg.slBufferPct || 0.002) * 100).toFixed(1)}%` },
+    { label: "Trail", value: `${((cfg.trailingPct || 0.0033) * 100).toFixed(2)}%` },
+    ...(cfg.trailingHwm ? [{ label: "HWM", value: `$${Number(cfg.trailingHwm).toFixed(4)}` }] : []),
     { label: "Auto", value: cfg.autoRestart ? "On" : "Off" },
     { label: "Cycle PnL", value: `$${Number(cfg.cyclePnl || 0).toFixed(4)}` },
     { label: "Total PnL", value: `$${Number(cfg.totalPnl || 0).toFixed(4)}` },
@@ -384,7 +385,7 @@ function StrategyCard({ s }: { s: Strategy }) {
                 )}
                 {s.type === "hedge_pair" && cfg.phase && s.status === "running" && (
                   <Badge variant="secondary" className="text-[10px] bg-cyan-500/20 text-cyan-300 border-cyan-500/30">
-                    {cfg.phase === "entry" ? "Opening" : cfg.phase === "monitoring" ? "Watching" : cfg.phase === "cascade" ? "Cascade" : cfg.phase === "done" ? "Done" : cfg.phase}
+                    {cfg.phase === "entry" ? "Opening" : cfg.phase === "monitoring" ? "Watching" : cfg.phase === "trailing" ? "Trailing" : cfg.phase === "done" ? "Done" : cfg.phase}
                   </Badge>
                 )}
                 {cfg.leverage && <span className="text-[10px] text-yellow-300 font-mono">{cfg.leverage}x</span>}
@@ -1359,7 +1360,7 @@ function HedgePairPanel() {
   const [capitalPerSide, setCapitalPerSide] = useState("5");
   const [leverage, setLeverage] = useState("100");
   const [autoRestart, setAutoRestart] = useState(true);
-  const [slBuffer, setSlBuffer] = useState("0.2");
+  const [trailingPct, setTrailingPct] = useState("0.33");
 
   const { data: pairInfo } = usePairInfo(symbol);
   const maxLev = (pairInfo as any)?.maxLeverage || 125;
@@ -1374,7 +1375,7 @@ function HedgePairPanel() {
     const hedgePhaseLabels: Record<string, string> = {
       entry: "Opening L+S",
       monitoring: "Watching",
-      cascade: "Cascade",
+      trailing: "Trailing SL",
       done: "Cycle Done",
     };
 
@@ -1435,10 +1436,16 @@ function HedgePairPanel() {
               </div>
             </div>
           )}
-          {cfg.tpOrderIds?.length > 0 && (
-            <div className="p-1.5 rounded border border-border/20 bg-card/20">
-              <p className="text-[9px] text-muted-foreground">TPs Active</p>
-              <p className="font-mono text-[11px] font-semibold">{cfg.tpOrderIds.length} orders ({cfg.cascadeTargetsPct?.map((t: number) => `+${(t*100).toFixed(1)}%`).join(", ")})</p>
+          {phase === "trailing" && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                <p className="text-[9px] text-muted-foreground">Trail %</p>
+                <p className="font-mono text-[11px] font-semibold text-yellow-300">{((cfg.trailingPct || 0.0033) * 100).toFixed(2)}%</p>
+              </div>
+              <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                <p className="text-[9px] text-muted-foreground">HWM</p>
+                <p className="font-mono text-[11px] font-semibold">{cfg.trailingHwm ? `$${Number(cfg.trailingHwm).toFixed(4)}` : "..."}</p>
+              </div>
             </div>
           )}
           <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/20">
@@ -1500,15 +1507,15 @@ function HedgePairPanel() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] text-muted-foreground">SL Buffer:</span>
+          <span className="text-[10px] text-muted-foreground">Trail:</span>
           <Input
-            data-testid="input-hedge-sl-buffer"
+            data-testid="input-hedge-trailing-pct"
             type="number"
             min="0.1"
             max="5"
-            step="0.1"
-            value={slBuffer}
-            onChange={e => setSlBuffer(e.target.value)}
+            step="0.01"
+            value={trailingPct}
+            onChange={e => setTrailingPct(e.target.value)}
             className="w-16 text-xs font-mono"
           />
           <span className="text-[10px] text-muted-foreground">%</span>
@@ -1560,7 +1567,7 @@ function HedgePairPanel() {
               capitalPerSide: parseFloat(capitalPerSide),
               leverage: parseInt(leverage),
               autoRestart,
-              slBufferPct: parseFloat(slBuffer) / 100,
+              trailingPct: parseFloat(trailingPct) / 100,
             })}
           >
             {hedgePairStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Shield className="h-3 w-3 mr-1" />}
@@ -1568,7 +1575,7 @@ function HedgePairPanel() {
           </Button>
         </div>
         <p className="text-[9px] text-muted-foreground/60">
-          Static L+S, high leverage, SL near break-even, TP cascade +0.5/1/2/3% past liq. Min $1/side.
+          Static L+S, high leverage, trailing SL 0.33% after other side liquidates. Min $0.5/side.
         </p>
       </CardContent>
     </Card>

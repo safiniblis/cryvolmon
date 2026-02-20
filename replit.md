@@ -19,7 +19,7 @@ The application is built as a full-stack solution. The frontend is developed wit
     - Includes dynamic extension of grid bounds as prices move.
     - Sell-side utilizes Bitunix's TP/SL API for Take Profit orders, geometrically spaced up to 3% above current price, with a configurable TP reserve.
     - Initial market buy logic calculates maximum affordable position with a 5% safety buffer.
-- **Tandem L/S Live Strategy:** A dual-grid bot system for simultaneous LONG and SHORT positions with configurable capital split (default 4/7 long, 3/7 short). It operates through a 5-phase state machine (entry, waiting_liquidation, cascade, trailing, complete, restart) with built-in liquidation recovery, reversal bail-out logic, and high-water mark trailing stops.
+- **Tandem L/S Live Strategy:** A dual-grid bot system for simultaneous LONG and SHORT positions with equal 50/50 capital split (configurable via longWeight/shortWeight). It operates through a 5-phase state machine (entry, waiting_liquidation, cascade, trailing, complete, restart) with built-in liquidation recovery, reversal bail-out logic, and high-water mark trailing stops.
 - **Budget Cap System:** Each strategy has an `allocatedBudget` for capital management, adjustable through manual 'Add Margin'/'Remove Margin' controls. Budget adjusts with PnL for standalone grids but is fixed for tandem child grids.
 - **Margin Adjustment Controls:** Allows users to add margin by placing new buy orders at uncovered grid levels or remove margin by canceling lowest-performing buy orders.
 - **Pair Rotation Logic:** Automatically switches trading pairs based on volatility scores and risk gauges, checking every 5 minutes.
@@ -34,12 +34,12 @@ The application is built as a full-stack solution. The frontend is developed wit
 
 ## Tandem L/S Strategy Details
 - **State machine**: entry → waiting_liquidation → cascade → trailing → complete → restart
-- **Entry**: Creates 2 child grid strategies (LONG grid + SHORT grid) with configurable weight split (default 4/7 long, 3/7 short)
+- **Entry**: Creates 2 child grid strategies (LONG grid + SHORT grid) with equal 50/50 split (configurable via longWeight/shortWeight)
 - **Child grids**: Run as independent grid bots via the normal strategy cycle engine
 - **Waiting**: Polls getPositions every 15s; detects liquidation when one side's position disappears
-- **Cascade**: Stops liquidated child grid; step 0: immediate market-close 3/7 (recover liq cost), step 1: close 2/7 at +1%, step 2: close 1/7 at +2%
+- **Cascade**: Stops liquidated child grid; step 0: immediate market-close 1/2 (recover liq cost), step 1: close 1/4 at +1%, step 2: close 1/4 at +2%
 - **Reversal bail-out**: If price crosses back past liquidation point after any cascade step (trend broke), immediately closes remaining position and restarts cycle with fresh grids. Applies in both cascade and trailing phases. Simulation uses percent=-3 marker for bail-out exits.
-- **Trailing**: Tracks high watermark, closes remaining 1/7 on 0.3% pullback (tight since recovery already secured)
+- **Trailing**: Tracks high watermark, closes remaining 1/4 on 0.3% pullback (tight since recovery already secured)
 - **Complete**: Cleans up orders/positions, optionally rotates pair, resets to entry for next cycle
 - **Config**: Stored in strategy.config JSON (TandemConfig interface) — totalCapital, longGridId, shortGridId
 - **API route**: `POST /api/strategies/tandem-start` (symbol, totalCapital, leverage, rotationEnabled)
@@ -60,18 +60,19 @@ The application is built as a full-stack solution. The frontend is developed wit
 
 ## Hedge Pair Strategy Details
 - **Concept**: Static long + short positions at very high leverage (75-125x), tiny capital ($0.5-$50/side), one side liquidates quickly while survivor profits
-- **State machine**: entry → monitoring → cascade → done (→ restart if autoRestart)
-- **Entry**: Opens simultaneous LONG and SHORT market orders at same price, sets leverage via API
+- **State machine**: entry → monitoring → trailing → done (→ restart if autoRestart)
+- **Entry**: Opens simultaneous LONG and SHORT market orders at same price, sets leverage via API. No TPs or SLs placed at entry.
 - **Monitoring**: Polls positions every 15s, detects when one side is liquidated (position disappears)
-- **Cascade**: Places TP orders on surviving side at configurable targets (default +0.5%, +1%, +2%, +3% past liquidation price), portions default 30/30/25/15%
-- **SL protection**: Places stop-loss on survivor at entry price ± slBufferPct (default 0.2%) — near break-even to limit risk if price reverses
+- **Trailing**: Software-based trailing SL on survivor. Tracks high water mark (HWM), places/updates SL at HWM ± trailingPct (default 0.33%). SL is cancelled and re-placed whenever HWM advances. Bitunix API doesn't support native trailing stops, so this is implemented via polling.
 - **Done**: Cleans up, logs PnL, optionally restarts with fresh cycle
-- **Config**: leverage, capitalPerSide, cascadeTargetsPct, cascadePortions, slBufferPct, autoRestart
-- **API route**: `POST /api/strategies/hedge-pair-start` (symbol, capitalPerSide, leverage, autoRestart, slBufferPct)
-- **UI panel**: Shows phase, leverage, capital, entry price, liquidated/survivor sides, TP orders, cycle/total PnL
+- **Config**: leverage, capitalPerSide, trailingPct (default 0.33%), autoRestart
+- **API route**: `POST /api/strategies/hedge-pair-start` (symbol, capitalPerSide, leverage, trailingPct, autoRestart)
+- **UI panel**: Shows phase, leverage, capital, entry price, liquidated/survivor sides, trailing HWM/%, cycle/total PnL
 - **Math**: At 100x leverage, liq distance ~1%, max loss = 2x capitalPerSide, survivor profits = ~100% of its margin at liq point
 
 ## Recent Changes
+- 2026-02-20: Tandem rebalanced to 50/50 default (was 4/7 long, 3/7 short). Cascade portions updated to 1/2, 1/4, 1/4.
+- 2026-02-20: Hedge Pair strategy rewritten: removed cascade TP scheme, replaced with software-based trailing SL (0.33% default). No TPs/SLs at entry — after one side liquidates, trailing SL tracks HWM on survivor, updating every 15s poll cycle.
 - 2026-02-19: Hedge Pair strategy: full implementation with API route, state machine engine (entry/monitoring/cascade/done), UI panel with start form and running state, strategy card integration with phase badge and params
 - 2026-02-19: Tandem TP reserve raised from 10% to 65% — ensures enough position survives for cascade to offset twin liquidation loss. Simulation updated to reflect reserve-aware cascade qty.
 - 2026-02-19: Trailing TP: reserve portion now gets a trailing TP order that follows the high watermark (0.5% pullback default). Updates when price makes new highs, only triggers when profitable vs entry.

@@ -370,10 +370,17 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
     const shortLiqPrice = parseFloat(shortPos.liqPrice || "0");
     const currentPrice = ticker?.lastPrice || config.entryPrice;
 
+    const longPnl = parseFloat(longPos.unrealizedPNL || "0");
+    const shortPnl = parseFloat(shortPos.unrealizedPNL || "0");
+    const longMargin = parseFloat(longPos.margin || "0");
+    const shortMargin = parseFloat(shortPos.margin || "0");
+    const longRoi = longMargin > 0 ? longPnl / longMargin : 0;
+    const shortRoi = shortMargin > 0 ? shortPnl / shortMargin : 0;
+
     const longLiqDist = currentPrice > 0 && longLiqPrice > 0 ? (currentPrice - longLiqPrice) / currentPrice : 1;
     const shortLiqDist = currentPrice > 0 && shortLiqPrice > 0 ? (shortLiqPrice - currentPrice) / currentPrice : 1;
 
-    console.log(`[Tandem ${strategy.id}] Both alive @ ${currentPrice.toFixed(4)} | L=${longQty} liq=${longLiqPrice.toFixed(4)}(${(longLiqDist * 100).toFixed(1)}%) S=${shortQty} liq=${shortLiqPrice.toFixed(4)}(${(shortLiqDist * 100).toFixed(1)}%)`);
+    console.log(`[Tandem ${strategy.id}] Both alive @ ${currentPrice.toFixed(4)} | L=${longQty} liq=${longLiqPrice.toFixed(4)}(${(longLiqDist * 100).toFixed(1)}%) pnl=${longPnl.toFixed(2)} roi=${(longRoi * 100).toFixed(1)}% | S=${shortQty} liq=${shortLiqPrice.toFixed(4)}(${(shortLiqDist * 100).toFixed(1)}%) pnl=${shortPnl.toFixed(2)} roi=${(shortRoi * 100).toFixed(1)}%`);
 
     const longW = config.longWeight || 1;
     const shortW = config.shortWeight || 1;
@@ -467,23 +474,57 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
           return;
         }
 
-        const largerSide: "LONG" | "SHORT" = longQty > shortQty ? "LONG" : "SHORT";
-        const excessQty = maxQty - minQty;
+        const qtyLargerSide: "LONG" | "SHORT" = longQty > shortQty ? "LONG" : "SHORT";
+        const largerSideRoi = qtyLargerSide === "LONG" ? longRoi : shortRoi;
+        const smallerSideRoi = qtyLargerSide === "LONG" ? shortRoi : longRoi;
+        const largerSidePnl = qtyLargerSide === "LONG" ? longPnl : shortPnl;
 
-        const trimPct = liqUrgency ? 0.75 : 0.50;
+        const DEEP_LOSS_ROI = -0.15;
+        const MODERATE_LOSS_ROI = -0.05;
+
+        if (largerSideRoi < DEEP_LOSS_ROI && !liqUrgency) {
+          console.log(`[Tandem ${strategy.id}] Rebalance BLOCKED: ${qtyLargerSide} ROI=${(largerSideRoi * 100).toFixed(1)}% is deeply negative (threshold ${(DEEP_LOSS_ROI * 100).toFixed(0)}%). Would realize $${Math.abs(largerSidePnl).toFixed(2)} loss. Relying on grid order sizing bias instead.`);
+          config.lastRebalancePriceRef = currentPrice;
+          await storage.updateStrategy(strategy.id, { config });
+          return;
+        }
+
+        let trimSide: "LONG" | "SHORT" = qtyLargerSide;
+        let excessQty = maxQty - minQty;
+
+        if (largerSideRoi < MODERATE_LOSS_ROI && smallerSideRoi > 0 && !liqUrgency) {
+          const otherSide: "LONG" | "SHORT" = qtyLargerSide === "LONG" ? "SHORT" : "LONG";
+          console.log(`[Tandem ${strategy.id}] PnL-aware swap: ${qtyLargerSide} is underwater (ROI=${(largerSideRoi * 100).toFixed(1)}%), ${otherSide} is profitable (ROI=${(smallerSideRoi * 100).toFixed(1)}%). Skipping direct trim of losing side, relying on order sizing bias.`);
+          config.lastRebalancePriceRef = currentPrice;
+          await storage.updateStrategy(strategy.id, { config });
+          return;
+        }
+
+        let baseTrimPct = liqUrgency ? 0.75 : 0.50;
+
+        if (largerSideRoi < MODERATE_LOSS_ROI && largerSideRoi >= DEEP_LOSS_ROI) {
+          const lossRange = Math.abs(DEEP_LOSS_ROI) - Math.abs(MODERATE_LOSS_ROI);
+          const lossSeverity = (Math.abs(largerSideRoi) - Math.abs(MODERATE_LOSS_ROI)) / lossRange;
+          baseTrimPct *= Math.max(0.25, 1 - lossSeverity * 0.75);
+          console.log(`[Tandem ${strategy.id}] PnL-scaled trim: ${trimSide} ROI=${(largerSideRoi * 100).toFixed(1)}%, trim reduced to ${(baseTrimPct * 100).toFixed(0)}% of excess`);
+        }
+
         const precision = await getPairPrecision(strategy.symbol);
-        const trimQty = roundQty(excessQty * trimPct, precision.basePrecision);
+        const trimQty = roundQty(excessQty * baseTrimPct, precision.basePrecision);
         const trimQtyNum = parseFloat(trimQty);
 
+        const estimatedPnlPerUnit = largerSidePnl / (trimSide === "LONG" ? longQty : shortQty);
+        const estimatedTrimPnl = estimatedPnlPerUnit * trimQtyNum;
+
         if (trimQtyNum >= precision.minTradeVolume) {
-          const closeSide = largerSide === "LONG" ? "SELL" : "BUY";
+          const closeSide = trimSide === "LONG" ? "SELL" : "BUY";
           const newConsecutive = consecutiveRebalances + 1;
           const nextCooldown = Math.min(MAX_COOLDOWN_MS, BASE_COOLDOWN_MS * Math.pow(2, newConsecutive));
 
-          console.log(`[Tandem ${strategy.id}] REBALANCE #${(config.rebalanceCount || 0) + 1}: ${largerSide} ${maxQty} vs ${minQty} (ratio ${ratio.toFixed(2)}, trim ${(trimPct * 100).toFixed(0)}%=${trimQty}, liqUrg=${liqUrgency}, priceVel=${(priceMove * 100).toFixed(2)}%, nextCooldown=${Math.round(nextCooldown / 1000)}s)`);
+          console.log(`[Tandem ${strategy.id}] REBALANCE #${(config.rebalanceCount || 0) + 1}: ${trimSide} ${maxQty} vs ${minQty} (ratio ${ratio.toFixed(2)}, trim ${(baseTrimPct * 100).toFixed(0)}%=${trimQty}, est.PnL=${estimatedTrimPnl.toFixed(2)}, ROI=${(largerSideRoi * 100).toFixed(1)}%, liqUrg=${liqUrgency}, priceVel=${(priceMove * 100).toFixed(2)}%, nextCooldown=${Math.round(nextCooldown / 1000)}s)`);
 
           try {
-            const posToTrim = largerSide === "LONG" ? longPos : shortPos;
+            const posToTrim = trimSide === "LONG" ? longPos : shortPos;
             const result = await client.placeOrder({
               symbol: strategy.symbol,
               qty: trimQty,
@@ -509,11 +550,11 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
                 price: currentPrice,
                 status: "filled",
                 orderId: result.data?.orderId || null,
-                pnl: null,
-                errorMsg: `Rebalance #${config.rebalanceCount}: trimmed ${largerSide} by ${trimQty} (${(trimPct * 100).toFixed(0)}% of excess, ratio was ${ratio.toFixed(2)}, cooldown=${Math.round(nextCooldown / 1000)}s)`,
+                pnl: estimatedTrimPnl,
+                errorMsg: `Rebalance #${config.rebalanceCount}: trimmed ${trimSide} by ${trimQty} (${(baseTrimPct * 100).toFixed(0)}% of excess, ratio ${ratio.toFixed(2)}, ROI=${(largerSideRoi * 100).toFixed(1)}%, est.PnL=${estimatedTrimPnl.toFixed(2)}, cooldown=${Math.round(nextCooldown / 1000)}s)`,
               });
 
-              console.log(`[Tandem ${strategy.id}] Rebalanced: ${largerSide} -${trimQty}. Target ~${(minQty + excessQty * (1 - trimPct)).toFixed(1)}`);
+              console.log(`[Tandem ${strategy.id}] Rebalanced: ${trimSide} -${trimQty} (est.PnL=${estimatedTrimPnl.toFixed(2)}). Target ~${(minQty + excessQty * (1 - baseTrimPct)).toFixed(1)}`);
             } else {
               console.error(`[Tandem ${strategy.id}] Rebalance order failed: ${result?.msg}`);
             }

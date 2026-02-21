@@ -44,7 +44,7 @@ The application is built as a full-stack solution. The frontend is developed wit
 - **Config**: Stored in strategy.config JSON (TandemConfig interface) — totalCapital, longGridId, shortGridId
 - **API route**: `POST /api/strategies/tandem-start` (symbol, totalCapital, leverage, rotationEnabled)
 - **UI panel**: Shows live phase, cycle count, entry price, unrealized PnL, child grid IDs, liquidated/survivor sides, cascade progress, HWM, total PnL
-- **Rebalancing**: Dynamic position rebalancing during waiting_liquidation phase. Trims larger side when positions diverge >10% (or >5% if liq is close). Escalating cooldown (2→4→8→15min), partial trims (50% or 75% if urgent), price velocity gate (>0.5% move skips).
+- **Rebalancing**: PnL-aware dynamic rebalancing during waiting_liquidation phase. Reads unrealizedPNL and margin from Bitunix positions to compute ROI. Blocks trims when larger side ROI < -15% (deep loss). Skips trim when ROI < -5% and other side is profitable (relies on order sizing bias). For moderate losses (between -5% and -15%), scales trim size down proportionally. Trims larger side when positions diverge >10% (or >5% if liq is close). Escalating cooldown (2→4→8→15min), partial trims (50% or 75% if urgent), price velocity gate (>0.5% move skips). Estimated PnL logged with each rebalance trade.
 - **Order sizing bias**: Soft rebalancing via gridSizeMultiplier — larger side gets smaller grid orders, smaller side gets larger orders, naturally converging positions toward target weight ratio.
 - **Grid order window**: Tandem child grids cap active orders to 6 closest to current price, preventing order accumulation at range extremes.
 
@@ -71,6 +71,7 @@ The application is built as a full-stack solution. The frontend is developed wit
 - **Math**: At 100x leverage, liq distance ~1%, max loss = 2x capitalPerSide, survivor profits = ~100% of its margin at liq point
 
 ## Recent Changes
+- 2026-02-21: PnL-aware rebalancing: tandem now reads unrealizedPNL and margin from Bitunix positions. Blocks trims when losing side ROI < -15%, skips trim when ROI < -5% and other side is profitable (relies on order sizing bias instead), and scales trim size down proportionally for moderate losses. Estimated PnL now logged with each rebalance trade.
 - 2026-02-20: Modularized strategy engine: extracted tandem code into server/tandem-engine.ts (~1360 lines) and hedge pair code into server/hedge-pair-engine.ts (~432 lines). strategy-engine.ts reduced from 4031 to ~2340 lines. Re-exports maintain backward compatibility.
 - 2026-02-20: Fixed grid budget cap bug: standalone grids now subtract position margin from allocatedBudget to compute effective available balance, preventing grids from consuming entire account when budget is set.
 - 2026-02-20: Fixed grid order cascade bug: added 2x grid gap minimum distance filter for grid orders during both initial buy and ongoing cycles, preventing orders from being placed close enough to fill instantly and cascade.

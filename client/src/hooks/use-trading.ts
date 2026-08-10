@@ -352,6 +352,24 @@ export function useTandemStart() {
   });
 }
 
+export function useSpxShortStart() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { symbol: string; baseCapital: number; leverage: number }) => {
+      const res = await apiRequest("POST", "/api/strategies/spx-short-start", data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      toast({ title: "SPX Short Started", description: `${data.symbol} short running at ${data.config?.leverage}x` });
+    },
+    onError: (e: Error) => {
+      toast({ title: "SPX Short Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useSilverLongStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

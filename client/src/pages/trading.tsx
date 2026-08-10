@@ -28,6 +28,7 @@ import {
   useTandemStart,
   useHedgePairStart,
   useSilverLongStart,
+  useSpxShortStart,
   usePairInfo,
   useEmergencyStop,
 } from "@/hooks/use-trading";
@@ -1352,6 +1353,145 @@ function TandemStartPanel() {
   );
 }
 
+function SpxShortPanel() {
+  const { data: strategies } = useStrategies();
+  const stopStrategy = useStopStrategy();
+  const spxShortStart = useSpxShortStart();
+
+  const [symbol, setSymbol] = useState("SPXUSDT");
+  const [baseCapital, setBaseCapital] = useState("100");
+  const [leverage, setLeverage] = useState("20");
+
+  const running = strategies?.find(
+    (s: Strategy) => s.type === "spx_short" && s.status === "running",
+  );
+
+  if (running) {
+    const cfg = (running.config || {}) as any;
+    const phase = cfg.phase || "entry";
+    const phaseLabels: Record<string, string> = { entry: "Opening", monitoring: "Monitoring", complete: "Done" };
+    const nextCheckMin = cfg.lastLiqCheckAt
+      ? Math.max(0, Math.round((cfg.lastLiqCheckAt + 3600000 - Date.now()) / 60000))
+      : "—";
+
+    return (
+      <Card className="bg-card/30 border-border/40">
+        <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <ArrowDownToLine className="h-4 w-4 text-red-400" />
+            <span>{running.symbol}</span>
+            <Badge variant="secondary" className="text-[10px] bg-red-500/20 text-red-300 border-red-500/30">
+              SHORT · {phaseLabels[phase] || phase}
+            </Badge>
+          </CardTitle>
+          <Button size="icon" variant="ghost" onClick={() => stopStrategy.mutate(running.id)} disabled={stopStrategy.isPending}>
+            <Square className="h-3.5 w-3.5 text-red-400" />
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="p-1.5 rounded border border-border/20 bg-card/20">
+              <p className="text-[9px] text-muted-foreground">Leverage</p>
+              <p className="font-mono text-[11px] font-semibold text-red-300">{cfg.leverage}x</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20">
+              <p className="text-[9px] text-muted-foreground">Capital</p>
+              <p className="font-mono text-[11px] font-semibold">${cfg.baseCapital}</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20">
+              <p className="text-[9px] text-muted-foreground">Fills</p>
+              <p className="font-mono text-[11px] font-semibold text-red-300">
+                {cfg.ordersHit ?? 0}/{(cfg.ordersHit ?? 0) >= 5 ? "final" : "5"}
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            <div className="p-1.5 rounded border border-border/20 bg-card/20">
+              <p className="text-[9px] text-muted-foreground">Entry</p>
+              <p className="font-mono text-[11px] font-semibold">{cfg.entryPrice ? `$${Number(cfg.entryPrice).toFixed(3)}` : "..."}</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20">
+              <p className="text-[9px] text-muted-foreground">Liq Price</p>
+              <p className="font-mono text-[11px] font-semibold text-red-400">{cfg.liquidationPrice ? `$${Number(cfg.liquidationPrice).toFixed(3)}` : "..."}</p>
+            </div>
+          </div>
+          {phase === "monitoring" && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                <p className="text-[9px] text-muted-foreground">Mode</p>
+                <p className="font-mono text-[11px] font-semibold">
+                  {(cfg.ordersHit ?? 0) >= 6 ? <span className="text-purple-400">Terminal</span>
+                    : (cfg.ordersHit ?? 0) >= 5 ? <span className="text-orange-400">Final</span>
+                    : <span className="text-cyan-400">Loop</span>}
+                </p>
+              </div>
+              <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                <p className="text-[9px] text-muted-foreground">Support</p>
+                <p className="font-mono text-[11px] font-semibold">
+                  {(cfg.ordersHit ?? 0) >= 6 ? "20% @−0.1%" : (cfg.ordersHit ?? 0) >= 5 ? "5%+20%" : "5%+5%"}
+                </p>
+              </div>
+            </div>
+          )}
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/20">
+            <span>Next liq check: <span className="font-mono text-red-300">{typeof nextCheckMin === "number" ? `${nextCheckMin}m` : nextCheckMin}</span></span>
+            <span>Orders @ liq−0.1% / −0.05%</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="bg-card/30 border-border/40">
+      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <ArrowDownToLine className="h-4 w-4 text-red-400" />
+          SPX Short
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            value={symbol}
+            onChange={e => setSymbol(e.target.value.toUpperCase())}
+            className="w-28 text-xs font-mono"
+            placeholder="SPXUSDT"
+          />
+          <Input
+            type="number" min="5" step="10"
+            value={baseCapital}
+            onChange={e => setBaseCapital(e.target.value)}
+            className="w-20 text-xs font-mono"
+            placeholder="Capital $"
+          />
+          <div className="flex items-center gap-1">
+            <Input
+              type="number" min="2" max="125"
+              value={leverage}
+              onChange={e => setLeverage(e.target.value)}
+              className="w-16 text-xs font-mono"
+              placeholder="Lev"
+            />
+            <Button
+              size="sm"
+              className="h-7 px-3 text-xs bg-red-700 hover:bg-red-600"
+              disabled={spxShortStart.isPending}
+              onClick={() => spxShortStart.mutate({ symbol, baseCapital: parseFloat(baseCapital) || 100, leverage: parseInt(leverage) || 20 })}
+            >
+              {spxShortStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Play className="h-3 w-3 mr-1" />}
+              Start
+            </Button>
+          </div>
+        </div>
+        <p className="text-[9px] text-muted-foreground/60">
+          20% market short · 5% @ liq−0.1% · 5% @ liq−0.05% · hourly liq refresh
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SilverLongPanel() {
   const { data: strategies } = useStrategies();
   const stopStrategy = useStopStrategy();
@@ -1849,6 +1989,7 @@ export default function TradingPage() {
           </div>
 
           <div className="space-y-4">
+            <SpxShortPanel />
             <SilverLongPanel />
             <TandemStartPanel />
             <HedgePairPanel />

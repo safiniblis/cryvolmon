@@ -3,13 +3,6 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Strategy, TradeLogEntry } from "@shared/schema";
 
-export function useBitunixPairs() {
-  return useQuery<{ pairs: string[]; source: string }>({
-    queryKey: ["/api/bitunix/pairs"],
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
 export function useVolatilityScores() {
   return useQuery<{
     symbol: string;
@@ -98,25 +91,6 @@ export function useStrategies() {
   return useQuery<Strategy[]>({
     queryKey: ["/api/strategies"],
     refetchInterval: 10000,
-  });
-}
-
-export function useCreateStrategy() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  return useMutation({
-    mutationFn: async (data: any) => {
-      const res = await apiRequest("POST", "/api/strategies", data);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
-      toast({ title: "Strategy Created", description: "Your trading strategy has been saved." });
-    },
-    onError: (e: Error) => {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    },
   });
 }
 
@@ -352,38 +326,20 @@ export function useTandemStart() {
   });
 }
 
-export function useSpxShortStart() {
+export function useGoldLongStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
     mutationFn: async (data: { symbol: string; baseCapital: number; leverage: number }) => {
-      const res = await apiRequest("POST", "/api/strategies/spx-short-start", data);
+      const res = await apiRequest("POST", "/api/strategies/gold-long-start", data);
       return res.json();
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
-      toast({ title: "SPX Short Started", description: `${data.symbol} short running at ${data.config?.leverage}x` });
+      toast({ title: "Gold Long Started", description: `${data.symbol} long opened at ${data.config?.leverage}x` });
     },
     onError: (e: Error) => {
-      toast({ title: "SPX Short Failed", description: e.message, variant: "destructive" });
-    },
-  });
-}
-
-export function useSilverLongStart() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  return useMutation({
-    mutationFn: async (data: { symbol: string; baseCapital: number; leverage: number }) => {
-      const res = await apiRequest("POST", "/api/strategies/silver-long-start", data);
-      return res.json();
-    },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
-      toast({ title: "Silver Long Started", description: `${data.symbol} long running at ${data.config?.leverage}x` });
-    },
-    onError: (e: Error) => {
-      toast({ title: "Silver Long Failed", description: e.message, variant: "destructive" });
+      toast({ title: "Gold Long Failed", description: e.message, variant: "destructive" });
     },
   });
 }
@@ -411,33 +367,6 @@ export function usePairInfo(symbol: string) {
     queryKey: ["/api/pair-info", symbol],
     enabled: !!symbol && symbol.length >= 4,
     staleTime: 60000,
-  });
-}
-
-export function useManualTrade() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  return useMutation({
-    mutationFn: async (data: {
-      symbol: string;
-      side: string;
-      quantity: number;
-      orderType: string;
-      price?: number;
-      leverage?: number;
-    }) => {
-      const res = await apiRequest("POST", "/api/trade", data);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/trades"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/account"] });
-      toast({ title: "Trade Executed", description: "Your order has been placed." });
-    },
-    onError: (e: Error) => {
-      toast({ title: "Trade Failed", description: e.message, variant: "destructive" });
-    },
   });
 }
 

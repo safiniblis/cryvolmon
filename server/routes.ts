@@ -223,6 +223,50 @@ export async function registerRoutes(
     const strategy = await storage.getStrategy(id);
 
     if (strategy) {
+      // Gold Long uses Bitrue futures — cancel supports and close position
+      if (strategy.type === "gold_long") {
+        const { getBitrueClient } = await import("./bitrue");
+        const bitrueClient = getBitrueClient();
+        if (bitrueClient) {
+          const cfg = (strategy.config || {}) as any;
+          const supports: any[] = cfg.supportOrders || [];
+          for (const order of supports) {
+            if (!order.id) continue;
+            try {
+              await bitrueClient.cancelOrder(strategy.symbol, String(order.id));
+              console.log(`[Delete ${id}] Cancelled Bitrue support ${order.id}`);
+            } catch (e: any) {
+              console.warn(`[Delete ${id}] Cancel support ${order.id} failed: ${e.message}`);
+            }
+          }
+          // Close any open long position — use live qty from exchange, not stale config
+          try {
+            const positions = await bitrueClient.getPositions(strategy.symbol);
+            const posList: any[] = Array.isArray(positions) ? positions : (positions?.data || positions?.list || []);
+            const longPos = posList.find((p: any) =>
+              (p.symbol === strategy.symbol || p.contractName === strategy.symbol) &&
+              (p.positionSide === "LONG" || p.positionSide === "BOTH")
+            );
+            const liveQty = parseFloat(longPos?.positionAmt || longPos?.posAmt || longPos?.qty || "0");
+            if (liveQty > 0) {
+              await bitrueClient.placeOrder({
+                symbol: strategy.symbol,
+                side: "SELL",
+                type: "MARKET",
+                quantity: String(liveQty),
+                positionSide: "LONG",
+                reduceOnly: true,
+              });
+              console.log(`[Delete ${id}] Closed Bitrue long position: ${liveQty} ${strategy.symbol}`);
+            } else {
+              console.log(`[Delete ${id}] No open Bitrue long position found — skipping close`);
+            }
+          } catch (e: any) {
+            console.warn(`[Delete ${id}] Close position failed: ${e.message}`);
+          }
+        }
+      }
+
       const client = getBitunixClient();
       if (client) {
         try {
@@ -304,6 +348,23 @@ export async function registerRoutes(
       await cancelAllGridOrders(id, strategy.symbol);
     } else if (strategy.type === "tandem") {
       await cancelAllTandemOrders(id, strategy.symbol);
+    } else if (strategy.type === "gold_long") {
+      // Cancel any tracked support orders on Bitrue futures
+      const { getBitrueClient } = await import("./bitrue");
+      const bitrueClient = getBitrueClient();
+      if (bitrueClient) {
+        const cfg = (strategy.config || {}) as any;
+        const supports: any[] = cfg.supportOrders || [];
+        for (const order of supports) {
+          if (!order.id) continue;
+          try {
+            await bitrueClient.cancelOrder(strategy.symbol, String(order.id));
+            console.log(`[Stop ${id}] Cancelled Bitrue support order ${order.id}`);
+          } catch (e: any) {
+            console.warn(`[Stop ${id}] Cancel support ${order.id} failed: ${e.message}`);
+          }
+        }
+      }
     }
 
     const updated = await storage.updateStrategy(id, { status: "stopped" });
@@ -737,70 +798,22 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/strategies/spx-short-start", async (req, res) => {
+  app.post("/api/strategies/gold-long-start", async (req, res) => {
     try {
       const schema = z.object({
-        symbol: z.string().min(1).default("SPXUSDT"),
-        baseCapital: z.number().min(5).max(10000),
-        leverage: z.number().min(2).max(125).default(20),
+        symbol: z.string().min(1).default("XAUTUSDT"),
+        baseCapital: z.number().min(10).max(100000),
+        leverage: z.number().min(1).max(20).default(10),
       });
       const params = schema.parse(req.body);
 
-      const client = getBitunixClient();
-      if (!client) return res.status(400).json({ message: "API keys not configured" });
+      const { getBitrueClient } = await import("./bitrue");
+      const client = getBitrueClient();
+      if (!client) return res.status(400).json({ message: "BITRUE_API_KEY and BITRUE_SECRET_KEY must be set" });
 
       const strategy = await storage.createStrategy({
-        name: `SPX Short ${params.symbol}`,
-        type: "spx_short",
-        symbol: params.symbol.toUpperCase(),
-        side: "SELL",
-        status: "running",
-        config: {
-          baseCapital: params.baseCapital,
-          leverage: params.leverage,
-          phase: "entry",
-          ordersHit: 0,
-          entryPrice: 0,
-          entryQty: 0,
-          positionId: null,
-          liquidationPrice: 0,
-          order1Id: null,
-          order2Id: null,
-          lastLiqCheckAt: 0,
-          lastActionAt: 0,
-          totalPnl: 0,
-          tpConfig: null,
-        },
-      });
-
-      priceFeed.subscribe(params.symbol.toUpperCase());
-      startStrategyEngine();
-      setTimeout(() => runStrategyCycle(), 2000);
-
-      res.status(201).json(strategy);
-    } catch (e: any) {
-      if (e instanceof z.ZodError) {
-        return res.status(400).json({ message: e.errors[0].message });
-      }
-      res.status(500).json({ message: e.message });
-    }
-  });
-
-  app.post("/api/strategies/silver-long-start", async (req, res) => {
-    try {
-      const schema = z.object({
-        symbol: z.string().min(1).default("XAGUSDT"),
-        baseCapital: z.number().min(5).max(10000),
-        leverage: z.number().min(2).max(125).default(10),
-      });
-      const params = schema.parse(req.body);
-
-      const client = getBitunixClient();
-      if (!client) return res.status(400).json({ message: "API keys not configured" });
-
-      const strategy = await storage.createStrategy({
-        name: `Silver Long ${params.symbol}`,
-        type: "silver_long",
+        name: `Gold Long ${params.symbol}`,
+        type: "gold_long",
         symbol: params.symbol.toUpperCase(),
         side: "BUY",
         status: "running",
@@ -808,21 +821,18 @@ export async function registerRoutes(
           baseCapital: params.baseCapital,
           leverage: params.leverage,
           phase: "entry",
-          ordersHit: 0,
           entryPrice: 0,
-          entryQty: 0,
-          positionId: null,
+          avgEntryPrice: 0,
+          totalQty: 0,
+          supportOrders: [],
           liquidationPrice: 0,
-          order1Id: null,
-          order2Id: null,
-          lastLiqCheckAt: 0,
+          fillCount: 0,
+          lastRefreshAt: 0,
           lastActionAt: 0,
-          totalPnl: 0,
-          tpConfig: null,
+          lastError: null,
         },
       });
 
-      priceFeed.subscribe(params.symbol.toUpperCase());
       startStrategyEngine();
       setTimeout(() => runStrategyCycle(), 2000);
 

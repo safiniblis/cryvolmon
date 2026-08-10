@@ -1935,8 +1935,7 @@ async function guardedExecuteGridStrategy(strategy: Strategy) {
 
 import { executeTandemStrategy } from "./tandem-engine";
 import { executeHedgePairStrategy } from "./hedge-pair-engine";
-import { executeSilverLongStrategy } from "./silver-long-engine";
-import { executeSpxShortStrategy } from "./spx-short-engine";
+import { executeGoldLongStrategy } from "./gold-long-engine";
 
 const strategyExecutors: Record<string, (strategy: Strategy) => Promise<void>> = {
   grid: guardedExecuteGridStrategy,
@@ -1944,8 +1943,7 @@ const strategyExecutors: Record<string, (strategy: Strategy) => Promise<void>> =
   momentum: executeMomentumStrategy,
   tandem: executeTandemStrategy,
   hedge_pair: executeHedgePairStrategy,
-  silver_long: executeSilverLongStrategy,
-  spx_short: executeSpxShortStrategy,
+  gold_long: executeGoldLongStrategy,
 };
 
 let intervalId: NodeJS.Timeout | null = null;

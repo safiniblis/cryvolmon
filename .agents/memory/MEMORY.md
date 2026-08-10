@@ -1,0 +1,1 @@
+- [Exchange API Rules](exchange-api-rules.md) — Bitunix vs Bitrue auth, endpoints, order fields — never mix; includes XAUT sizing semantics and blocked pairs list.

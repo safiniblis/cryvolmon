@@ -352,6 +352,24 @@ export function useTandemStart() {
   });
 }
 
+export function useSilverLongStart() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { symbol: string; baseCapital: number; leverage: number }) => {
+      const res = await apiRequest("POST", "/api/strategies/silver-long-start", data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      toast({ title: "Silver Long Started", description: `${data.symbol} long running at ${data.config?.leverage}x` });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Silver Long Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useHedgePairStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

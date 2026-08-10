@@ -759,6 +759,7 @@ export async function registerRoutes(
           baseCapital: params.baseCapital,
           leverage: params.leverage,
           phase: "entry",
+          ordersHit: 0,
           entryPrice: 0,
           entryQty: 0,
           positionId: null,

@@ -737,6 +737,55 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/strategies/spx-short-start", async (req, res) => {
+    try {
+      const schema = z.object({
+        symbol: z.string().min(1).default("SPXUSDT"),
+        baseCapital: z.number().min(5).max(10000),
+        leverage: z.number().min(2).max(125).default(20),
+      });
+      const params = schema.parse(req.body);
+
+      const client = getBitunixClient();
+      if (!client) return res.status(400).json({ message: "API keys not configured" });
+
+      const strategy = await storage.createStrategy({
+        name: `SPX Short ${params.symbol}`,
+        type: "spx_short",
+        symbol: params.symbol.toUpperCase(),
+        side: "SELL",
+        status: "running",
+        config: {
+          baseCapital: params.baseCapital,
+          leverage: params.leverage,
+          phase: "entry",
+          ordersHit: 0,
+          entryPrice: 0,
+          entryQty: 0,
+          positionId: null,
+          liquidationPrice: 0,
+          order1Id: null,
+          order2Id: null,
+          lastLiqCheckAt: 0,
+          lastActionAt: 0,
+          totalPnl: 0,
+          tpConfig: null,
+        },
+      });
+
+      priceFeed.subscribe(params.symbol.toUpperCase());
+      startStrategyEngine();
+      setTimeout(() => runStrategyCycle(), 2000);
+
+      res.status(201).json(strategy);
+    } catch (e: any) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: e.errors[0].message });
+      }
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.post("/api/strategies/silver-long-start", async (req, res) => {
     try {
       const schema = z.object({

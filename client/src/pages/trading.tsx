@@ -1426,24 +1426,56 @@ function SilverLongPanel() {
             </div>
           </div>
           {phase === "monitoring" && (
-            <div className="grid grid-cols-2 gap-1.5">
-              <div className="p-1.5 rounded border border-border/20 bg-card/20">
-                <p className="text-[9px] text-muted-foreground">Liq+0.1% Ord</p>
-                <p className="font-mono text-[11px] font-semibold">
-                  {cfg.order1Id ? <span className="text-emerald-400">Active</span> : <span className="text-muted-foreground">—</span>}
-                </p>
+            <>
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                  <p className="text-[9px] text-muted-foreground">Fills</p>
+                  <p className="font-mono text-[11px] font-semibold text-yellow-300">
+                    {cfg.ordersHit ?? 0} / {cfg.ordersHit >= 5 ? "final" : "5"}
+                  </p>
+                </div>
+                <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                  <p className="text-[9px] text-muted-foreground">Mode</p>
+                  <p className="font-mono text-[11px] font-semibold">
+                    {(cfg.ordersHit ?? 0) >= 6
+                      ? <span className="text-purple-400">Terminal</span>
+                      : (cfg.ordersHit ?? 0) >= 5
+                      ? <span className="text-orange-400">Final</span>
+                      : <span className="text-cyan-400">Loop</span>}
+                  </p>
+                </div>
               </div>
-              <div className="p-1.5 rounded border border-border/20 bg-card/20">
-                <p className="text-[9px] text-muted-foreground">Liq+0.05% Ord</p>
-                <p className="font-mono text-[11px] font-semibold">
-                  {cfg.order2Id ? <span className="text-emerald-400">Active</span> : <span className="text-muted-foreground">—</span>}
-                </p>
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                  <p className="text-[9px] text-muted-foreground">
+                    {(cfg.ordersHit ?? 0) >= 6 ? "—" : "Liq+0.1%"}
+                  </p>
+                  <p className="font-mono text-[11px] font-semibold">
+                    {(cfg.ordersHit ?? 0) >= 6
+                      ? <span className="text-muted-foreground">—</span>
+                      : cfg.order1Id
+                      ? <span className="text-emerald-400">5% Active</span>
+                      : <span className="text-muted-foreground">—</span>}
+                  </p>
+                </div>
+                <div className="p-1.5 rounded border border-border/20 bg-card/20">
+                  <p className="text-[9px] text-muted-foreground">
+                    {(cfg.ordersHit ?? 0) >= 6 ? "Liq+0.1%" : "Liq+0.05%"}
+                  </p>
+                  <p className="font-mono text-[11px] font-semibold">
+                    {cfg.order2Id
+                      ? <span className="text-emerald-400">{(cfg.ordersHit ?? 0) >= 5 ? "20%" : "5%"} Active</span>
+                      : <span className="text-muted-foreground">—</span>}
+                  </p>
+                </div>
               </div>
-            </div>
+            </>
           )}
           <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/20">
             <span>Next liq check: <span className="font-mono text-yellow-300">{typeof nextCheckMin === "number" ? `${nextCheckMin}m` : nextCheckMin}</span></span>
-            <span>Support: <span className="font-mono">5% + 15%</span></span>
+            <span>Support: <span className="font-mono">
+              {(cfg.ordersHit ?? 0) >= 6 ? "20% @0.1%" : (cfg.ordersHit ?? 0) >= 5 ? "5%+20%" : "5%+5%"}
+            </span></span>
           </div>
         </CardContent>
       </Card>

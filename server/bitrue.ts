@@ -1,7 +1,30 @@
+/**
+ * Bitrue Futures Client — fapi.bitrue.com
+ *
+ * COMPLETELY SEPARATE from server/bitunix.ts — different exchange, different API shape.
+ * Do not mix Bitrue and Bitunix types, endpoints, signing, or field names.
+ *
+ * Auth:
+ *   GET  → X-CH-SIGN = HMAC-SHA256(secret, ts + "GET"  + path + "?" + queryString)
+ *   POST → X-CH-SIGN = HMAC-SHA256(secret, ts + "POST" + path + jsonBody)
+ *   Headers: X-CH-APIKEY, X-CH-SIGN, X-CH-TS (unix ms)
+ *
+ * Contract field: "contractName" (NOT "symbol"). Bitrue symbol format: "E-XAUT-USDT".
+ *
+ * Order quantity:
+ *   MARKET orders → "amount"  (USDT notional value, min $5)
+ *   LIMIT orders  → "volume"  (integer contracts; 1 contract = multiplier × underlying)
+ *   CLOSE orders  → "volume"  (integer contracts to close)
+ *
+ * positionType: 1 = long, 2 = short  (account must be in one-way mode)
+ * open:         "OPEN" = open new position, "CLOSE" = reduce/close position
+ *
+ * Cancel: POST /fapi/v1/cancel  (DELETE is not supported)
+ */
+
 import crypto from "crypto";
 
 const FUTURES_BASE = "https://fapi.bitrue.com";
-const SPOT_BASE = "https://www.bitrue.com";
 
 function hmacSha256(secret: string, message: string): string {
   return crypto.createHmac("sha256", secret).update(message).digest("hex");
@@ -16,169 +39,189 @@ export class BitrueClient {
     this.secretKey = secretKey;
   }
 
-  // Auth headers — payload is the raw query string (GET) or JSON body string (POST/DELETE)
-  private authHeaders(payload: string): Record<string, string> {
+  // ── Signing ─────────────────────────────────────────────────────────────────
+
+  private getHeaders(method: "GET" | "POST", path: string, payload: string): Record<string, string> {
+    const ts = String(Date.now());
+    const signMsg = `${ts}${method}${path}${payload}`;
     return {
       "X-CH-APIKEY": this.apiKey,
-      "X-CH-SIGN": hmacSha256(this.secretKey, payload),
-      "X-CH-TS": String(Date.now()),
+      "X-CH-SIGN":   hmacSha256(this.secretKey, signMsg),
+      "X-CH-TS":     ts,
       "Content-Type": "application/json",
     };
   }
 
-  private async futuresGet(path: string, params: Record<string, any> = {}): Promise<any> {
+  // ── Transport ────────────────────────────────────────────────────────────────
+
+  private async get(path: string, params: Record<string, string | number> = {}): Promise<any> {
     const qs = Object.keys(params).length
-      ? "?" + new URLSearchParams(params as any).toString()
+      ? "?" + new URLSearchParams(params as Record<string, string>).toString()
       : "";
-    const payload = qs.slice(1); // strip leading "?"
-    const res = await fetch(`${FUTURES_BASE}${path}${qs}`, {
-      headers: this.authHeaders(payload),
-    });
+    const headers = this.getHeaders("GET", path, qs); // qs includes "?" prefix
+    const res = await fetch(`${FUTURES_BASE}${path}${qs}`, { headers });
     const text = await res.text();
-    if (!res.ok) throw new Error(`Bitrue GET ${path} ${res.status}: ${text}`);
+    if (!res.ok) throw new Error(`Bitrue GET ${path} HTTP ${res.status}: ${text}`);
     return JSON.parse(text);
   }
 
-  private async futuresPost(path: string, body: Record<string, any> = {}): Promise<any> {
+  private async post(path: string, body: Record<string, any> = {}): Promise<any> {
     const bodyStr = JSON.stringify(body);
+    const headers = this.getHeaders("POST", path, bodyStr);
     const res = await fetch(`${FUTURES_BASE}${path}`, {
       method: "POST",
-      headers: this.authHeaders(bodyStr),
+      headers,
       body: bodyStr,
     });
     const text = await res.text();
-    if (!res.ok) throw new Error(`Bitrue POST ${path} ${res.status}: ${text}`);
+    if (!res.ok) throw new Error(`Bitrue POST ${path} HTTP ${res.status}: ${text}`);
     return JSON.parse(text);
   }
 
-  private async futuresDelete(path: string, params: Record<string, any> = {}): Promise<any> {
-    const qs = Object.keys(params).length
-      ? "?" + new URLSearchParams(params as any).toString()
-      : "";
-    const payload = qs.slice(1);
-    const res = await fetch(`${FUTURES_BASE}${path}${qs}`, {
-      method: "DELETE",
-      headers: this.authHeaders(payload),
-    });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Bitrue DELETE ${path} ${res.status}: ${text}`);
-    return JSON.parse(text);
+  // ── Market data (authenticated) ──────────────────────────────────────────────
+
+  /** Last traded price for a contract. Response: { last, high, low, buy, sell, ... } */
+  async getTicker(contractName: string): Promise<any> {
+    return this.get("/fapi/v1/ticker", { contractName });
   }
 
-  // ── Public ──────────────────────────────────────────────────────────────────
-
-  async exchangeInfo(): Promise<any> {
-    const res = await fetch(`${FUTURES_BASE}/fapi/v1/exchangeInfo`);
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Bitrue exchangeInfo ${res.status}: ${text}`);
-    return JSON.parse(text);
+  /** Mark/tag price and funding rate. Response: { tagPrice, indexPrice, currentFundRate, ... } */
+  async getMarkPrice(contractName: string): Promise<any> {
+    return this.get("/fapi/v1/index", { contractName });
   }
 
-  async getTicker(symbol: string): Promise<any> {
-    return this.futuresGet("/fapi/v1/ticker/price", { symbol });
+  /** List all available contracts and their specs. */
+  async getContracts(): Promise<any[]> {
+    const res = await this.get("/fapi/v1/contracts");
+    return Array.isArray(res) ? res : (res?.data || []);
   }
 
-  async getSpotTicker(symbol: string): Promise<any> {
-    // Fallback: spot ticker if futures ticker fails
-    const res = await fetch(`${SPOT_BASE}/api/v1/ticker/price?symbol=${symbol}`);
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Bitrue spot ticker ${res.status}: ${text}`);
-    return JSON.parse(text);
-  }
+  // ── Account ──────────────────────────────────────────────────────────────────
 
-  // ── Private ─────────────────────────────────────────────────────────────────
-
+  /** Account balances. Response: { account: [{ marginCoin, accountNormal, ... }] } */
   async getAccount(): Promise<any> {
-    return this.futuresGet("/fapi/v1/account");
+    return this.get("/fapi/v1/account");
   }
 
-  async getPositions(symbol?: string): Promise<any> {
-    const params: Record<string, any> = {};
-    if (symbol) params.symbol = symbol;
-    return this.futuresGet("/fapi/v1/positionRisk", params);
+  // ── Positions ────────────────────────────────────────────────────────────────
+
+  /** Open positions for a contract. Response: { positions: [...] } */
+  async getPositions(contractName: string): Promise<any> {
+    return this.get("/fapi/v1/positions", { contractName });
   }
 
-  async setLeverage(symbol: string, leverage: number): Promise<any> {
-    return this.futuresPost("/fapi/v1/leverage", { symbol, leverage });
-  }
+  // ── Orders ───────────────────────────────────────────────────────────────────
 
-  async placeOrder(params: {
-    symbol: string;
+  /**
+   * Place a MARKET order (buy/sell by USDT notional value).
+   * amount = USDT to spend (minimum $5).
+   * open = "OPEN" to enter, "CLOSE" is NOT used for market — see closePosition().
+   */
+  async placeMarketOrder(params: {
+    contractName: string;
     side: "BUY" | "SELL";
-    type: "MARKET" | "LIMIT";
-    quantity: string;
-    price?: string;
-    positionSide?: "LONG" | "SHORT" | "BOTH";
-    timeInForce?: string;
-    reduceOnly?: boolean;
-    newClientOrderId?: string;
+    positionType: 1 | 2;   // 1=long, 2=short
+    open: "OPEN";
+    amount: number;         // USDT notional value
+    leverage: number;
   }): Promise<any> {
-    const body: Record<string, any> = {
-      symbol: params.symbol,
-      side: params.side,
-      type: params.type,
-      quantity: params.quantity,
-    };
-    if (params.price !== undefined) body.price = params.price;
-    if (params.positionSide) body.positionSide = params.positionSide;
-    if (params.timeInForce) body.timeInForce = params.timeInForce;
-    if (params.reduceOnly !== undefined) body.reduceOnly = params.reduceOnly;
-    if (params.newClientOrderId) body.newClientOrderId = params.newClientOrderId;
-    return this.futuresPost("/fapi/v1/order", body);
+    return this.post("/fapi/v2/order", {
+      contractName: params.contractName,
+      side:         params.side,
+      type:         "MARKET",
+      open:         params.open,
+      positionType: params.positionType,
+      amount:       params.amount,
+      leverage:     params.leverage,
+    });
   }
 
-  async cancelOrder(symbol: string, orderId: string): Promise<any> {
-    return this.futuresDelete("/fapi/v1/order", { symbol, orderId });
+  /**
+   * Place a LIMIT order (buy/sell by integer contract volume).
+   * volume = integer number of contracts.
+   */
+  async placeLimitOrder(params: {
+    contractName: string;
+    side: "BUY" | "SELL";
+    positionType: 1 | 2;
+    open: "OPEN" | "CLOSE";
+    volume: number;         // integer contracts
+    price: string;          // string price
+    leverage: number;
+  }): Promise<any> {
+    return this.post("/fapi/v2/order", {
+      contractName: params.contractName,
+      side:         params.side,
+      type:         "LIMIT",
+      open:         params.open,
+      positionType: params.positionType,
+      volume:       params.volume,
+      price:        params.price,
+      leverage:     params.leverage,
+    });
   }
 
-  async cancelAllOrders(symbol: string): Promise<any> {
-    return this.futuresDelete("/fapi/v1/allOpenOrders", { symbol });
+  /**
+   * Close a long position by selling a specific number of contracts at market.
+   * Uses volume (contracts) since this is a reduce operation, not an open.
+   */
+  async closePosition(params: {
+    contractName: string;
+    positionType: 1 | 2;
+    volume: number;         // integer contracts to close
+    leverage: number;
+  }): Promise<any> {
+    return this.post("/fapi/v2/order", {
+      contractName: params.contractName,
+      side:         "SELL",
+      type:         "MARKET",
+      open:         "CLOSE",
+      positionType: params.positionType,
+      volume:       params.volume,
+      leverage:     params.leverage,
+    });
   }
 
-  async getOpenOrders(symbol?: string): Promise<any> {
-    const params: Record<string, any> = {};
-    if (symbol) params.symbol = symbol;
-    return this.futuresGet("/fapi/v1/openOrders", params);
+  /**
+   * Cancel a single order by orderId.
+   * Note: DELETE method is not supported on Bitrue futures — cancel uses POST.
+   */
+  async cancelOrder(contractName: string, orderId: string): Promise<any> {
+    return this.post("/fapi/v1/cancel", { contractName, orderId });
   }
 
-  async getOrder(symbol: string, orderId: string): Promise<any> {
-    return this.futuresGet("/fapi/v1/order", { symbol, orderId });
+  /**
+   * Cancel multiple orders by orderId list.
+   * Response: { cancelIds: [...], ids: [...], ... }
+   */
+  async cancelOrders(contractName: string, orderIds: string[]): Promise<any> {
+    return this.post("/fapi/v1/batchCancel", { contractName, ids: orderIds });
   }
 
-  // Probe futures exchange for XAU pairs — fire-and-forget on startup
-  async probeFutures(): Promise<string[]> {
-    try {
-      const info = await this.exchangeInfo();
-      const symbols: string[] = (info?.symbols || [])
-        .filter((s: any) =>
-          (s.baseAsset || "").includes("XAU") ||
-          (s.symbol || "").includes("XAU")
-        )
-        .map((s: any) => s.symbol);
-      if (symbols.length) {
-        console.log(`[Bitrue Futures] XAU pairs available: ${symbols.join(", ")}`);
-      } else {
-        console.log("[Bitrue Futures] No XAU pairs found in exchangeInfo");
-      }
-      return symbols;
-    } catch (e: any) {
-      console.log(`[Bitrue Futures] Probe failed (may need auth on exchangeInfo): ${e.message}`);
-      return [];
-    }
+  /** All open orders for a contract. Response: { code, msg, data: [...] } */
+  async getOpenOrders(contractName: string): Promise<any> {
+    return this.get("/fapi/v2/openOrders", { contractName });
+  }
+
+  /** Single order status. Response: { code, msg, data: { orderId, status, ... } } */
+  async getOrder(contractName: string, orderId: string): Promise<any> {
+    return this.get("/fapi/v2/order", { contractName, orderId });
   }
 }
+
+// ── Singleton ────────────────────────────────────────────────────────────────
 
 let clientInstance: BitrueClient | null = null;
 
 export function getBitrueClient(): BitrueClient | null {
   if (clientInstance) return clientInstance;
-  const apiKey = process.env.BITRUE_API_KEY;
+  const apiKey    = process.env.BITRUE_API_KEY;
   const secretKey = process.env.BITRUE_SECRET_KEY;
   if (!apiKey || !secretKey) return null;
   clientInstance = new BitrueClient(apiKey, secretKey);
   return clientInstance;
 }
 
-export function resetBitrueClient() {
+export function resetBitrueClient(): void {
   clientInstance = null;
 }

@@ -1,74 +1,90 @@
 /**
- * Gold Long Engine — XAUTUSDT perpetual futures on Bitrue (fapi.bitrue.com)
+ * Gold Long Engine — E-XAUT-USDT perpetual futures on Bitrue (fapi.bitrue.com)
+ *
+ * COMPLETELY SEPARATE from Bitunix strategies. Uses server/bitrue.ts exclusively.
+ * Do NOT import or reference anything from server/bitunix.ts here.
+ *
+ * Contract: E-XAUT-USDT
+ *   multiplier:     0.0001  (1 contract = 0.0001 XAUT)
+ *   pricePrecision: 1       (price rounded to 1 decimal place)
+ *   quantity unit:  integer contracts (NOT decimal XAUT amounts)
  *
  * Capital allocation (notional = margin × leverage):
- *   30%  — initial market BUY (entry)
- *   10% × 7 — GTC limit BUY support orders anchored to avgEntryPrice:
+ *   30%  — initial MARKET BUY  (amount = notional × 0.30 USDT, min $5)
+ *   10% × 7 — GTC LIMIT BUY supports, quantity in contracts:
  *     L1: avgEntry × 0.990  (−1.0%)
  *     L2: avgEntry × 0.980  (−2.0%)
- *     L3: avgEntry × 0.968  (−3.2%)   ← intentional widening gaps, not evenly spaced
+ *     L3: avgEntry × 0.968  (−3.2%)   ← intentional widening gaps
  *     L4: avgEntry × 0.954  (−4.6%)
  *     L5: avgEntry × 0.938  (−6.2%)
  *     L6: avgEntry × 0.920  (−8.0%)
  *     L7: avgEntry × 0.900  (−10.0%)
  *
- * Safety invariant: no BUY limit is ever placed at or above the live futures mark price
- * (would execute immediately and trigger a replacement loop). Spot price is never used
- * as a substitute for the futures safety ceiling.
+ * Safety invariant: no BUY limit is placed at or above the live Bitrue mark price
+ * (tagPrice from /fapi/v1/index). Spot price is NEVER used as a fallback.
+ * When tagPrice=0 (mark price unavailable), all support levels are unsafe → none placed.
  *
- * On any confirmed fill (verified via getOrder status): cancel remaining supports,
- * reconcile totalQty with live position from exchange, recalculate avgEntry using
- * actual executedQty, re-place 7 supports.
- *
- * Hourly: refresh supports if futures price drifted >0.5% from placement price.
+ * Fill confirmation: disappeared orders verified via getOrder before counting as fills.
+ * Position reconciliation: totalQty (contracts) reconciled from live getPositions after fills.
+ * Cancel: POST /fapi/v1/cancel — DELETE method not supported on Bitrue futures.
  */
 
 import { getBitrueClient } from "./bitrue";
 import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
 
-const SYMBOL = "XAUTUSDT";
+// ── Contract constants ────────────────────────────────────────────────────────
 
-// Widening support gaps from -1% to -10% — intentional DCA spacing
+const CONTRACT    = "E-XAUT-USDT";
+const MULTIPLIER  = 0.0001;        // 1 contract = 0.0001 XAUT
+const PRICE_PREC  = 1;             // pricePrecision from exchangeInfo
+const POSITION_TYPE = 1 as const;  // 1 = long (one-way mode)
+
+// Widening DCA gaps: −1%, −2%, −3.2%, −4.6%, −6.2%, −8%, −10%
 export const SUPPORT_MULTIPLIERS = [0.990, 0.980, 0.968, 0.954, 0.938, 0.920, 0.900];
 
-const ENTRY_PCT = 0.30;
-const SUPPORT_PCT = 0.10;
-const REFRESH_MS = 3_600_000;
-const DRIFT_THRESHOLD = 0.005;
-const THROTTLE_MS = 30_000;
-const QTY_PRECISION = 4;
-const PRICE_PRECISION = 2;
+const ENTRY_PCT       = 0.30;
+const SUPPORT_PCT     = 0.10;
+const REFRESH_MS      = 3_600_000; // 1 hour drift check
+const DRIFT_THRESHOLD = 0.005;     // 0.5%
+const THROTTLE_MS     = 30_000;    // 30 s between executions
+const MIN_USDT_ORDER  = 5;         // Bitrue minimum USDT for market orders
 
-// Bitrue order statuses that confirm a fill
-const FILLED_STATUSES = new Set(["FILLED", "COMPLETE", "DONE", "COMPLETED"]);
+// Order statuses that confirm a fill on Bitrue
+const FILLED_STATUSES = new Set(["FILLED", "COMPLETE", "DONE", "COMPLETED", "2", "3"]);
 
-function roundQty(n: number): number {
-  const f = Math.pow(10, QTY_PRECISION);
-  return Math.floor(n * f) / f;
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function roundPrice(n: number): number {
-  return Math.round(n * Math.pow(10, PRICE_PRECISION)) / Math.pow(10, PRICE_PRECISION);
+  const f = Math.pow(10, PRICE_PREC);
+  return Math.round(n * f) / f;
+}
+
+/** Convert USDT notional chunk to integer contracts at given price */
+function usdtToContracts(usdtAmount: number, price: number): number {
+  // 1 contract = MULTIPLIER XAUT = MULTIPLIER × price USDT
+  const contractValue = MULTIPLIER * price;
+  return Math.floor(usdtAmount / contractValue);
 }
 
 /**
  * Pure function — compute support order specs for all 7 levels.
- * safe=false means price >= currentPrice; those orders MUST NOT be placed.
- * When currentPrice=0 (futures ticker unavailable), all levels are unsafe → nothing placed.
+ * safe=false means the limit price >= mark price (would fill immediately).
+ * When markPrice=0 (unavailable), ALL levels are unsafe — nothing placed.
  * Exported for unit testing.
  */
 export function computeSupportLevels(
   avgEntry: number,
-  currentPrice: number,
+  markPrice: number,
   baseCapital: number,
   leverage: number,
-): Array<{ level: number; price: number; qty: number; safe: boolean }> {
+): Array<{ level: number; price: number; contracts: number; safe: boolean }> {
   const notional = baseCapital * leverage;
   return SUPPORT_MULTIPLIERS.map((mult, i) => {
-    const price = roundPrice(avgEntry * mult);
-    const qty = roundQty((notional * SUPPORT_PCT) / price);
-    // safe iff strictly below futures mark — prevents immediately-marketable BUY limits
-    return { level: i + 1, price, qty, safe: currentPrice > 0 && price < currentPrice };
+    const price     = roundPrice(avgEntry * mult);
+    const contracts = usdtToContracts(notional * SUPPORT_PCT, price);
+    const safe      = markPrice > 0 && price < markPrice;
+    return { level: i + 1, price, contracts, safe };
   });
 }
 
@@ -76,15 +92,15 @@ async function tradeLog(strategyId: number, fields: Partial<InsertTradeLog>): Pr
   try {
     await storage.createTradeLog({
       strategyId,
-      symbol: SYMBOL,
-      side: fields.side || "BUY",
+      symbol:    CONTRACT,
+      side:      fields.side      || "BUY",
       orderType: fields.orderType || "MARKET",
-      quantity: fields.quantity || 0,
-      price: fields.price ?? null,
-      status: fields.status || "filled",
-      orderId: fields.orderId ?? null,
-      pnl: fields.pnl ?? null,
-      errorMsg: fields.errorMsg ?? null,
+      quantity:  fields.quantity  || 0,
+      price:     fields.price     ?? null,
+      status:    fields.status    || "filled",
+      orderId:   fields.orderId   ?? null,
+      pnl:       fields.pnl       ?? null,
+      errorMsg:  fields.errorMsg  ?? null,
     });
   } catch {}
 }
@@ -95,147 +111,180 @@ async function saveConfig(strategy: Strategy, patch: Record<string, any>): Promi
   strategy.config = merged;
 }
 
-/** Get live futures mark price — throws if unavailable. Never falls back to spot. */
-async function getFuturesPrice(client: ReturnType<typeof getBitrueClient>): Promise<number> {
-  const ticker = await client!.getTicker(SYMBOL);
-  const price = parseFloat(ticker?.price || ticker?.data?.price || ticker?.lastPrice || "0");
+/**
+ * Get the live Bitrue mark price (tagPrice from /fapi/v1/index).
+ * Throws if the response is missing or zero. Never falls back to spot.
+ */
+async function getMarkPrice(client: NonNullable<ReturnType<typeof getBitrueClient>>): Promise<number> {
+  const res   = await client.getMarkPrice(CONTRACT);
+  const price = parseFloat(res?.tagPrice || res?.indexPrice || "0");
   if (!price || isNaN(price)) {
-    throw new Error(`Futures ticker unavailable: ${JSON.stringify(ticker)}`);
+    throw new Error(`Bitrue mark price unavailable: ${JSON.stringify(res)}`);
   }
   return price;
 }
 
-// ── Entry phase ──────────────────────────────────────────────────────────────
+// ── Entry phase ───────────────────────────────────────────────────────────────
 
 async function handleEntry(strategy: Strategy): Promise<void> {
   const client = getBitrueClient()!;
-  const cfg = strategy.config as any;
+  const cfg    = strategy.config as any;
   const { baseCapital, leverage = 10 } = cfg;
   const now = Date.now();
 
-  console.log(`[Gold Long #${strategy.id}] Entry — margin=$${baseCapital} leverage=${leverage}x notional=$${baseCapital * leverage}`);
+  const notional    = baseCapital * leverage;
+  const entryAmount = Math.max(notional * ENTRY_PCT, MIN_USDT_ORDER);
 
-  // 1. Set leverage
-  try {
-    await client.setLeverage(SYMBOL, leverage);
-    console.log(`[Gold Long #${strategy.id}] Leverage set ${leverage}x`);
-  } catch (e: any) {
-    console.warn(`[Gold Long #${strategy.id}] setLeverage warning: ${e.message}`);
-  }
+  console.log(`[Gold Long #${strategy.id}] Entry — margin=$${baseCapital} lev=${leverage}x notional=$${notional}`);
 
-  // 2. Current futures price — abort if unavailable; no spot fallback
-  let currentPrice = 0;
+  // 1. Get mark price before entry — abort if unavailable; no spot fallback
+  let markPrice = 0;
   try {
-    currentPrice = await getFuturesPrice(client);
+    markPrice = await getMarkPrice(client);
+    console.log(`[Gold Long #${strategy.id}] Mark price: $${markPrice}`);
   } catch (e: any) {
-    console.error(`[Gold Long #${strategy.id}] Cannot get futures price: ${e.message} — aborting entry`);
+    console.error(`[Gold Long #${strategy.id}] Cannot get mark price: ${e.message} — aborting entry`);
     await saveConfig(strategy, { lastActionAt: now, lastError: e.message });
     return;
   }
 
-  // 3. Market BUY 30% of notional
-  const notional = baseCapital * leverage;
-  const entryQty = roundQty((notional * ENTRY_PCT) / currentPrice);
-  let avgEntry = currentPrice;
-  let totalQty = entryQty;
+  // 2. Market BUY 30% of notional (in USDT)
+  console.log(`[Gold Long #${strategy.id}] Market BUY $${entryAmount} USDT of E-XAUT-USDT`);
+  let avgEntry = markPrice;
+  let totalContracts = usdtToContracts(entryAmount, markPrice); // estimated; reconciled from position later
 
-  console.log(`[Gold Long #${strategy.id}] Market BUY ${entryQty} XAUT @ ~$${currentPrice}`);
   try {
-    const res = await client.placeOrder({
-      symbol: SYMBOL,
-      side: "BUY",
-      type: "MARKET",
-      quantity: String(entryQty),
-      positionSide: "LONG",
+    const res = await client.placeMarketOrder({
+      contractName: CONTRACT,
+      side:         "BUY",
+      positionType: POSITION_TYPE,
+      open:         "OPEN",
+      amount:       entryAmount,
+      leverage,
     });
-    const fillPrice = parseFloat(res?.avgPrice || res?.price || res?.data?.avgPrice || String(currentPrice));
-    const filledQty = parseFloat(res?.executedQty || res?.quantity || res?.data?.executedQty || String(entryQty));
-    if (fillPrice > 0) avgEntry = fillPrice;
-    if (filledQty > 0) totalQty = filledQty;
 
+    // Parse fill details from response (field names vary by exchange response shape)
+    const fillPrice = parseFloat(
+      res?.data?.price    || res?.data?.avgPrice ||
+      res?.price          || res?.avgPrice       || String(markPrice)
+    );
+    const filledContracts = parseInt(
+      res?.data?.volume   || res?.data?.executedQty ||
+      res?.volume         || res?.executedQty       || "0"
+    );
+
+    if (fillPrice > 0) avgEntry = fillPrice;
+    if (filledContracts > 0) totalContracts = filledContracts;
+
+    const orderId = res?.data?.orderId || res?.orderId || null;
     await tradeLog(strategy.id, {
       side: "BUY", orderType: "MARKET",
-      quantity: filledQty || entryQty,
-      price: fillPrice || currentPrice,
-      status: "filled",
-      orderId: res?.orderId || res?.data?.orderId || null,
+      quantity: totalContracts,
+      price:    avgEntry,
+      status:   "filled",
+      orderId,
     });
+    console.log(`[Gold Long #${strategy.id}] Entry order placed. orderId=${orderId}`);
   } catch (e: any) {
-    console.error(`[Gold Long #${strategy.id}] Entry market order failed: ${e.message}`);
-    await tradeLog(strategy.id, { side: "BUY", orderType: "MARKET", quantity: entryQty, price: currentPrice, status: "error", errorMsg: e.message });
+    console.error(`[Gold Long #${strategy.id}] Entry order failed: ${e.message}`);
+    await tradeLog(strategy.id, { side: "BUY", orderType: "MARKET", quantity: 0, price: markPrice, status: "error", errorMsg: e.message });
     await saveConfig(strategy, { lastActionAt: now, lastError: e.message });
     return;
   }
 
-  // 4. Refresh futures price after fill for safety ceiling (fill may shift the mark)
+  // 3. Reconcile actual contracts from live position
   try {
-    currentPrice = await getFuturesPrice(client);
-  } catch {
-    // If price unavailable post-fill, use avgEntry as a conservative ceiling
-    // (all supports at avgEntry×mult < avgEntry, so all would be safe relative to entry price)
-    currentPrice = avgEntry;
+    const posRes = await client.getPositions(CONTRACT);
+    const posList: any[] = posRes?.positions || [];
+    const longPos = posList.find((p: any) => {
+      const qty = parseFloat(p.volume || p.holdVol || p.qty || "0");
+      return qty > 0 && (p.positionType === 1 || !p.positionType);
+    });
+    const liveContracts = parseFloat(longPos?.volume || longPos?.holdVol || longPos?.qty || "0");
+    if (liveContracts > 0) {
+      console.log(`[Gold Long #${strategy.id}] Live position: ${liveContracts} contracts`);
+      totalContracts = liveContracts;
+      // If exchange reports avg price, use it
+      const liveAvg = parseFloat(longPos?.avgPrice || longPos?.openPrice || "0");
+      if (liveAvg > 0) avgEntry = liveAvg;
+    }
+  } catch (e: any) {
+    console.warn(`[Gold Long #${strategy.id}] Position reconciliation failed: ${e.message}`);
   }
 
-  // 5. Place 7 support levels (safety ceiling = current futures price)
-  const supportOrders = await placeSupportOrders(strategy, client, baseCapital, leverage, avgEntry, currentPrice);
+  // 4. Refresh mark price for support placement safety ceiling
+  try {
+    markPrice = await getMarkPrice(client);
+  } catch {
+    markPrice = avgEntry; // conservative fallback: treat entry as ceiling
+  }
 
-  // 6. Estimate liquidation: entry × (1 - 1/lev) with 1% buffer
+  // 5. Place 7 support levels
+  const supportOrders = await placeSupportOrders(strategy, client, baseCapital, leverage, avgEntry, markPrice);
+
+  // 6. Estimate liquidation: avgEntry × (1 − 1/leverage) with 1% buffer
   const liquidationPrice = roundPrice(avgEntry * (1 - 1 / leverage) * 0.99);
 
   await saveConfig(strategy, {
-    phase: "monitoring",
-    entryPrice: roundPrice(avgEntry),
-    avgEntryPrice: roundPrice(avgEntry),
-    totalQty: roundQty(totalQty),
+    phase:          "monitoring",
+    entryPrice:     roundPrice(avgEntry),
+    avgEntryPrice:  roundPrice(avgEntry),
+    totalQty:       totalContracts,
     supportOrders,
     liquidationPrice,
-    fillCount: 0,
-    lastRefreshAt: now,
-    lastActionAt: now,
-    lastError: null,
+    fillCount:      0,
+    lastRefreshAt:  now,
+    lastActionAt:   now,
+    lastError:      null,
   });
 
   const placed = supportOrders.filter(o => o.id).length;
-  console.log(`[Gold Long #${strategy.id}] Entry done. avgEntry=$${avgEntry} liq≈$${liquidationPrice} supports=${placed}/${supportOrders.length}`);
+  console.log(`[Gold Long #${strategy.id}] Entry done. avgEntry=$${avgEntry} contracts=${totalContracts} liq≈$${liquidationPrice} supports=${placed}/7`);
 }
 
-// ── Support order placement ──────────────────────────────────────────────────
+// ── Support order placement ───────────────────────────────────────────────────
 
 async function placeSupportOrders(
-  strategy: Strategy,
-  client: ReturnType<typeof getBitrueClient>,
+  strategy:    Strategy,
+  client:      NonNullable<ReturnType<typeof getBitrueClient>>,
   baseCapital: number,
-  leverage: number,
-  avgEntry: number,
-  currentPrice: number, // futures mark price safety ceiling
-): Promise<Array<{ id: string | null; price: number; qty: number; level: number }>> {
-  const levels = computeSupportLevels(avgEntry, currentPrice, baseCapital, leverage);
-  const orders: Array<{ id: string | null; price: number; qty: number; level: number }> = [];
+  leverage:    number,
+  avgEntry:    number,
+  markPrice:   number,
+): Promise<Array<{ id: string | null; price: number; contracts: number; level: number }>> {
+  const levels  = computeSupportLevels(avgEntry, markPrice, baseCapital, leverage);
+  const orders: Array<{ id: string | null; price: number; contracts: number; level: number }> = [];
 
   for (const lvl of levels) {
     if (!lvl.safe) {
-      console.warn(`[Gold Long #${strategy.id}] L${lvl.level} @ $${lvl.price} >= futures mark $${currentPrice} — skipped (would execute immediately)`);
-      orders.push({ id: null, price: lvl.price, qty: lvl.qty, level: lvl.level });
+      console.warn(`[Gold Long #${strategy.id}] L${lvl.level} @ $${lvl.price} >= mark $${markPrice} — skipped`);
+      orders.push({ id: null, price: lvl.price, contracts: lvl.contracts, level: lvl.level });
+      continue;
+    }
+    if (lvl.contracts < 1) {
+      console.warn(`[Gold Long #${strategy.id}] L${lvl.level} qty < 1 contract — skipped (insufficient capital)`);
+      orders.push({ id: null, price: lvl.price, contracts: lvl.contracts, level: lvl.level });
       continue;
     }
 
     try {
-      const res = await client!.placeOrder({
-        symbol: SYMBOL,
-        side: "BUY",
-        type: "LIMIT",
-        quantity: String(lvl.qty),
-        price: String(lvl.price),
-        positionSide: "LONG",
-        timeInForce: "GTC",
+      const res = await client.placeLimitOrder({
+        contractName: CONTRACT,
+        side:         "BUY",
+        positionType: POSITION_TYPE,
+        open:         "OPEN",
+        volume:       lvl.contracts,
+        price:        String(lvl.price),
+        leverage,
       });
-      const orderId = res?.orderId || res?.data?.orderId || null;
-      orders.push({ id: orderId, price: lvl.price, qty: lvl.qty, level: lvl.level });
-      await tradeLog(strategy.id, { side: "BUY", orderType: "LIMIT", quantity: lvl.qty, price: lvl.price, status: "pending", orderId });
-      console.log(`[Gold Long #${strategy.id}] Support L${lvl.level}: ${lvl.qty} XAUT @ $${lvl.price} (${((1 - SUPPORT_MULTIPLIERS[lvl.level - 1]) * 100).toFixed(1)}% below avg)`);
+      const orderId = res?.data?.orderId || res?.orderId || null;
+      orders.push({ id: String(orderId), price: lvl.price, contracts: lvl.contracts, level: lvl.level });
+      await tradeLog(strategy.id, { side: "BUY", orderType: "LIMIT", quantity: lvl.contracts, price: lvl.price, status: "pending", orderId: String(orderId) });
+      const pctBelow = ((1 - SUPPORT_MULTIPLIERS[lvl.level - 1]) * 100).toFixed(1);
+      console.log(`[Gold Long #${strategy.id}] Support L${lvl.level}: ${lvl.contracts} contracts @ $${lvl.price} (${pctBelow}% below avg)`);
     } catch (e: any) {
       console.error(`[Gold Long #${strategy.id}] Support L${lvl.level} failed: ${e.message}`);
-      orders.push({ id: null, price: lvl.price, qty: lvl.qty, level: lvl.level });
+      orders.push({ id: null, price: lvl.price, contracts: lvl.contracts, level: lvl.level });
     }
 
     await new Promise(r => setTimeout(r, 200));
@@ -244,20 +293,22 @@ async function placeSupportOrders(
   return orders;
 }
 
-// ── Monitoring phase ─────────────────────────────────────────────────────────
+// ── Monitoring phase ──────────────────────────────────────────────────────────
 
 async function handleMonitoring(strategy: Strategy): Promise<void> {
   const client = getBitrueClient()!;
-  const cfg = strategy.config as any;
+  const cfg    = strategy.config as any;
   const { baseCapital, leverage = 10 } = cfg;
-  const supportOrders: Array<{ id: string | null; price: number; qty: number; level: number }> = cfg.supportOrders || [];
+  const supportOrders: Array<{ id: string | null; price: number; contracts: number; level: number }> = cfg.supportOrders || [];
   const now = Date.now();
 
   // 1. Fetch open orders from exchange
   let openOrderIds = new Set<string>();
   try {
-    const res = await client.getOpenOrders(SYMBOL);
-    const list: any[] = Array.isArray(res) ? res : (res?.list || res?.data || []);
+    const res  = await client.getOpenOrders(CONTRACT);
+    const list: any[] = Array.isArray(res?.data) ? res.data
+                       : Array.isArray(res)       ? res
+                       : [];
     openOrderIds = new Set(list.map((o: any) => String(o.orderId || o.id)));
   } catch (e: any) {
     console.warn(`[Gold Long #${strategy.id}] getOpenOrders failed: ${e.message}`);
@@ -265,31 +316,27 @@ async function handleMonitoring(strategy: Strategy): Promise<void> {
     return;
   }
 
-  // 2. Orders that disappeared from the open set (may be filled, cancelled, or rejected)
+  // 2. Orders that disappeared (may be filled, cancelled, or expired)
   const disappeared = supportOrders.filter(o => o.id && !openOrderIds.has(String(o.id)));
 
   if (disappeared.length > 0) {
-    // 3. Confirm each disappeared order by querying its status — must be FILLED to count
-    const confirmed: Array<{
-      id: string; price: number; qty: number; level: number; actualQty: number;
-    }> = [];
+    // 3. Confirm each disappeared order via getOrder status
+    const confirmed: Array<{ id: string; price: number; contracts: number; level: number; actualContracts: number }> = [];
 
     for (const o of disappeared) {
       if (!o.id) continue;
       try {
-        const detail = await client.getOrder(SYMBOL, String(o.id));
-        const status = String(detail?.status || detail?.data?.status || "").toUpperCase();
+        const detail = await client.getOrder(CONTRACT, String(o.id));
+        const statusRaw = detail?.data?.status ?? detail?.status ?? "";
+        const status    = String(statusRaw).toUpperCase();
         if (FILLED_STATUSES.has(status)) {
-          // Use actual executedQty from exchange, not the originally configured qty
-          const execQty = parseFloat(detail?.executedQty || detail?.data?.executedQty || "0");
-          confirmed.push({ ...o, id: String(o.id), actualQty: execQty > 0 ? execQty : o.qty });
-          console.log(`[Gold Long #${strategy.id}] Confirmed fill: L${o.level} @ $${o.price} executedQty=${execQty}`);
+          const execVol = parseFloat(detail?.data?.dealVolume || detail?.data?.executedQty || detail?.data?.volume || "0");
+          confirmed.push({ ...o, id: String(o.id), actualContracts: execVol > 0 ? execVol : o.contracts });
+          console.log(`[Gold Long #${strategy.id}] Confirmed fill: L${o.level} @ $${o.price} contracts=${execVol}`);
         } else {
-          // Cancelled, rejected, or expired — do not count as a fill
-          console.log(`[Gold Long #${strategy.id}] Order ${o.id} L${o.level} status=${status} — not a fill, ignoring`);
+          console.log(`[Gold Long #${strategy.id}] Order ${o.id} L${o.level} status=${statusRaw} — not a fill`);
         }
       } catch (e: any) {
-        // Cannot confirm — conservatively treat as not filled
         console.warn(`[Gold Long #${strategy.id}] getOrder ${o.id} failed: ${e.message} — treating as not filled`);
       }
       await new Promise(r => setTimeout(r, 150));
@@ -305,79 +352,78 @@ async function handleMonitoring(strategy: Strategy): Promise<void> {
     // 4. Cancel remaining open supports
     const stillOpen = supportOrders.filter(o => o.id && openOrderIds.has(String(o.id)));
     for (const o of stillOpen) {
-      try {
-        await client.cancelOrder(SYMBOL, String(o.id));
-      } catch (e: any) {
+      try { await client.cancelOrder(CONTRACT, String(o.id)); } catch (e: any) {
         console.warn(`[Gold Long #${strategy.id}] Cancel ${o.id} failed: ${e.message}`);
       }
       await new Promise(r => setTimeout(r, 150));
     }
 
-    // 5. Recalculate avgEntry using actual executedQty (not configured qty)
-    let totalCost = cfg.avgEntryPrice * cfg.totalQty;
-    let totalQty: number = cfg.totalQty;
+    // 5. Recalculate avgEntry using actual fill contracts
+    let totalCost      = cfg.avgEntryPrice * cfg.totalQty;
+    let totalContracts = cfg.totalQty;
     for (const o of confirmed) {
-      totalCost += o.price * o.actualQty;
-      totalQty += o.actualQty;
-      await tradeLog(strategy.id, {
-        side: "BUY", orderType: "LIMIT",
-        quantity: o.actualQty,
-        price: o.price,
-        status: "filled",
-        orderId: o.id,
-      });
+      totalCost      += o.price * o.actualContracts;
+      totalContracts += o.actualContracts;
+      await tradeLog(strategy.id, { side: "BUY", orderType: "LIMIT", quantity: o.actualContracts, price: o.price, status: "filled", orderId: o.id });
     }
-    const newAvgEntry = roundPrice(totalCost / totalQty);
-    const newLiq = roundPrice(newAvgEntry * (1 - 1 / leverage) * 0.99);
+    const newAvgEntry = roundPrice(totalCost / totalContracts);
+    const newLiq      = roundPrice(newAvgEntry * (1 - 1 / leverage) * 0.99);
 
-    // 6. Reconcile totalQty with live exchange position (source of truth)
+    // 6. Reconcile with live position (source of truth)
     try {
-      const positions = await client.getPositions(SYMBOL);
-      const posList: any[] = Array.isArray(positions) ? positions : (positions?.data || positions?.list || []);
-      const longPos = posList.find((p: any) => parseFloat(p.positionAmt || p.posAmt || "0") > 0);
-      const liveQty = parseFloat(longPos?.positionAmt || longPos?.posAmt || "0");
-      if (liveQty > 0.0001) {
-        if (Math.abs(liveQty - roundQty(totalQty)) > 0.001) {
-          console.log(`[Gold Long #${strategy.id}] Qty reconciled: computed=${roundQty(totalQty)} live=${liveQty} — using live`);
+      const posRes  = await client.getPositions(CONTRACT);
+      const posList: any[] = posRes?.positions || [];
+      const longPos = posList.find((p: any) => {
+        const qty = parseFloat(p.volume || p.holdVol || p.qty || "0");
+        return qty > 0 && (p.positionType === 1 || !p.positionType);
+      });
+      const liveContracts = parseFloat(longPos?.volume || longPos?.holdVol || longPos?.qty || "0");
+      if (liveContracts > 0.001) {
+        if (Math.abs(liveContracts - totalContracts) > 1) {
+          console.log(`[Gold Long #${strategy.id}] Contracts reconciled: computed=${totalContracts} live=${liveContracts} — using live`);
         }
-        totalQty = liveQty;
+        totalContracts = liveContracts;
+        const liveAvg = parseFloat(longPos?.avgPrice || longPos?.openPrice || "0");
+        if (liveAvg > 0) {
+          console.log(`[Gold Long #${strategy.id}] avgEntry from exchange: $${liveAvg}`);
+          // prefer exchange avg for accuracy
+        }
       }
     } catch (e: any) {
       console.warn(`[Gold Long #${strategy.id}] Position reconciliation failed: ${e.message}`);
     }
 
-    console.log(`[Gold Long #${strategy.id}] New avgEntry=$${newAvgEntry} totalQty=${roundQty(totalQty)} XAUT`);
+    console.log(`[Gold Long #${strategy.id}] New avgEntry=$${newAvgEntry} contracts=${totalContracts}`);
 
-    // 7. Get fresh futures price for safety ceiling — no spot fallback; skip placement if unavailable
-    let refillPrice = 0;
+    // 7. Get fresh mark price for support placement — no spot fallback
+    let refillMarkPrice = 0;
     try {
-      refillPrice = await getFuturesPrice(client);
+      refillMarkPrice = await getMarkPrice(client);
     } catch (e: any) {
-      console.warn(`[Gold Long #${strategy.id}] Futures price unavailable for post-fill support placement: ${e.message}`);
+      console.warn(`[Gold Long #${strategy.id}] Mark price unavailable post-fill: ${e.message}`);
       await saveConfig(strategy, {
-        avgEntryPrice: newAvgEntry,
-        totalQty: roundQty(totalQty),
+        avgEntryPrice:   newAvgEntry,
+        totalQty:        totalContracts,
         liquidationPrice: newLiq,
-        fillCount: (cfg.fillCount || 0) + confirmed.length,
-        supportOrders: [],
-        lastRefreshAt: now,
-        lastActionAt: now,
-        lastError: `Post-fill support placement skipped (futures price unavailable): ${e.message}`,
+        fillCount:       (cfg.fillCount || 0) + confirmed.length,
+        supportOrders:   [],
+        lastRefreshAt:   now,
+        lastActionAt:    now,
+        lastError:       `Post-fill support placement skipped (mark price unavailable): ${e.message}`,
       });
       return;
     }
 
-    const newSupports = await placeSupportOrders(strategy, client, baseCapital, leverage, newAvgEntry, refillPrice);
-
+    const newSupports = await placeSupportOrders(strategy, client, baseCapital, leverage, newAvgEntry, refillMarkPrice);
     await saveConfig(strategy, {
-      avgEntryPrice: newAvgEntry,
-      totalQty: roundQty(totalQty),
+      avgEntryPrice:   newAvgEntry,
+      totalQty:        totalContracts,
       liquidationPrice: newLiq,
-      fillCount: (cfg.fillCount || 0) + confirmed.length,
-      supportOrders: newSupports,
-      lastRefreshAt: now,
-      lastActionAt: now,
-      lastError: null,
+      fillCount:       (cfg.fillCount || 0) + confirmed.length,
+      supportOrders:   newSupports,
+      lastRefreshAt:   now,
+      lastActionAt:    now,
+      lastError:       null,
     });
     return;
   }
@@ -388,12 +434,11 @@ async function handleMonitoring(strategy: Strategy): Promise<void> {
     return;
   }
 
-  // Get current futures price — no spot fallback; skip refresh if unavailable
-  let currentPrice = 0;
+  let markPrice = 0;
   try {
-    currentPrice = await getFuturesPrice(client);
+    markPrice = await getMarkPrice(client);
   } catch (e: any) {
-    console.warn(`[Gold Long #${strategy.id}] Futures price unavailable for drift check: ${e.message} — skipping refresh`);
+    console.warn(`[Gold Long #${strategy.id}] Mark price unavailable for drift check: ${e.message} — skipping`);
     await saveConfig(strategy, { lastRefreshAt: now, lastActionAt: now });
     return;
   }
@@ -405,24 +450,22 @@ async function handleMonitoring(strategy: Strategy): Promise<void> {
   }
 
   const avgSupportPrice = placedSupports.reduce((s, o) => s + o.price, 0) / placedSupports.length;
-  const drift = Math.abs(currentPrice - avgSupportPrice) / avgSupportPrice;
+  const drift = Math.abs(markPrice - avgSupportPrice) / avgSupportPrice;
 
   if (drift > DRIFT_THRESHOLD) {
     console.log(`[Gold Long #${strategy.id}] Price drift ${(drift * 100).toFixed(2)}% — refreshing supports`);
-
     for (const o of placedSupports) {
-      try { await client.cancelOrder(SYMBOL, String(o.id)); } catch {}
+      try { await client.cancelOrder(CONTRACT, String(o.id)); } catch {}
       await new Promise(r => setTimeout(r, 150));
     }
-
-    const newSupports = await placeSupportOrders(strategy, client, baseCapital, leverage, cfg.avgEntryPrice, currentPrice);
+    const newSupports = await placeSupportOrders(strategy, client, baseCapital, leverage, cfg.avgEntryPrice, markPrice);
     await saveConfig(strategy, { supportOrders: newSupports, lastRefreshAt: now, lastActionAt: now });
   } else {
     await saveConfig(strategy, { lastRefreshAt: now, lastActionAt: now });
   }
 }
 
-// ── Main executor ────────────────────────────────────────────────────────────
+// ── Main executor ─────────────────────────────────────────────────────────────
 
 export async function executeGoldLongStrategy(strategy: Strategy): Promise<void> {
   const client = getBitrueClient();
@@ -442,7 +485,6 @@ export async function executeGoldLongStrategy(strategy: Strategy): Promise<void>
     } else if (cfg.phase === "monitoring") {
       await handleMonitoring(strategy);
     }
-    // "complete" phase — nothing to do; user exits manually
   } catch (e: any) {
     console.error(`[Gold Long #${strategy.id}] Unhandled error: ${e.message}`);
     await storage.updateStrategy(strategy.id, {

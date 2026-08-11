@@ -225,39 +225,37 @@ export async function registerRoutes(
     if (strategy) {
       // Gold Long uses Bitrue futures — cancel supports and close position
       if (strategy.type === "gold_long") {
+        // Gold Long is exclusively on Bitrue futures (fapi.bitrue.com)
+        // contractName is always E-XAUT-USDT regardless of strategy.symbol legacy value
+        const GOLD_CONTRACT = "E-XAUT-USDT";
         const { getBitrueClient } = await import("./bitrue");
         const bitrueClient = getBitrueClient();
         if (bitrueClient) {
           const cfg = (strategy.config || {}) as any;
+          // Cancel all tracked support orders (POST-based — DELETE not supported on Bitrue futures)
           const supports: any[] = cfg.supportOrders || [];
-          for (const order of supports) {
-            if (!order.id) continue;
+          const supportIds = supports.filter(o => o.id).map(o => String(o.id));
+          if (supportIds.length > 0) {
             try {
-              await bitrueClient.cancelOrder(strategy.symbol, String(order.id));
-              console.log(`[Delete ${id}] Cancelled Bitrue support ${order.id}`);
+              await bitrueClient.cancelOrders(GOLD_CONTRACT, supportIds);
+              console.log(`[Delete ${id}] Cancelled ${supportIds.length} Bitrue support orders`);
             } catch (e: any) {
-              console.warn(`[Delete ${id}] Cancel support ${order.id} failed: ${e.message}`);
+              console.warn(`[Delete ${id}] Batch cancel supports failed: ${e.message}`);
             }
           }
-          // Close any open long position — use live qty from exchange, not stale config
+          // Close any open long position — use live contracts from exchange, not stale config
           try {
-            const positions = await bitrueClient.getPositions(strategy.symbol);
-            const posList: any[] = Array.isArray(positions) ? positions : (positions?.data || positions?.list || []);
-            const longPos = posList.find((p: any) =>
-              (p.symbol === strategy.symbol || p.contractName === strategy.symbol) &&
-              (p.positionSide === "LONG" || p.positionSide === "BOTH")
-            );
-            const liveQty = parseFloat(longPos?.positionAmt || longPos?.posAmt || longPos?.qty || "0");
-            if (liveQty > 0) {
-              await bitrueClient.placeOrder({
-                symbol: strategy.symbol,
-                side: "SELL",
-                type: "MARKET",
-                quantity: String(liveQty),
-                positionSide: "LONG",
-                reduceOnly: true,
-              });
-              console.log(`[Delete ${id}] Closed Bitrue long position: ${liveQty} ${strategy.symbol}`);
+            const posRes  = await bitrueClient.getPositions(GOLD_CONTRACT);
+            const posList: any[] = posRes?.positions || [];
+            const longPos = posList.find((p: any) => {
+              const qty = parseFloat(p.volume || p.holdVol || p.qty || "0");
+              return qty > 0 && (p.positionType === 1 || !p.positionType);
+            });
+            const liveContracts = Math.floor(parseFloat(longPos?.volume || longPos?.holdVol || longPos?.qty || "0"));
+            const leverage      = cfg.leverage || 10;
+            if (liveContracts > 0) {
+              await bitrueClient.closePosition({ contractName: GOLD_CONTRACT, positionType: 1, volume: liveContracts, leverage });
+              console.log(`[Delete ${id}] Closed Bitrue long position: ${liveContracts} contracts`);
             } else {
               console.log(`[Delete ${id}] No open Bitrue long position found — skipping close`);
             }
@@ -349,19 +347,20 @@ export async function registerRoutes(
     } else if (strategy.type === "tandem") {
       await cancelAllTandemOrders(id, strategy.symbol);
     } else if (strategy.type === "gold_long") {
-      // Cancel any tracked support orders on Bitrue futures
+      // Cancel tracked support orders on Bitrue futures (DELETE not supported — use POST cancel)
+      const GOLD_CONTRACT = "E-XAUT-USDT";
       const { getBitrueClient } = await import("./bitrue");
       const bitrueClient = getBitrueClient();
       if (bitrueClient) {
         const cfg = (strategy.config || {}) as any;
         const supports: any[] = cfg.supportOrders || [];
-        for (const order of supports) {
-          if (!order.id) continue;
+        const supportIds = supports.filter(o => o.id).map(o => String(o.id));
+        if (supportIds.length > 0) {
           try {
-            await bitrueClient.cancelOrder(strategy.symbol, String(order.id));
-            console.log(`[Stop ${id}] Cancelled Bitrue support order ${order.id}`);
+            await bitrueClient.cancelOrders(GOLD_CONTRACT, supportIds);
+            console.log(`[Stop ${id}] Cancelled ${supportIds.length} Bitrue support orders`);
           } catch (e: any) {
-            console.warn(`[Stop ${id}] Cancel support ${order.id} failed: ${e.message}`);
+            console.warn(`[Stop ${id}] Batch cancel supports failed: ${e.message}`);
           }
         }
       }
@@ -801,7 +800,6 @@ export async function registerRoutes(
   app.post("/api/strategies/gold-long-start", async (req, res) => {
     try {
       const schema = z.object({
-        symbol: z.string().min(1).default("XAUTUSDT"),
         baseCapital: z.number().min(10).max(100000),
         leverage: z.number().min(1).max(20).default(10),
       });
@@ -812,9 +810,9 @@ export async function registerRoutes(
       if (!client) return res.status(400).json({ message: "BITRUE_API_KEY and BITRUE_SECRET_KEY must be set" });
 
       const strategy = await storage.createStrategy({
-        name: `Gold Long ${params.symbol}`,
+        name: `Gold Long E-XAUT-USDT`,
         type: "gold_long",
-        symbol: params.symbol.toUpperCase(),
+        symbol: "E-XAUT-USDT",
         side: "BUY",
         status: "running",
         config: {

@@ -75,10 +75,7 @@ export class BitrueClient {
   }
 
   async getTicker(symbol: string): Promise<any> {
-    const res = await fetch(`${FUTURES_BASE}/fapi/v1/ticker/price?symbol=${symbol}`);
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Bitrue ticker ${res.status}: ${text}`);
-    return JSON.parse(text);
+    return this.futuresGet("/fapi/v1/ticker/price", { symbol });
   }
 
   async getSpotTicker(symbol: string): Promise<any> {

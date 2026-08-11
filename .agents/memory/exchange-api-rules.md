@@ -22,9 +22,12 @@ description: Bitunix vs Bitrue auth, endpoints, order fields, and known gotchas 
   - `leverage` is per-order (no separate leverage endpoint on Bitrue futures)
 - Cancel: POST `/fapi/v1/cancel` — DELETE method NOT supported on Bitrue futures
   - Batch cancel: POST `/fapi/v1/batchCancel`
-- Position: GET `/fapi/v1/getPosition?contractName=E-XAUT-USDT`
-  - Liq price field: `liqPrice` or `liquidationPrice` or `forceClosePrice` or `blastPrice` (try all, use first non-zero)
-  - Formula fallback (if all liq price fields are zero): `avgPrice × (1 − 1/leverage)`
+- Position: GET `/fapi/v1/positions?contractName=E-XAUT-USDT`
+  - Response shape is inconsistent — use `BitrueClient.extractPositions(res)` static helper which handles `{ positions }`, `{ data: { positions } }`, `{ data: [] }`, or bare `[]`
+  - Volume field: `volume` or `holdVol` or `qty` or `openVol` (try all)
+  - Liq price field: `liqPrice` or `liquidationPrice` or `liqP` or `forceClosePrice` or `blastPrice` (try all, use first non-zero)
+  - CRITICAL: validate liq price is BELOW avgPrice for a long. If exchange returns liq > avg (happens with stale/zero positions), reject it and use formula.
+  - Formula fallback: `avgPrice × (1 − 1/leverage)`
 - Open orders: GET `/fapi/v1/openOrders?contractName=E-XAUT-USDT`
 - Order status: GET `/fapi/v1/order?contractName=E-XAUT-USDT&orderId=...`
   - Filled statuses: `FILLED`, `COMPLETE`, `DONE`, `COMPLETED`, `"2"`, `"3"`

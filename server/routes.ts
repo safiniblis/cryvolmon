@@ -158,6 +158,7 @@ export async function registerRoutes(
   });
 
   // === Account & Positions ===
+  // Bitunix account (ADAUSDT / grid strategies)
   app.get("/api/account", async (req, res) => {
     const client = getBitunixClient();
     if (!client) {
@@ -167,6 +168,49 @@ export async function registerRoutes(
     const balances = await storage.getAccountBalances();
     const pos = await storage.getPositions();
     res.json({ balances, positions: pos, connected: true });
+  });
+
+  // Bitrue account (E-XAUT-USDT gold strategies)
+  app.get("/api/bitrue-account", async (req, res) => {
+    try {
+      const { getBitrueClient } = await import("./bitrue");
+      const client = getBitrueClient();
+      if (!client) return res.json({ available: 0, total: 0, connected: false });
+
+      const raw  = await client.getAccount();
+      const list: any[] = Array.isArray(raw?.account)       ? raw.account
+                         : Array.isArray(raw?.data?.account) ? raw.data.account
+                         : Array.isArray(raw?.data)          ? raw.data
+                         : [];
+      const acct = list.find((a: any) =>
+        (a.marginCoin || a.asset || "").toUpperCase() === "USDT"
+      ) || list[0] || {};
+
+      const available = parseFloat(acct.accountNormal ?? acct.available ?? acct.balance ?? acct.avail ?? "0");
+      const frozen    = parseFloat(acct.accountLock   ?? acct.frozen    ?? acct.lock    ?? "0");
+
+      // Pull liqPrice + unrealizedPnl from live position if any
+      const posRes  = await client.getPositions("E-XAUT-USDT");
+      const { BitrueClient } = await import("./bitrue");
+      const posList: any[] = BitrueClient.extractPositions(posRes);
+      const positions = posList
+        .filter((p: any) => parseFloat(p.volume || p.holdVol || p.qty || p.openVol || "0") > 0)
+        .map((p: any) => ({
+          symbol:        "E-XAUT-USDT",
+          side:          p.side === "BUY" || p.positionType === 1 ? "LONG" : "SHORT",
+          quantity:      parseFloat(p.volume || p.holdVol || p.qty || "0"),
+          entryPrice:    parseFloat(p.avgOpenPrice || p.avgPrice || p.openPrice || "0"),
+          liqPrice:      parseFloat(p.liqPrice || p.liquidationPrice || "0"),
+          unrealizedPnl: parseFloat(p.unrealizedPNL || p.unrealizedPnl || "0"),
+          leverage:      parseFloat(p.leverage || "0"),
+          marginMode:    p.marginMode || p.openType === 1 ? "ISOLATION" : "CROSS",
+        }));
+
+      res.json({ available, frozen, total: available + frozen, positions, connected: true });
+    } catch (e: any) {
+      console.error(`[Bitrue Account] ${e.message}`);
+      res.json({ available: 0, total: 0, positions: [], connected: false, error: e.message });
+    }
   });
 
   // === Strategies ===

@@ -27,6 +27,7 @@ import {
   useTandemSimulation,
   useTandemStart,
   useHedgePairStart,
+  useBitrueAccount,
   useGoldLongStart,
   usePairInfo,
   useEmergencyStop,
@@ -66,55 +67,104 @@ function ConnectionBanner() {
   );
 }
 
-function AccountOverview() {
+function BitunixAccountPanel() {
   const { data, isLoading } = useAccount();
 
-  if (isLoading) {
-    return <div className="h-20 animate-pulse bg-card/30 rounded-xl" />;
-  }
+  return (
+    <Card className="bg-card/40 border-border/50">
+      <CardHeader className="pb-2 pt-3 px-4">
+        <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+          <span className="inline-block w-2 h-2 rounded-full bg-sky-400" />
+          Bitunix · Futures
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-4 pb-3">
+        {isLoading ? (
+          <div className="h-8 animate-pulse bg-muted/30 rounded" />
+        ) : !data?.connected ? (
+          <p className="text-xs text-muted-foreground">Not connected</p>
+        ) : data.balances.length === 0 ? (
+          <p className="text-xs text-yellow-400">No balance — transfer USDT to Bitunix futures wallet</p>
+        ) : (
+          <div className="flex flex-wrap items-end gap-4">
+            {data.balances.map((b: any, i: number) => (
+              <div key={i}>
+                <p className="text-[10px] text-muted-foreground">{b.currency} total</p>
+                <p className="text-lg font-bold font-mono" data-testid={`text-balance-${b.currency}`}>
+                  {formatCurrency(b.total)}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  Avail: {formatCurrency(b.available)} · Frozen: {formatCurrency(b.frozen)}
+                </p>
+              </div>
+            ))}
+            {data.balances[0]?.available < 10 && (
+              <div className="flex items-center gap-1 text-[10px] text-yellow-400">
+                <AlertTriangle className="h-3 w-3" />
+                Low balance
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
-  if (!data?.connected) {
-    return (
-      <Card className="bg-card/40 border-border/50">
-        <CardContent className="p-4 text-center">
-          <WifiOff className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
-          <p className="text-sm text-muted-foreground">Connect API keys to see account</p>
-        </CardContent>
-      </Card>
-    );
-  }
+function BitrueAccountPanel() {
+  const { data, isLoading } = useBitrueAccount();
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-      {data.balances.map((b: any, i: number) => (
-        <Card key={i} className="bg-card/40 border-border/50">
-          <CardContent className="p-3">
-            <p className="text-xs text-muted-foreground">{b.currency}</p>
-            <div className="text-xl font-bold font-mono" data-testid={`text-balance-${b.currency}`}>
-              {formatCurrency(b.total)}
+    <Card className="bg-card/40 border-border/50">
+      <CardHeader className="pb-2 pt-3 px-4">
+        <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
+          Bitrue · Gold Futures (E-XAUT-USDT)
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-4 pb-3">
+        {isLoading ? (
+          <div className="h-8 animate-pulse bg-muted/30 rounded" />
+        ) : !data?.connected ? (
+          <p className="text-xs text-muted-foreground">Not connected{data?.error ? ` — ${data.error}` : ""}</p>
+        ) : (
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <p className="text-[10px] text-muted-foreground">USDT total</p>
+              <p className="text-lg font-bold font-mono text-amber-300">
+                {formatCurrency(data.total)}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                Avail: {formatCurrency(data.available)} · Frozen: {formatCurrency(data.frozen)}
+              </p>
             </div>
-            <p className="text-[10px] text-muted-foreground">
-              Avail: {formatCurrency(b.available)} | Frozen: {formatCurrency(b.frozen)}
-            </p>
-          </CardContent>
-        </Card>
-      ))}
-      {data.balances.length === 0 && (
-        <Card className="bg-card/40 border-border/50 col-span-3">
-          <CardContent className="p-4 text-center">
-            <AlertTriangle className="h-5 w-5 mx-auto text-yellow-400 mb-1" />
-            <p className="text-xs text-muted-foreground">No balance. Transfer USDT to your Bitunix futures wallet.</p>
-          </CardContent>
-        </Card>
-      )}
-      {data.balances.length > 0 && data.balances[0]?.available < 10 && (
-        <Card className="bg-yellow-500/5 border-yellow-500/20 col-span-3">
-          <CardContent className="p-3 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-yellow-400 flex-shrink-0" />
-            <p className="text-xs text-yellow-400">Low balance: {formatCurrency(data.balances[0]?.available)} USDT available</p>
-          </CardContent>
-        </Card>
-      )}
+            {(data.positions || []).map((p: any, i: number) => (
+              <div key={i}>
+                <p className="text-[10px] text-muted-foreground">{p.symbol} {p.side} {p.leverage}x</p>
+                <p className="text-base font-bold font-mono text-amber-200">{p.quantity} ct</p>
+                <p className={`text-[10px] font-mono ${(p.unrealizedPnl || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  PnL: {formatCurrency(p.unrealizedPnl)} · {p.marginMode || "—"}
+                </p>
+              </div>
+            ))}
+            {data.available < 10 && (
+              <div className="flex items-center gap-1 text-[10px] text-yellow-400">
+                <AlertTriangle className="h-3 w-3" />
+                Low balance
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AccountOverview() {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <BitunixAccountPanel />
+      <BitrueAccountPanel />
     </div>
   );
 }

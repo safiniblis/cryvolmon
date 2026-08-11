@@ -226,6 +226,38 @@ export class BitrueClient {
     return this.post("/fapi/v1/leverage", { contractName, leverage });
   }
 
+  /**
+   * Switch the margin mode for a contract to ISOLATION (isolated margin).
+   * openType: 1 = isolated, 2 = cross.
+   * Call before placing any orders — returns without throwing if already isolated.
+   */
+  async setMarginType(contractName: string): Promise<void> {
+    try {
+      await this.post("/fapi/v1/modifyIsolation", { contractName, openType: 1 });
+    } catch (e: any) {
+      // "already in isolation mode" or similar is not a fatal error
+      if (/already|same|isolation/i.test(e.message)) return;
+      console.warn(`[Bitrue] setMarginType isolation failed (continuing): ${e.message}`);
+    }
+  }
+
+  /**
+   * Return available USDT balance for futures trading.
+   * Tries several field paths Bitrue uses across API versions.
+   */
+  async getAvailableUsdt(): Promise<number> {
+    const res  = await this.getAccount();
+    const list: any[] = Array.isArray(res?.account) ? res.account
+                       : Array.isArray(res?.data?.account) ? res.data.account
+                       : Array.isArray(res?.data) ? res.data : [];
+    const acct = list.find((a: any) =>
+      (a.marginCoin || a.asset || "").toUpperCase() === "USDT"
+    ) || list[0] || {};
+    return parseFloat(
+      acct.accountNormal ?? acct.available ?? acct.balance ?? acct.avail ?? "0"
+    );
+  }
+
   /** All open orders for a contract. Response: { code, msg, data: [...] } */
   async getOpenOrders(contractName: string): Promise<any> {
     return this.get("/fapi/v2/openOrders", { contractName });

@@ -87,6 +87,20 @@ export function useAccount() {
   });
 }
 
+export function useBitrueAccount() {
+  return useQuery<{
+    available: number;
+    frozen: number;
+    total: number;
+    positions: any[];
+    connected: boolean;
+    error?: string;
+  }>({
+    queryKey: ["/api/bitrue-account"],
+    refetchInterval: 15000,
+  });
+}
+
 export function useStrategies() {
   return useQuery<Strategy[]>({
     queryKey: ["/api/strategies"],

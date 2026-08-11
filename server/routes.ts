@@ -827,7 +827,7 @@ export async function registerRoutes(
     try {
       const schema = z.object({
         baseCapital: z.number().min(10).max(100000),
-        leverage: z.number().min(1).max(125).default(33),
+        leverage: z.number().min(1).max(100).default(20),
       });
       const params = schema.parse(req.body);
 

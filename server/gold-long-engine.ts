@@ -226,6 +226,54 @@ async function getLivePosition(
   return { contracts, avgPrice, liqPrice };
 }
 
+/**
+ * Set leverage on the account for E-XAUT-USDT, then return the effective value.
+ *
+ * Bitrue requires every order's leverage to match the account's configured leverage
+ * for that contract.  The /fapi/v1/leverage endpoint sets it, but if it rejects
+ * (code -1166 "inconsistent with user contract configuration N") the error message
+ * contains the currently-configured value N.  We parse N out and use it so orders
+ * still succeed even if the user can't change leverage via API.
+ */
+async function resolveMaxLeverage(
+  client:            NonNullable<ReturnType<typeof getBitrueClient>>,
+  requestedLeverage: number,
+): Promise<number> {
+  try {
+    await client.setLeverage(CONTRACT, requestedLeverage);
+    console.log(`[Gold Long] Leverage set to ${requestedLeverage}x on ${CONTRACT}`);
+    return requestedLeverage;
+  } catch (e: any) {
+    const msg: string = e.message || "";
+    // Error -1166: "…inconsistent with the user contract configuration 10"
+    // The trailing number is the currently-configured leverage — use it.
+    const match = msg.match(/configuration\s+(\d+)/i);
+    if (match) {
+      const configured = parseInt(match[1], 10);
+      console.warn(`[Gold Long] setLeverage(${requestedLeverage}) rejected — account has ${configured}x configured. Using ${configured}x.`);
+      return configured;
+    }
+    // Fallback: try exchange contract max, cap at 20 if unknown
+    try {
+      const contracts: any[] = await client.getContracts();
+      const spec = contracts.find(
+        (c: any) => (c.contractName || c.symbol || c.name || "")
+                      .toUpperCase() === CONTRACT.toUpperCase()
+      );
+      if (spec) {
+        const maxLev = parseFloat(spec.maxLeverage || spec.leverageMax || spec.leverage || "0");
+        if (maxLev > 0) {
+          const effective = Math.min(requestedLeverage, maxLev);
+          console.warn(`[Gold Long] setLeverage fallback: using exchange max ${maxLev}x → ${effective}x`);
+          return effective;
+        }
+      }
+    } catch {}
+    console.warn(`[Gold Long] Could not resolve leverage — defaulting to 10x. Error: ${msg}`);
+    return 10;
+  }
+}
+
 async function getMarkAndFundingRate(
   client: NonNullable<ReturnType<typeof getBitrueClient>>,
 ): Promise<{ tagPrice: number; fundingRate: number }> {
@@ -316,11 +364,19 @@ async function activateSlot(
 async function handleEntry(strategy: Strategy): Promise<void> {
   const client = getBitrueClient()!;
   const cfg    = strategy.config as any;
-  const { baseCapital, leverage = 33 } = cfg;
-  const notional = baseCapital * leverage;
-  const now      = Date.now();
-  const id       = strategy.id;
+  const { baseCapital } = cfg;
+  const now = Date.now();
+  const id  = strategy.id;
 
+  // Resolve actual leverage: cap to exchange maximum before any order is placed
+  const requestedLev: number = cfg.leverage ?? 20;
+  const leverage = await resolveMaxLeverage(client, requestedLev);
+  // Persist corrected leverage so the UI and monitoring phase use the capped value
+  if (leverage !== requestedLev) {
+    await saveConfig(strategy, { leverage });
+  }
+
+  const notional = baseCapital * leverage;
   console.log(`[Gold Long #${id}] Entry — margin=$${baseCapital} lev=${leverage}x notional=$${notional}`);
 
   // 1. Market BUY seed (30% of notional)

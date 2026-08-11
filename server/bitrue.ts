@@ -217,6 +217,15 @@ export class BitrueClient {
     return this.post("/fapi/v1/batchCancel", { contractName, ids: orderIds });
   }
 
+  /**
+   * Set the account leverage for a contract before placing orders.
+   * Bitrue requires the order leverage to match the account's configured leverage.
+   * Must be called before placeMarketOrder / placeLimitOrder.
+   */
+  async setLeverage(contractName: string, leverage: number): Promise<any> {
+    return this.post("/fapi/v1/leverage", { contractName, leverage });
+  }
+
   /** All open orders for a contract. Response: { code, msg, data: [...] } */
   async getOpenOrders(contractName: string): Promise<any> {
     return this.get("/fapi/v2/openOrders", { contractName });

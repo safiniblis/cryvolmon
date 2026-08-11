@@ -1546,7 +1546,7 @@ function GoldLongPanel() {
           />
           <div className="flex items-center gap-1">
             <Input
-              type="number" min="2" max="125"
+              type="number" min="1" max="100"
               value={leverage}
               onChange={e => setLeverage(e.target.value)}
               className="w-16 text-xs font-mono"
@@ -1557,7 +1557,7 @@ function GoldLongPanel() {
               size="sm"
               className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-600"
               disabled={goldLongStart.isPending}
-              onClick={() => goldLongStart.mutate({ baseCapital: parseFloat(baseCapital) || 100, leverage: parseInt(leverage) || 33 })}
+              onClick={() => goldLongStart.mutate({ baseCapital: parseFloat(baseCapital) || 100, leverage: parseInt(leverage) || 20 })}
             >
               {goldLongStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Play className="h-3 w-3 mr-1" />}
               Start

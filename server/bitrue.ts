@@ -75,7 +75,13 @@ export class BitrueClient {
     });
     const text = await res.text();
     if (!res.ok) throw new Error(`Bitrue POST ${path} HTTP ${res.status}: ${text}`);
-    return JSON.parse(text);
+    const parsed = JSON.parse(text);
+    // Bitrue often returns HTTP 200 with code != 0 for business-logic errors.
+    // Check the code field on all POST responses.
+    if (parsed?.code !== undefined && parsed.code !== 0) {
+      throw new Error(`Bitrue POST ${path} code=${parsed.code}: ${parsed.msg || text}`);
+    }
+    return parsed;
   }
 
   // ── Market data (authenticated) ──────────────────────────────────────────────
@@ -105,9 +111,22 @@ export class BitrueClient {
 
   // ── Positions ────────────────────────────────────────────────────────────────
 
-  /** Open positions for a contract. Response: { positions: [...] } */
+  /**
+   * Open positions for a contract.
+   * Bitrue may return { positions: [...] } or { data: { positions: [...] } } or { data: [...] }
+   * depending on API version — caller should use extractPositions() helper.
+   */
   async getPositions(contractName: string): Promise<any> {
     return this.get("/fapi/v1/positions", { contractName });
+  }
+
+  /** Normalise getPositions() response into a flat array regardless of nesting shape. */
+  static extractPositions(res: any): any[] {
+    if (Array.isArray(res))                    return res;
+    if (Array.isArray(res?.positions))         return res.positions;
+    if (Array.isArray(res?.data?.positions))   return res.data.positions;
+    if (Array.isArray(res?.data))              return res.data;
+    return [];
   }
 
   // ── Orders ───────────────────────────────────────────────────────────────────

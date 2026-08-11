@@ -33,7 +33,7 @@
  *   Cancel: POST /fapi/v1/cancel — DELETE not supported on Bitrue futures
  */
 
-import { getBitrueClient } from "./bitrue";
+import { getBitrueClient, BitrueClient } from "./bitrue";
 import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
 
@@ -187,21 +187,41 @@ async function getLivePosition(
   leverage: number,
 ): Promise<{ contracts: number; avgPrice: number; liqPrice: number } | null> {
   const res  = await client.getPositions(CONTRACT);
-  const list: any[] = res?.positions || [];
-  const pos  = list.find((p: any) => {
-    const qty = parseFloat(p.volume || p.holdVol || p.qty || "0");
-    return qty > 0 && (p.positionType === 1 || p.positionType === undefined);
-  });
-  if (!pos) return null;
+  // Normalise across Bitrue response shapes: { positions }, { data: { positions } }, { data: [] }
+  const list: any[] = BitrueClient.extractPositions(res);
+  console.log(`[Gold Long] getPositions raw keys=${Object.keys(res || {}).join(",")} listLen=${list.length}`);
 
-  const contracts = parseFloat(pos.volume   || pos.holdVol  || pos.qty       || "0");
+  // Look for a long position with non-zero volume
+  const pos = list.find((p: any) => {
+    const qty = parseFloat(p.volume || p.holdVol || p.qty || p.openVol || "0");
+    // positionType: 1=long in one-way mode; some responses omit it entirely
+    const isLong = p.positionType === 1 || p.positionType === "1" ||
+                   p.side === "BUY" || p.side === "LONG" ||
+                   p.positionType === undefined;
+    return qty > 0 && isLong;
+  });
+
+  if (!pos) {
+    console.log(`[Gold Long] No long position found. Raw list: ${JSON.stringify(list)}`);
+    return null;
+  }
+
+  const contracts = parseFloat(pos.volume || pos.holdVol || pos.qty || pos.openVol || "0");
   const avgPrice  = parseFloat(pos.avgOpenPrice || pos.avgPrice  || pos.openPrice || "0");
   const liqRaw    = parseFloat(
     pos.liqPrice || pos.liquidationPrice || pos.liqP || pos.forceClosePrice || pos.blastPrice || "0"
   );
-  const liqPrice  = liqRaw > 0
-    ? liqRaw
+
+  // Sanity check: liq price must be BELOW avg entry for a long position.
+  // If exchange returns a liq above avg entry, reject it and use formula.
+  const liqFromExchange = liqRaw > 0 && avgPrice > 0 && liqRaw < avgPrice ? liqRaw : 0;
+  const liqPrice = liqFromExchange > 0
+    ? liqFromExchange
     : (avgPrice > 0 ? roundPrice(avgPrice * (1 - 1 / leverage)) : 0);
+
+  if (liqFromExchange === 0 && liqRaw > 0) {
+    console.warn(`[Gold Long] Exchange liqPrice ${liqRaw} rejected (≥ avgPrice ${avgPrice}) — using formula`);
+  }
 
   return { contracts, avgPrice, liqPrice };
 }
@@ -320,36 +340,39 @@ async function handleEntry(strategy: Strategy): Promise<void> {
     return;
   }
 
-  // 2. Wait for exchange to populate position, then reconcile
-  await sleep(3000);
+  // 2. Wait for exchange to populate position, then reconcile (retry up to 4×5s)
   let seedContracts  = 0;
   let seedEntryPrice = 0;
   let liqPrice       = 0;
-  try {
-    const pos = await getLivePosition(client, leverage);
-    if (pos && pos.contracts > 0) {
-      seedContracts  = Math.round(pos.contracts);
-      seedEntryPrice = pos.avgPrice;
-      liqPrice       = pos.liqPrice;
-      console.log(`[Gold Long #${id}] Seed: ${seedContracts}ct @ $${seedEntryPrice}, liq=$${liqPrice}`);
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    await sleep(5000);
+    try {
+      const pos = await getLivePosition(client, leverage);
+      if (pos && pos.contracts > 0) {
+        seedContracts  = Math.round(pos.contracts);
+        seedEntryPrice = pos.avgPrice;
+        liqPrice       = pos.liqPrice;
+        console.log(`[Gold Long #${id}] Seed confirmed (attempt ${attempt}): ${seedContracts}ct @ $${seedEntryPrice}, liq=$${liqPrice}`);
+        break;
+      }
+      console.log(`[Gold Long #${id}] Position not yet visible (attempt ${attempt}/4), retrying…`);
+    } catch (e: any) {
+      console.warn(`[Gold Long #${id}] Position reconcile attempt ${attempt}: ${e.message}`);
     }
-  } catch (e: any) {
-    console.warn(`[Gold Long #${id}] Position reconcile: ${e.message}`);
   }
 
-  // Fallback: estimate from mark price
-  if (!seedEntryPrice) {
-    try {
-      const { tagPrice } = await getMarkAndFundingRate(client);
-      seedEntryPrice = tagPrice;
-      seedContracts  = usdtToContracts(seedAmount, tagPrice);
-      liqPrice       = roundPrice(tagPrice * (1 - 1 / leverage));
-      console.log(`[Gold Long #${id}] Seed estimated from mark price: $${seedEntryPrice}`);
-    } catch (e: any) {
-      console.error(`[Gold Long #${id}] Cannot determine seed price — aborting: ${e.message}`);
-      await saveConfig(strategy, { lastActionAt: now, lastError: e.message });
-      return;
-    }
+  // HARD STOP: if exchange shows no position after all retries, the market order
+  // did not execute. Do NOT advance to floor_active — stay in entry phase with an error.
+  if (seedContracts === 0) {
+    const msg = "Market seed order did not result in an open position on Bitrue after 20s — check margin, API permissions, and contract availability";
+    console.error(`[Gold Long #${id}] ${msg}`);
+    await saveConfig(strategy, {
+      phase: "entry",
+      lastActionAt: now,
+      lastError: msg,
+    });
+    return;
   }
 
   if (!liqPrice && seedEntryPrice) {

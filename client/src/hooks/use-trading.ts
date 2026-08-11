@@ -330,7 +330,7 @@ export function useGoldLongStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
-    mutationFn: async (data: { symbol: string; baseCapital: number; leverage: number }) => {
+    mutationFn: async (data: { baseCapital: number; leverage: number }) => {
       const res = await apiRequest("POST", "/api/strategies/gold-long-start", data);
       return res.json();
     },

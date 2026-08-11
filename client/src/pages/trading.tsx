@@ -1352,13 +1352,42 @@ function TandemStartPanel() {
   );
 }
 
+// Slot state pill: pending (no order), open, filled, tp_placed, tp_filled
+type SlotState = "idle" | "open" | "outer_filled" | "both_filled" | "tp_open" | "recycled";
+
+function slotState(slot: any): SlotState {
+  if (!slot.outerOrderId && !slot.innerOrderId) return "idle";
+  if (slot.tpFilled) return "recycled";
+  if (slot.tpOrderId && !slot.tpFilled) return "tp_open";
+  if (slot.outerFilled && slot.innerFilled) return "both_filled";
+  if (slot.outerFilled) return "outer_filled";
+  return "open";
+}
+
+const SLOT_STATE_LABELS: Record<SlotState, string> = {
+  idle: "idle", open: "open", outer_filled: "½ fill",
+  both_filled: "filled", tp_open: "TP→", recycled: "TP✓",
+};
+const SLOT_STATE_COLORS: Record<SlotState, string> = {
+  idle: "text-muted-foreground/50",
+  open: "text-amber-400",
+  outer_filled: "text-amber-300",
+  both_filled: "text-green-400",
+  tp_open: "text-sky-400",
+  recycled: "text-emerald-400",
+};
+
+type SeedState = "tp_open" | "buyback_open";
+const SEED_STATE_LABELS: Record<SeedState, string> = { tp_open: "TP→", buyback_open: "BB↑" };
+const SEED_STATE_COLORS: Record<SeedState, string> = { tp_open: "text-sky-400", buyback_open: "text-amber-400" };
+
 function GoldLongPanel() {
   const { data: strategies } = useStrategies();
   const stopStrategy = useStopStrategy();
   const goldLongStart = useGoldLongStart();
 
   const [baseCapital, setBaseCapital] = useState("100");
-  const [leverage, setLeverage] = useState("10");
+  const [leverage, setLeverage] = useState("33");
 
   const running = strategies?.find(
     (s: Strategy) => s.type === "gold_long" && s.status === "running",
@@ -1366,26 +1395,33 @@ function GoldLongPanel() {
 
   if (running) {
     const cfg = (running.config || {}) as any;
-    const phase = cfg.phase || "entry";
-    const phaseLabels: Record<string, string> = {
-      entry: "Opening",
-      monitoring: "Monitoring",
-      complete: "Complete",
-    };
-    const supportsTotal = 7;
-    const supportsFilled = cfg.fillCount ?? 0;
-    const nextRefreshMin = cfg.lastRefreshAt
-      ? Math.max(0, Math.round((cfg.lastRefreshAt + 3_600_000 - Date.now()) / 60_000))
+    const phase: string = cfg.phase || "entry";
+    const floorSlots: any[] = cfg.floorSlots || [];
+    const seedTpSlots: any[] = cfg.seedTpSlots || [];
+
+    const fundingRatePct = cfg.fundingRate != null ? (cfg.fundingRate * 100).toFixed(4) : null;
+    const fundingNegative = cfg.fundingRate < -0.0003;
+    const fundingAlert    = cfg.fundingRate < -0.0005;
+
+    const lastRefresh    = cfg.lastRefreshAt || 0;
+    const nextRefreshMin = lastRefresh
+      ? Math.max(0, Math.round((lastRefresh + 3_600_000 - Date.now()) / 60_000))
       : "—";
+
+    const fundingReductionAt: number | null = cfg.fundingReductionAt || null;
+    const recentReduction = fundingReductionAt && (Date.now() - fundingReductionAt < 4 * 3_600_000);
+
+    const fmt = (n: number) =>
+      n ? `$${n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}` : "…";
 
     return (
       <Card className="bg-card/30 border-border/40">
         <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-amber-400" />
-            <span>XAUTUSDT</span>
+            <span>E-XAUT-USDT</span>
             <Badge variant="secondary" className="text-[10px] bg-amber-500/20 text-amber-300 border-amber-500/30">
-              LONG · {phaseLabels[phase] || phase}
+              LONG · {phase === "entry" ? "OPENING" : "FLOOR ACTIVE"}
             </Badge>
           </CardTitle>
           <Button size="icon" variant="ghost" onClick={() => stopStrategy.mutate(running.id)} disabled={stopStrategy.isPending}>
@@ -1393,55 +1429,98 @@ function GoldLongPanel() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-2">
-          <div className="grid grid-cols-3 gap-1.5">
+
+          {/* Funding alert banner */}
+          {recentReduction && (
+            <div className="rounded px-2 py-1 text-[9px] bg-orange-500/15 border border-orange-500/30 text-orange-300">
+              ⚠ Funding guard fired — position reduced to seed, slot #1 re-deployed
+            </div>
+          )}
+
+          {/* Key metrics row */}
+          <div className="grid grid-cols-4 gap-1.5">
             <div className="p-1.5 rounded border border-border/20 bg-card/20">
-              <p className="text-[9px] text-muted-foreground">Leverage</p>
-              <p className="font-mono text-[11px] font-semibold text-amber-300">{cfg.leverage ?? 10}x</p>
+              <p className="text-[9px] text-muted-foreground">Lev</p>
+              <p className="font-mono text-[11px] font-semibold text-amber-300">{cfg.leverage ?? 33}x</p>
             </div>
             <div className="p-1.5 rounded border border-border/20 bg-card/20">
-              <p className="text-[9px] text-muted-foreground">Capital</p>
+              <p className="text-[9px] text-muted-foreground">Margin</p>
               <p className="font-mono text-[11px] font-semibold">${cfg.baseCapital}</p>
             </div>
             <div className="p-1.5 rounded border border-border/20 bg-card/20">
-              <p className="text-[9px] text-muted-foreground">Supports Hit</p>
-              <p className="font-mono text-[11px] font-semibold text-amber-300">{supportsFilled}/{supportsTotal}</p>
+              <p className="text-[9px] text-muted-foreground">Seed @ </p>
+              <p className="font-mono text-[11px] font-semibold text-amber-200">{fmt(cfg.seedEntryPrice)}</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20">
+              <p className="text-[9px] text-muted-foreground">Liq</p>
+              <p className="font-mono text-[11px] font-semibold text-red-400">{fmt(cfg.liqPrice)}</p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            <div className="p-1.5 rounded border border-border/20 bg-card/20">
-              <p className="text-[9px] text-muted-foreground">Avg Entry</p>
-              <p className="font-mono text-[11px] font-semibold">
-                {cfg.avgEntryPrice ? `$${Number(cfg.avgEntryPrice).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "..."}
+
+          {/* Funding rate */}
+          {fundingRatePct !== null && (
+            <div className={`p-1.5 rounded border flex items-center justify-between ${fundingAlert ? "border-red-500/40 bg-red-500/10" : fundingNegative ? "border-orange-500/30 bg-orange-500/10" : "border-border/20 bg-card/20"}`}>
+              <p className="text-[9px] text-muted-foreground">Funding Rate</p>
+              <p className={`font-mono text-[11px] font-semibold ${fundingAlert ? "text-red-400" : fundingNegative ? "text-orange-400" : "text-emerald-400"}`}>
+                {fundingRatePct}%
               </p>
             </div>
-            <div className="p-1.5 rounded border border-border/20 bg-card/20">
-              <p className="text-[9px] text-muted-foreground">Total XAUT</p>
-              <p className="font-mono text-[11px] font-semibold text-amber-200">
-                {cfg.totalQty ? `${Number(cfg.totalQty).toFixed(4)} oz` : "..."}
-              </p>
+          )}
+
+          {/* Floor slots grid */}
+          {floorSlots.length > 0 && (
+            <div>
+              <p className="text-[9px] text-muted-foreground mb-1">Floor Slots (liq-floor grid)</p>
+              <div className="grid grid-cols-4 gap-1">
+                {floorSlots.map((slot: any) => {
+                  const state = slotState(slot);
+                  const pcts = [10, 15, 20, 25];
+                  return (
+                    <div key={slot.index} className="p-1.5 rounded border border-border/20 bg-card/20 text-center">
+                      <p className="text-[9px] text-muted-foreground">#{slot.index} {pcts[slot.index - 1]}%</p>
+                      <p className={`font-mono text-[10px] font-semibold ${SLOT_STATE_COLORS[state]}`}>
+                        {SLOT_STATE_LABELS[state]}
+                      </p>
+                      {slot.avgEntryPrice > 0 && (
+                        <p className="font-mono text-[8px] text-muted-foreground/60">{fmt(slot.avgEntryPrice)}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
+          )}
+
+          {/* Seed TP slots */}
+          {seedTpSlots.length > 0 && (
+            <div>
+              <p className="text-[9px] text-muted-foreground mb-1">Seed TPs (A/B/C)</p>
+              <div className="grid grid-cols-3 gap-1">
+                {seedTpSlots.map((stp: any) => {
+                  const state: SeedState = stp.state || "tp_open";
+                  const tpPcts: Record<string, string> = { A: "+1.20%", B: "+1.80%", C: "+2.40%" };
+                  return (
+                    <div key={stp.tranche} className="p-1.5 rounded border border-border/20 bg-card/20 text-center">
+                      <p className="text-[9px] text-muted-foreground">{stp.tranche} {tpPcts[stp.tranche]}</p>
+                      <p className={`font-mono text-[10px] font-semibold ${SEED_STATE_COLORS[state]}`}>
+                        {SEED_STATE_LABELS[state]}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Refresh timer + footer */}
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/20">
+            <span>Bitrue E-XAUT-USDT perp · liq-floor grid</span>
+            <span className="font-mono">drift in {typeof nextRefreshMin === "number" ? `${nextRefreshMin}m` : nextRefreshMin}</span>
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            <div className="p-1.5 rounded border border-border/20 bg-card/20">
-              <p className="text-[9px] text-muted-foreground">Liq Price</p>
-              <p className="font-mono text-[11px] font-semibold text-red-400">
-                {cfg.liquidationPrice ? `$${Number(cfg.liquidationPrice).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "..."}
-              </p>
-            </div>
-            <div className="p-1.5 rounded border border-border/20 bg-card/20">
-              <p className="text-[9px] text-muted-foreground">Refresh In</p>
-              <p className="font-mono text-[11px] font-semibold text-amber-300">
-                {typeof nextRefreshMin === "number" ? `${nextRefreshMin}m` : nextRefreshMin}
-              </p>
-            </div>
-          </div>
+
           {cfg.lastError && (
             <p className="text-[9px] text-red-400 font-mono truncate">{cfg.lastError}</p>
           )}
-          <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/20">
-            <span>Bitrue perp futures · DCA accumulation</span>
-            <span className="font-mono">30% entry + 7×10%</span>
-          </div>
         </CardContent>
       </Card>
     );
@@ -1453,7 +1532,7 @@ function GoldLongPanel() {
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-amber-400" />
           Gold Long
-          <Badge variant="secondary" className="text-[10px] bg-amber-500/10 text-amber-400/70 border-amber-500/20">XAUTUSDT PERP</Badge>
+          <Badge variant="secondary" className="text-[10px] bg-amber-500/10 text-amber-400/70 border-amber-500/20">E-XAUT-USDT PERP</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -1467,7 +1546,7 @@ function GoldLongPanel() {
           />
           <div className="flex items-center gap-1">
             <Input
-              type="number" min="2" max="20"
+              type="number" min="2" max="125"
               value={leverage}
               onChange={e => setLeverage(e.target.value)}
               className="w-16 text-xs font-mono"
@@ -1478,7 +1557,7 @@ function GoldLongPanel() {
               size="sm"
               className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-600"
               disabled={goldLongStart.isPending}
-              onClick={() => goldLongStart.mutate({ symbol: "XAUTUSDT", baseCapital: parseFloat(baseCapital) || 100, leverage: parseInt(leverage) || 10 })}
+              onClick={() => goldLongStart.mutate({ baseCapital: parseFloat(baseCapital) || 100, leverage: parseInt(leverage) || 33 })}
             >
               {goldLongStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Play className="h-3 w-3 mr-1" />}
               Start
@@ -1486,7 +1565,7 @@ function GoldLongPanel() {
           </div>
         </div>
         <p className="text-[9px] text-muted-foreground/60">
-          30% market entry · 7 DCA support levels (−1% to −10%) · hourly drift refresh
+          33x · 30% seed entry · 4 floor slots (10/15/20/25%) · outer+inner tiers · seed TPs A/B/C
         </p>
       </CardContent>
     </Card>

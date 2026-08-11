@@ -232,15 +232,26 @@ export async function registerRoutes(
         const bitrueClient = getBitrueClient();
         if (bitrueClient) {
           const cfg = (strategy.config || {}) as any;
-          // Cancel all tracked support orders (POST-based — DELETE not supported on Bitrue futures)
-          const supports: any[] = cfg.supportOrders || [];
-          const supportIds = supports.filter(o => o.id).map(o => String(o.id));
-          if (supportIds.length > 0) {
+          // Cancel all tracked Bitrue futures orders (floor slots + seed TPs + legacy)
+          const orderIds: string[] = [];
+          for (const slot of (cfg.floorSlots || [])) {
+            if (slot.outerOrderId && !slot.outerFilled) orderIds.push(String(slot.outerOrderId));
+            if (slot.innerOrderId && !slot.innerFilled) orderIds.push(String(slot.innerOrderId));
+            if (slot.tpOrderId    && !slot.tpFilled)    orderIds.push(String(slot.tpOrderId));
+          }
+          for (const stp of (cfg.seedTpSlots || [])) {
+            if (stp.tpOrderId)      orderIds.push(String(stp.tpOrderId));
+            if (stp.buybackOrderId) orderIds.push(String(stp.buybackOrderId));
+          }
+          for (const o of (cfg.supportOrders || [])) {
+            if (o.id) orderIds.push(String(o.id));
+          }
+          if (orderIds.length > 0) {
             try {
-              await bitrueClient.cancelOrders(GOLD_CONTRACT, supportIds);
-              console.log(`[Delete ${id}] Cancelled ${supportIds.length} Bitrue support orders`);
+              await bitrueClient.cancelOrders(GOLD_CONTRACT, orderIds);
+              console.log(`[Delete ${id}] Cancelled ${orderIds.length} Bitrue orders`);
             } catch (e: any) {
-              console.warn(`[Delete ${id}] Batch cancel supports failed: ${e.message}`);
+              console.warn(`[Delete ${id}] Batch cancel failed: ${e.message}`);
             }
           }
           // Close any open long position — use live contracts from exchange, not stale config
@@ -347,20 +358,35 @@ export async function registerRoutes(
     } else if (strategy.type === "tandem") {
       await cancelAllTandemOrders(id, strategy.symbol);
     } else if (strategy.type === "gold_long") {
-      // Cancel tracked support orders on Bitrue futures (DELETE not supported — use POST cancel)
+      // Cancel all tracked Bitrue futures orders (floor slots + seed TPs)
+      // DELETE is not supported on Bitrue futures — cancel uses POST
       const GOLD_CONTRACT = "E-XAUT-USDT";
       const { getBitrueClient } = await import("./bitrue");
       const bitrueClient = getBitrueClient();
       if (bitrueClient) {
         const cfg = (strategy.config || {}) as any;
-        const supports: any[] = cfg.supportOrders || [];
-        const supportIds = supports.filter(o => o.id).map(o => String(o.id));
-        if (supportIds.length > 0) {
+        const orderIds: string[] = [];
+        // Floor slot orders (outer / inner / tp per slot)
+        for (const slot of (cfg.floorSlots || [])) {
+          if (slot.outerOrderId && !slot.outerFilled) orderIds.push(String(slot.outerOrderId));
+          if (slot.innerOrderId && !slot.innerFilled) orderIds.push(String(slot.innerOrderId));
+          if (slot.tpOrderId    && !slot.tpFilled)    orderIds.push(String(slot.tpOrderId));
+        }
+        // Seed TP and buyback orders
+        for (const stp of (cfg.seedTpSlots || [])) {
+          if (stp.tpOrderId)      orderIds.push(String(stp.tpOrderId));
+          if (stp.buybackOrderId) orderIds.push(String(stp.buybackOrderId));
+        }
+        // Legacy field — support old running strategies during transition
+        for (const o of (cfg.supportOrders || [])) {
+          if (o.id) orderIds.push(String(o.id));
+        }
+        if (orderIds.length > 0) {
           try {
-            await bitrueClient.cancelOrders(GOLD_CONTRACT, supportIds);
-            console.log(`[Stop ${id}] Cancelled ${supportIds.length} Bitrue support orders`);
+            await bitrueClient.cancelOrders(GOLD_CONTRACT, orderIds);
+            console.log(`[Stop ${id}] Cancelled ${orderIds.length} Bitrue orders`);
           } catch (e: any) {
-            console.warn(`[Stop ${id}] Batch cancel supports failed: ${e.message}`);
+            console.warn(`[Stop ${id}] Batch cancel failed: ${e.message}`);
           }
         }
       }
@@ -801,7 +827,7 @@ export async function registerRoutes(
     try {
       const schema = z.object({
         baseCapital: z.number().min(10).max(100000),
-        leverage: z.number().min(1).max(20).default(10),
+        leverage: z.number().min(1).max(125).default(33),
       });
       const params = schema.parse(req.body);
 
@@ -819,12 +845,16 @@ export async function registerRoutes(
           baseCapital: params.baseCapital,
           leverage: params.leverage,
           phase: "entry",
-          entryPrice: 0,
-          avgEntryPrice: 0,
-          totalQty: 0,
-          supportOrders: [],
-          liquidationPrice: 0,
-          fillCount: 0,
+          // populated after entry fills:
+          seedContracts: 0,
+          seedEntryPrice: 0,
+          liqPrice: 0,
+          floorSlots: [],
+          activeSlotIndex: 0,
+          seedTpSlots: [],
+          fundingRate: 0,
+          fundingCheckedAt: 0,
+          fundingReductionAt: null,
           lastRefreshAt: 0,
           lastActionAt: 0,
           lastError: null,

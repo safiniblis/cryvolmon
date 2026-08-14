@@ -225,7 +225,8 @@ const MANAGER_TOOLS = [
   { type: "function" as const, function: { name: "git_status", description: "Inspect the current repository status without changing files.", parameters: { type: "object", properties: {} } } },
   { type: "function" as const, function: { name: "service_logs", description: "Read recent Cryvolmon service logs on the VM.", parameters: { type: "object", properties: {} } } },
   { type: "function" as const, function: { name: "restart_service", description: "Restart the deployed Cryvolmon systemd service after a build.", parameters: { type: "object", properties: {} } } },
-  { type: "function" as const, function: { name: "run_shell", description: "Run an explicit project/VM command. You have full local permissions — use for build, diagnostics, deployment, and service operations; do not merely print commands when the user asked you to execute them.", parameters: { type: "object", properties: { command: { type: "string" }, timeoutMs: { type: "number" } }, required: ["command"] } } },
+  { type: "function" as const, function: { name: "run_shell", description: "Run an explicit project/VM command as the service user. You have full local permissions — use for build, diagnostics, deployment, and service operations; do not merely print commands when the user asked you to execute them.", parameters: { type: "object", properties: { command: { type: "string" }, timeoutMs: { type: "number" } }, required: ["command"] } } },
+  { type: "function" as const, function: { name: "run_sudo", description: "Run an explicit command as root via passwordless sudo (sudo -n). Use for privileged VM operations the service user cannot perform, such as editing /etc/caddy/Caddyfile, installing packages, or managing other system services. Never use for routine project work.", parameters: { type: "object", properties: { command: { type: "string" }, timeoutMs: { type: "number" } }, required: ["command"] } } },
 ];
 
 /** Read-only external directories the council may inspect but never patch. */
@@ -298,6 +299,14 @@ async function executeManagerTool(name: string, args: Record<string, unknown>, a
     const shell = process.platform === "win32" ? "powershell.exe" : "/bin/bash";
     const shellArgs = process.platform === "win32" ? ["-NoProfile", "-Command", command] : ["-lc", command];
     const result = await execFileAsync(shell, shellArgs, { cwd: process.cwd(), timeout: timeoutMs, maxBuffer: 2_000_000 });
+    return `${result.stdout}\n${result.stderr}`.slice(-16000);
+  }
+  if (name === "run_sudo") {
+    if (process.platform === "win32") return "SUDO_UNAVAILABLE_ON_WINDOWS";
+    const command = String(args.command || "").trim();
+    if (!command) return "SUDO_REJECTED: command is empty.";
+    const timeoutMs = Math.min(Math.max(Number(args.timeoutMs) || 120_000, 1_000), 300_000);
+    const result = await execFileAsync("/bin/bash", ["-lc", `sudo -n ${command}`], { cwd: process.cwd(), timeout: timeoutMs, maxBuffer: 2_000_000 });
     return `${result.stdout}\n${result.stderr}`.slice(-16000);
   }
   return `UNKNOWN_TOOL: ${name}`;
@@ -513,7 +522,7 @@ export async function managerChatWithTools(messages: ChatTurn[], approvalToken?:
   const approved = process.env.COUNCIL_AGENT_TOOLS_ENABLED !== "false";
   const context = await buildAppContext();
   const autonomous = process.env.COUNCIL_AUTONOMOUS_PATCHES !== "false";
-  const system = `${MANAGER_SYSTEM}\n\nAutonomous Manager tools are enabled by the server and you have full local read/write/execute permissions on this system. Do not ask the user for a token or claim that tools are unavailable. When the user explicitly asks you to inspect, edit, build, deploy, or change the project, execute the work with the available tools instead of only printing code or commands. The UI is source code in client/src; inspect it with read_file when the user asks about visible controls or behavior. You may apply edits, run shell commands, checks, builds, or service operations through those tools. You may DELEGATE write/edit work to individual council members by instructing them to apply the change — members share the same patch/build/check tools, so a delegated member can make the edit directly. You decide whether to apply a patch yourself or hand it to a member; no quorum vote is required. Never alter leverage, capital, ticker, exchange order semantics, authentication, or live risk behavior without explicit user confirmation. If a tool rejects an action, report the exact tool result and stop.\n\nAUTONOMOUS_PATCH_MODE=${autonomous ? "ENABLED" : "DISABLED"}`;
+  const system = `${MANAGER_SYSTEM}\n\nAutonomous Manager tools are enabled by the server and you have full local read/write/execute permissions on this system, including passwordless sudo (run_sudo) for privileged VM operations. Do not ask the user for a token or claim that tools are unavailable. When the user explicitly asks you to inspect, edit, build, deploy, or change the project, execute the work with the available tools instead of only printing code or commands. The UI is source code in client/src; inspect it with read_file when the user asks about visible controls or behavior. You may apply edits, run shell commands, checks, builds, or service operations through those tools. Use run_sudo for system-level files like /etc/caddy/Caddyfile or other services; when you change such a file, reload the service to make it live. You may DELEGATE write/edit work to individual council members by instructing them to apply the change — members share the same patch/build/check tools, so a delegated member can make the edit directly. You decide whether to apply a patch yourself or hand it to a member; no quorum vote is required. Never alter leverage, capital, ticker, exchange order semantics, authentication, or live risk behavior without explicit user confirmation. If a tool rejects an action, report the exact tool result and stop.\n\nAUTONOMOUS_PATCH_MODE=${autonomous ? "ENABLED" : "DISABLED"}`;
   const reply = await chatSlot("manager", toAgentMessages(messages, system, context), {
     tools: MANAGER_TOOLS,
     executeTool: (name, args) => executeManagerTool(name, args, approved),

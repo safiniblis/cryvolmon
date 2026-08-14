@@ -199,6 +199,23 @@ sudo systemctl daemon-reload
 sudo systemctl enable cryvolmon
 sudo systemctl restart cryvolmon
 sudo systemctl --no-pager --full status cryvolmon
+
+# Passwordless sudo for the cryvolmon service user (council manager tools).
+sudo tee /etc/sudoers.d/cryvolmon-agent >/dev/null <<SUDOERS
+$USER ALL=(ALL) NOPASSWD:ALL
+SUDOERS
+sudo chmod 440 /etc/sudoers.d/cryvolmon-agent
+
+# Point Caddy at the current external IP so the sslip.io hostname stays reachable.
+if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
+  CURRENT_IP=$(curl -s --max-time 8 ifconfig.me || true)
+  if [ -n "$CURRENT_IP" ] && [ "$CURRENT_IP" != "34.174.227.237" ]; then
+    sudo sed -i "s/34-174-227-237\.sslip\.io/${CURRENT_IP//./-}.sslip.io/g" /etc/caddy/Caddyfile
+    sudo sed -i "s/34-174-172-116\.sslip\.io/${CURRENT_IP//./-}.sslip.io/g" /etc/caddy/Caddyfile
+    sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy || true
+    echo "Caddy updated to ${CURRENT_IP}"
+  fi
+fi
 '@
 
 $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
@@ -208,4 +225,6 @@ if ($LASTEXITCODE -ne 0) { throw "The VM deployment command failed. The existing
 Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $localApiEnv -Force -ErrorAction SilentlyContinue
-Write-Host "Deployment complete: http://34.174.227.237:5000/council"
+$externalIp = gcloud.cmd compute instances describe $Instance --project=$Project --zone=$Zone --format="value(networkInterfaces[0].accessConfigs[0].natIP)"
+$externalIp = $externalIp.Trim()
+Write-Host "Deployment complete: http://${externalIp}:5000/council"

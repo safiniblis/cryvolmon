@@ -194,8 +194,8 @@ async function hedgePairEntry(strategy: Strategy, config: HedgePairConfig, clien
   const posRes = await client.getPositions(strategy.symbol);
   let longPosId = "", shortPosId = "", longEntryQty = 0, shortEntryQty = 0;
   if (posRes?.code === 0 && Array.isArray(posRes.data)) {
-    const longPos = posRes.data.find((p: any) => p.side === "BUY" && parseFloat(p.qty || "0") > 0);
-    const shortPos = posRes.data.find((p: any) => p.side === "SELL" && parseFloat(p.qty || "0") > 0);
+    const longPos = posRes.data.find((p: any) => p.symbol === strategy.symbol && p.side === "BUY" && parseFloat(p.qty || "0") > 0);
+    const shortPos = posRes.data.find((p: any) => p.symbol === strategy.symbol && p.side === "SELL" && parseFloat(p.qty || "0") > 0);
     if (longPos) { longPosId = longPos.positionId; longEntryQty = parseFloat(longPos.qty); }
     if (shortPos) { shortPosId = shortPos.positionId; shortEntryQty = parseFloat(shortPos.qty); }
   }
@@ -236,8 +236,8 @@ async function hedgePairMonitor(strategy: Strategy, config: HedgePairConfig, cli
   const posRes = await client.getPositions(strategy.symbol);
   if (posRes?.code !== 0 || !Array.isArray(posRes.data)) return;
 
-  const longPos = posRes.data.find((p: any) => p.side === "BUY" && parseFloat(p.qty || "0") > 0);
-  const shortPos = posRes.data.find((p: any) => p.side === "SELL" && parseFloat(p.qty || "0") > 0);
+  const longPos = posRes.data.find((p: any) => p.symbol === strategy.symbol && p.side === "BUY" && parseFloat(p.qty || "0") > 0);
+  const shortPos = posRes.data.find((p: any) => p.symbol === strategy.symbol && p.side === "SELL" && parseFloat(p.qty || "0") > 0);
 
   const longAlive = !!longPos;
   const shortAlive = !!shortPos;
@@ -305,7 +305,7 @@ async function hedgePairTrailing(strategy: Strategy, config: HedgePairConfig, cl
   if (posRes?.code !== 0 || !Array.isArray(posRes.data)) return;
 
   const posSide = config.survivingSide === "LONG" ? "BUY" : "SELL";
-  const survivorPos = posRes.data.find((p: any) => p.side === posSide && parseFloat(p.qty || "0") > 0);
+  const survivorPos = posRes.data.find((p: any) => p.symbol === strategy.symbol && p.side === posSide && parseFloat(p.qty || "0") > 0);
 
   if (!survivorPos) {
     console.log(`[${tag}] Survivor position closed (trailing SL hit)`);

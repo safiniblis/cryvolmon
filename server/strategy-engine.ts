@@ -2,6 +2,7 @@ import { getBitunixClient } from "./bitunix";
 import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
 import { priceFeed } from "./ws-price-feed";
+import { managedParam } from "./managed-params";
 
 interface TickerData {
   symbol: string;
@@ -342,10 +343,11 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
     const fixedInitialQty = (config as any).fixedInitialQty;
     const fixedInitialShare = (config as any).fixedInitialShare;
     const minTpCount = 5;
-    const tpReserve = config.tpReservePct || 0.10;
+    const tpReserve = managedParam(config, "tpReservePct", 0.10);
     const minInitialQty = (minTpCount * precision.minTradeVolume) / (1 - tpReserve);
     const minInitialMargin = (minInitialQty * currentPrice) / (leverage * 0.95);
-    const initialShare = fixedInitialShare || Math.max(minInitialMargin, budget * 0.25);
+    const initialSharePct = managedParam(config, "initialSharePct", 0.25);
+    const initialShare = fixedInitialShare || Math.max(minInitialMargin, budget * initialSharePct);
     const remainingForGrids = budget - initialShare;
     const marginPerGrid = totalGridCount > 0 ? remainingForGrids / totalGridCount : remainingForGrids;
     config.amountPerGrid = marginPerGrid;
@@ -356,6 +358,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
 
     console.log(`[${label} ${strategy.id}] Budget=${budget.toFixed(2)} USDT, leverage=${leverage}x, side=${posSide}, totalGridLevels=${totalGridCount}, initialShare=${initialShare.toFixed(2)}, marginPerGrid=${marginPerGrid.toFixed(4)}, initialNotional=${initialNotional.toFixed(2)}, qty=${qtyStr}${fixedInitialQty ? ' (fixed)' : ''} @ ${currentPrice}, range=[${config.lowerPrice.toFixed(2)}-${config.upperPrice.toFixed(2)}]`);
 
+    let gridInitCount = 0;
     const result = await client.placeOrder({
       symbol: strategy.symbol,
       qty: qtyStr,
@@ -376,7 +379,7 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       try {
         const posRes = await client.getPositions(strategy.symbol);
         if (posRes?.code === 0 && Array.isArray(posRes.data)) {
-          const pos = posRes.data.find((p: any) => p.side === posSide && parseFloat(p.qty || "0") > 0);
+          const pos = posRes.data.find((p: any) => String(p.symbol || "").toUpperCase() === strategy.symbol.toUpperCase() && p.side === posSide && parseFloat(p.qty || "0") > 0);
           if (pos) {
             const ep = parseFloat(pos.entryPrice || pos.avgPrice || "0");
             if (ep > 0) fillPrice = ep;
@@ -393,20 +396,24 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
       const gridLevelsIn1Pct = isShort
         ? postGridLevels.filter(l => l <= fillPrice * (1 + bandPct))
         : postGridLevels.filter(l => l >= fillPrice * (1 - bandPct));
-      const gridInitCount = gridLevelsIn1Pct.length;
+      gridInitCount = gridLevelsIn1Pct.length;
 
-      await storage.createTradeLog({
-        strategyId: strategy.id,
-        symbol: strategy.symbol,
-        side: posSide,
-        orderType: "MARKET",
-        quantity: fixedInitialQty ? parseFloat(fixedInitialQty) : baseQty,
-        price: fillPrice,
-        status: "filled",
-        orderId: orderId || null,
-        pnl: null,
-        errorMsg: null,
-      });
+      try {
+        await storage.createTradeLog({
+          strategyId: strategy.id,
+          symbol: strategy.symbol,
+          side: posSide,
+          orderType: "MARKET",
+          quantity: fixedInitialQty ? parseFloat(fixedInitialQty) : baseQty,
+          price: fillPrice,
+          status: "filled",
+          orderId: orderId || null,
+          pnl: null,
+          errorMsg: null,
+        });
+      } catch (e: any) {
+        console.warn(`[${label} ${strategy.id}] Fill log failed after exchange success; continuing state update: ${e.message}`);
+      }
 
       config.allocatedBudget = budget;
       config.lastTrackedPnl = 0;
@@ -527,6 +534,30 @@ async function executeGridStrategy(strategy: Strategy) {
   }
 
   if (!config.initialBuyDone) {
+    try {
+      const positionRes = await client.getPositions(strategy.symbol);
+      const existingPosition = Array.isArray(positionRes?.data)
+        ? positionRes.data.find((position: any) =>
+            String(position.symbol || "").toUpperCase() === strategy.symbol.toUpperCase()
+            && position.side === posSide
+            && parseFloat(position.qty || "0") > 0,
+          )
+        : null;
+      if (existingPosition) {
+        const existingPrice = parseFloat(existingPosition.avgOpenPrice || existingPosition.entryPrice || existingPosition.avgPrice || "0");
+        await storage.updateStrategy(strategy.id, {
+          config: {
+            ...config,
+            initialBuyDone: true,
+            ...(existingPrice > 0 ? { startPrice: existingPrice } : {}),
+          },
+        });
+        console.log(`[${tag}] Existing exchange position detected (${existingPosition.qty}); marked initial entry complete without another market order.`);
+        return;
+      }
+    } catch (e: any) {
+      console.warn(`[${tag}] Existing position check failed before initial entry: ${e.message}`);
+    }
     if (initialBuyLocks.has(strategy.id)) {
       console.log(`[${tag}] Initial position already in progress, skipping...`);
       return;
@@ -593,7 +624,7 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const feeRate = 0.0006;
   const roundTripFee = 2 * feeRate;
-  const cfgFeeMultiplier = config.feeMultiplier || 3.5;
+  const cfgFeeMultiplier = managedParam(config, "feeMultiplier", 3.5);
   const twinMode = config.twinMode === true;
   const twinGapPct = config.twinGapPct || 0.006;
   const minProfitableGap = twinMode ? twinGapPct / 2 : roundTripFee * cfgFeeMultiplier;
@@ -628,7 +659,7 @@ async function executeGridStrategy(strategy: Strategy) {
   try {
     const posRes = await client.getPositions(strategy.symbol);
     if (posRes?.code === 0 && Array.isArray(posRes.data) && posRes.data.length > 0) {
-      const pos = posRes.data.find((p: any) => p.side === posSide);
+      const pos = posRes.data.find((p: any) => String(p.symbol || "").toUpperCase() === strategy.symbol.toUpperCase() && p.side === posSide);
       if (pos) {
         positionId = pos.positionId;
         positionQty = parseFloat(pos.qty || "0");
@@ -742,6 +773,36 @@ async function executeGridStrategy(strategy: Strategy) {
     : 0;
   let availableBalance = allocatedBudget > 0 ? Math.min(accountAvailable, effectiveAllocated) : accountAvailable;
 
+  // Tandem children share one fixed parent budget. Cap combined margin so
+  // profitable cycles cannot silently increase the capital available to either side.
+  if (isTandemChildBudget) {
+    const parentId = Number((config as any).parentTandemId);
+    const parent = Number.isInteger(parentId) ? await storage.getStrategy(parentId) : undefined;
+    const parentCapital = Number((parent?.config as any)?.totalCapital || 0);
+    if (parentCapital > 0) {
+      let combinedMargin = 0;
+      try {
+        const positionsRes = await client.getPositions(strategy.symbol);
+        const positions = (Array.isArray(positionsRes?.data) ? positionsRes.data : [])
+          .filter((position: any) => String(position.symbol || "").toUpperCase() === strategy.symbol.toUpperCase());
+        combinedMargin = positions.reduce((sum: number, position: any) => {
+          const qty = Math.abs(parseFloat(position.qty || position.volume || position.quantity || "0"));
+          if (qty <= 0) return sum;
+          const explicitMargin = parseFloat(position.margin || position.positionMargin || position.isolatedMargin || "0");
+          if (explicitMargin > 0) return sum + explicitMargin;
+          const entry = parseFloat(position.avgOpenPrice || position.entryPrice || position.avgPrice || "0");
+          const positionLeverage = parseFloat(position.leverage || config.leverage || "1");
+          return sum + (entry > 0 && positionLeverage > 0 ? (qty * entry) / positionLeverage : 0);
+        }, 0);
+      } catch (e: any) {
+        console.warn(`[${tag}] Tandem budget position check unavailable: ${e.message}`);
+      }
+      const parentRemaining = Math.max(0, parentCapital - combinedMargin);
+      availableBalance = Math.min(availableBalance, parentRemaining);
+      console.log(`[${tag}] Tandem parent cap: total=${parentCapital.toFixed(2)}, combinedMargin=${combinedMargin.toFixed(2)}, remaining=${parentRemaining.toFixed(2)}`);
+    }
+  }
+
   if (allocatedBudget > 0) {
     console.log(`[${tag}] Budget cap: account=${accountAvailable.toFixed(2)}, allocated=${allocatedBudget.toFixed(2)}, posMargin=${positionMargin.toFixed(2)}, effective=${effectiveAllocated.toFixed(2)}, capped to ${availableBalance.toFixed(2)}`);
   }
@@ -774,7 +835,7 @@ async function executeGridStrategy(strategy: Strategy) {
     console.log(`[${tag}] No balance for grid orders: ${availableBalance.toFixed(2)} USDT (need ${minMarginPerOrder.toFixed(2)} min per grid)`);
   }
 
-  const gridSizeMultiplier = Math.max(0.5, Math.min(1.5, (config as any).gridSizeMultiplier || 1));
+  const gridSizeMultiplier = Math.max(0.5, Math.min(1.5, managedParam(config, "gridSizeMultiplier", 1)));
 
   let placedGrids = 0;
   for (const level of gridSlice) {
@@ -939,7 +1000,7 @@ async function executeGridStrategy(strategy: Strategy) {
         }
       }
 
-      const tpReservePct = Math.min(Math.max(config.tpReservePct ?? 0.10, 0), 0.5);
+      const tpReservePct = Math.min(Math.max(managedParam(config, "tpReservePct", 0.10), 0), 0.5);
       const sellableQty = tpQtyBasis * (1 - tpReservePct);
 
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);
@@ -981,7 +1042,8 @@ async function executeGridStrategy(strategy: Strategy) {
               positionId,
               tpPrice: priceStr,
               tpStopType: "LAST_PRICE",
-              tpOrderType: "MARKET",
+              tpOrderType: "LIMIT",
+              tpOrderPrice: priceStr,
               tpQty: qtyStr,
             });
             if (result?.code === 0) {
@@ -1004,10 +1066,10 @@ async function executeGridStrategy(strategy: Strategy) {
       }
     }
 
-    const trailingTpPct = config.trailingTpPct ?? 0.005;
+    const trailingTpPct = managedParam(config, "trailingTpPct", 0.005);
     const trailingEnabled = config.trailingTpEnabled !== false;
     if (trailingEnabled && positionId && positionQty > 0) {
-      const reserveQty = positionQty * (config.tpReservePct ?? 0.10);
+      const reserveQty = positionQty * managedParam(config, "tpReservePct", 0.10);
       const trailingQty = Math.max(
         Math.floor(reserveQty * Math.pow(10, precision.basePrecision)) / Math.pow(10, precision.basePrecision),
         precision.minTradeVolume
@@ -1156,8 +1218,6 @@ async function executeDCAStrategy(strategy: Strategy) {
       side,
       tradeSide,
       orderType: "MARKET",
-      leverage: config.leverage || 1,
-      positionType: 2,
     });
 
     tradeLog = {
@@ -1232,8 +1292,6 @@ async function executeMomentumStrategy(strategy: Strategy) {
       side,
       tradeSide,
       orderType: "MARKET",
-      leverage: config.leverage || 1,
-      positionType: 2,
     });
 
     tradeLog = {
@@ -1844,6 +1902,7 @@ export async function executePairRotation(strategy: Strategy, newSymbol: string,
     const posRes = await client.getPositions(strategy.symbol);
     if (posRes?.code === 0 && Array.isArray(posRes.data)) {
       for (const pos of posRes.data) {
+        if (String(pos.symbol || "").toUpperCase() !== strategy.symbol.toUpperCase()) continue;
         if (pos.positionId && parseFloat(pos.qty || "0") > 0) {
           await client.flashClose(pos.positionId);
           console.log(`[Rotation ${strategy.id}] Flash closed position ${pos.positionId} on ${strategy.symbol}`);
@@ -1863,7 +1922,7 @@ export async function executePairRotation(strategy: Strategy, newSymbol: string,
   const newGrid = calculateOptimizedGrid(ticker.lastPrice);
   const oldConfig = strategy.config as GridConfig;
 
-  const newConfig: GridConfig = {
+  const newConfig: GridConfig & { initialBuyDone?: boolean } = {
     ...oldConfig,
     upperPrice: newGrid.upperPrice,
     lowerPrice: newGrid.lowerPrice,

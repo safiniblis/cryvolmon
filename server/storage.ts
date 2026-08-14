@@ -2,6 +2,8 @@ import {
   cryptoCache, type CryptoStat,
   strategies, type Strategy, type InsertStrategy,
   tradeLog, type TradeLogEntry, type InsertTradeLog,
+  strategyDecisionEvents, type StrategyDecisionEvent, type InsertStrategyDecisionEvent,
+  councilMessages, type CouncilMessage, type InsertCouncilMessage,
   positions, type Position,
   accountBalance, type AccountBalance,
 } from "@shared/schema";
@@ -21,6 +23,13 @@ export interface IStorage {
 
   getTradeLogs(strategyId?: number, limit?: number): Promise<TradeLogEntry[]>;
   createTradeLog(log: InsertTradeLog): Promise<TradeLogEntry>;
+  linkTradeLogToDecision(tradeLogId: number, decisionEventId: number): Promise<void>;
+  setDecisionEventTradeLog(decisionEventId: number, tradeLogId: number): Promise<void>;
+
+  getStrategyDecisionEvents(strategyId?: number, limit?: number): Promise<StrategyDecisionEvent[]>;
+  createStrategyDecisionEvent(event: InsertStrategyDecisionEvent): Promise<StrategyDecisionEvent>;
+  createCouncilMessage(message: InsertCouncilMessage): Promise<CouncilMessage>;
+  getCouncilMessages(limit?: number, sessionId?: string): Promise<CouncilMessage[]>;
 
   getPositions(): Promise<Position[]>;
   updatePositions(pos: any[]): Promise<void>;
@@ -85,6 +94,51 @@ export class DatabaseStorage implements IStorage {
   async createTradeLog(log: InsertTradeLog): Promise<TradeLogEntry> {
     const [result] = await db.insert(tradeLog).values(log).returning();
     return result;
+  }
+
+  async linkTradeLogToDecision(tradeLogId: number, decisionEventId: number): Promise<void> {
+    await db.update(tradeLog)
+      .set({ decisionEventId })
+      .where(eq(tradeLog.id, tradeLogId));
+    await db.update(strategyDecisionEvents)
+      .set({ tradeLogId })
+      .where(eq(strategyDecisionEvents.id, decisionEventId));
+  }
+
+  async setDecisionEventTradeLog(decisionEventId: number, tradeLogId: number): Promise<void> {
+    await db.update(strategyDecisionEvents)
+      .set({ tradeLogId })
+      .where(eq(strategyDecisionEvents.id, decisionEventId));
+  }
+
+  async getStrategyDecisionEvents(strategyId?: number, limit: number = 100): Promise<StrategyDecisionEvent[]> {
+    if (strategyId) {
+      return await db.select().from(strategyDecisionEvents)
+        .where(eq(strategyDecisionEvents.strategyId, strategyId))
+        .orderBy(desc(strategyDecisionEvents.createdAt))
+        .limit(limit);
+    }
+    return await db.select().from(strategyDecisionEvents)
+      .orderBy(desc(strategyDecisionEvents.createdAt))
+      .limit(limit);
+  }
+
+  async createStrategyDecisionEvent(event: InsertStrategyDecisionEvent): Promise<StrategyDecisionEvent> {
+    // Drizzle's inferred JSONB insert type widens nested condition values incorrectly.
+    const [result] = await db.insert(strategyDecisionEvents).values(event as any).returning();
+    return result;
+  }
+
+  async createCouncilMessage(message: InsertCouncilMessage): Promise<CouncilMessage> {
+    const [result] = await db.insert(councilMessages).values(message as any).returning();
+    return result;
+  }
+
+  async getCouncilMessages(limit: number = 200, sessionId?: string): Promise<CouncilMessage[]> {
+    const query = sessionId
+      ? db.select().from(councilMessages).where(eq(councilMessages.sessionId, sessionId))
+      : db.select().from(councilMessages);
+    return await query.orderBy(desc(councilMessages.createdAt)).limit(limit);
   }
 
   async getPositions(): Promise<Position[]> {

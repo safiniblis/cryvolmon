@@ -2,7 +2,7 @@ import { useCryptoStats, useRefreshStats } from "@/hooks/use-crypto-stats";
 import { VolatilityTable } from "@/components/dashboard/volatility-table";
 import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, TrendingUp, AlertTriangle, Zap, Activity, Bot } from "lucide-react";
+import { RefreshCw, TrendingUp, AlertTriangle, Zap, Activity, Bot, Users } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { Link } from "wouter";
@@ -65,6 +65,15 @@ export default function Dashboard() {
                 className="border-purple-500/30 text-purple-300 hover:text-purple-200"
               >
                 <Bot className="h-4 w-4 mr-2" /> Trading Agent
+              </Button>
+            </Link>
+
+            <Link href="/council" data-testid="link-council">
+              <Button
+                variant="outline"
+                className="border-violet-500/30 text-violet-300 hover:text-violet-200"
+              >
+                <Users className="h-4 w-4 mr-2" /> AI Council
               </Button>
             </Link>
 

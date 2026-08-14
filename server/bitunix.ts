@@ -114,6 +114,13 @@ export class BitunixClient {
     return this.get("/api/v1/futures/position/get_pending_positions", params);
   }
 
+  async getHistoryPositions(symbol?: string, startTime?: number) {
+    const params: Record<string, any> = { limit: 100 };
+    if (symbol) params.symbol = symbol;
+    if (startTime) params.startTime = startTime;
+    return this.get("/api/v1/futures/position/get_history_positions", params);
+  }
+
   // === Leverage & Margin Mode (Private) ===
   async setLeverage(symbol: string, leverage: number, marginCoin: string = "USDT") {
     return this.post("/api/v1/futures/account/change_leverage", { symbol, leverage, marginCoin });

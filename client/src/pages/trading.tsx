@@ -28,6 +28,8 @@ import {
   useTandemStart,
   useHedgePairStart,
   useBitrueAccount,
+  useBitunixPairs,
+  useBitrueContracts,
   useGoldLongStart,
   usePairInfo,
   useEmergencyStop,
@@ -37,7 +39,7 @@ import {
   DollarSign, Activity,
   AlertTriangle, ArrowRight, Zap,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, TrendingUp, ArrowDownToLine,
-  RefreshCw, ArrowUpDown, OctagonX,
+  RefreshCw, ArrowUpDown, OctagonX, Users,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -51,9 +53,42 @@ type Strategy = {
   config: Record<string, any> | null;
   totalPnl: number | null;
   totalTrades: number | null;
-  createdAt: string | null;
-  lastRunAt: string | null;
+  createdAt: Date | null;
+  lastRunAt: Date | null;
 };
+
+function PairSearch({
+  id,
+  value,
+  pairs,
+  onChange,
+  placeholder,
+}: {
+  id: string;
+  value: string;
+  pairs: string[];
+  onChange: (value: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <Input
+      list={id}
+      value={value}
+      onChange={e => onChange(e.target.value.toUpperCase())}
+      className="w-36 text-xs font-mono"
+      placeholder={placeholder}
+      autoComplete="off"
+    />
+  );
+}
+
+function PairOptions({ id, pairs }: { id: string; pairs: string[] }) {
+  return (
+    <datalist id={id}>
+      {pairs.map(pair => <option key={pair} value={pair} />)}
+    </datalist>
+  );
+}
 
 function ConnectionBanner() {
   const { data } = useConnectionStatus();
@@ -617,6 +652,7 @@ function TradeHistory() {
 
 function VolatilityScoresPanel() {
   const { data: scores, isLoading } = useVolatilityScores();
+  const { data: pairData } = useBitunixPairs();
   const { data: strategies } = useStrategies();
   const manualRotation = useManualRotation();
   const quickStart = useQuickStart();
@@ -626,6 +662,7 @@ function VolatilityScoresPanel() {
 
   const runningStrategy = strategies?.find(s => s.status === "running" && s.type === "grid");
   const hasRunning = !!runningStrategy;
+  const availablePairs = new Set(pairData?.pairs || []);
 
   const handleStart = (bitunixSymbol: string) => {
     const val = parseFloat(amount);
@@ -684,7 +721,7 @@ function VolatilityScoresPanel() {
               </tr>
             </thead>
             <tbody>
-              {scores?.slice(0, 10).map(s => {
+              {scores?.filter(s => availablePairs.size === 0 || availablePairs.has(s.bitunixSymbol)).slice(0, 10).map(s => {
                 const isActive = runningStrategy?.symbol === s.bitunixSymbol;
                 const isStarting = startingSymbol === s.bitunixSymbol;
                 return (
@@ -1127,6 +1164,8 @@ function TandemStartPanel() {
   const [longWeight, setLongWeight] = useState("1");
   const [shortWeight, setShortWeight] = useState("1");
   const tandemStart = useTandemStart();
+  const { data: pairData } = useBitunixPairs();
+  const bitunixPairs = pairData?.pairs || [];
   const stopStrategy = useStopStrategy();
   const { data: strategies } = useStrategies();
   const { data: accountData } = useAccount();
@@ -1172,7 +1211,7 @@ function TandemStartPanel() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-2">
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
             <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-cycle">
               <p className="text-[9px] text-muted-foreground">Cycle</p>
               <p className="font-mono text-[11px] font-semibold">#{cfg.cycleCount || 0}</p>
@@ -1182,8 +1221,18 @@ function TandemStartPanel() {
               <p className="font-mono text-[11px] font-semibold">{cfg.leverage || 33}x</p>
             </div>
             <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-capital">
-              <p className="text-[9px] text-muted-foreground">Capital (L/S)</p>
-              <p className="font-mono text-[11px] font-semibold">${cfg.totalCapital || 0} ({cfg.longWeight || 1}/{cfg.shortWeight || 1})</p>
+              <p className="text-[9px] text-muted-foreground">Budget (L/S)</p>
+              <p className="font-mono text-[11px] font-semibold">${Number(cfg.totalCapital || 0).toFixed(2)} ({cfg.longWeight || 1}/{cfg.shortWeight || 1})</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-initial-capital">
+              <p className="text-[9px] text-muted-foreground">Start capital</p>
+              <p className="font-mono text-[11px] font-semibold">${Number(cfg.initialCapital || cfg.totalCapital || 0).toFixed(2)}</p>
+            </div>
+            <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-realized-pnl">
+              <p className="text-[9px] text-muted-foreground">Exchange realized PnL</p>
+              <p className={`font-mono text-[11px] font-semibold ${(cfg.exchangeRealizedPnl || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {(cfg.exchangeRealizedPnl || 0) >= 0 ? "+" : ""}{formatCurrency(cfg.exchangeRealizedPnl || 0)}
+              </p>
             </div>
             {cfg.longGridId && (
               <div className="p-1.5 rounded border border-border/20 bg-card/20" data-testid="tandem-grids">
@@ -1263,20 +1312,15 @@ function TandemStartPanel() {
   return (
     <Card className="bg-card/30 border-border/40">
       <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-        <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <ArrowUpDown className="h-4 w-4 text-orange-400" />
-          Tandem L/S
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <ArrowUpDown className="h-4 w-4 text-orange-400" />
+            Tandem L/S <Badge variant="outline" className="text-[9px]">Bitunix</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <Input
-            data-testid="input-tandem-symbol"
-            value={symbol}
-            onChange={e => setSymbol(e.target.value.toUpperCase())}
-            className="w-28 text-xs font-mono"
-            placeholder="XRPUSDT"
-          />
+          <PairSearch id="bitunix-tandem-pairs" value={symbol} pairs={bitunixPairs} onChange={setSymbol} placeholder="Bitunix ticker" />
+          <PairOptions id="bitunix-tandem-pairs" pairs={bitunixPairs} />
           <Input
             data-testid="input-tandem-capital"
             type="number"
@@ -1433,6 +1477,7 @@ const SEED_STATE_COLORS: Record<SeedState, string> = { tp_open: "text-sky-400", 
 
 function GoldLongPanel() {
   const { data: strategies } = useStrategies();
+  const { data: contractData } = useBitrueContracts();
   const stopStrategy = useStopStrategy();
   const goldLongStart = useGoldLongStart();
 
@@ -1582,11 +1627,20 @@ function GoldLongPanel() {
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-amber-400" />
           Gold Long
+          <Badge variant="outline" className="text-[9px]">Bitrue</Badge>
           <Badge variant="secondary" className="text-[10px] bg-amber-500/10 text-amber-400/70 border-amber-500/20">E-XAUT-USDT PERP</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
+          <PairSearch
+            id="bitrue-contracts"
+            value="E-XAUT-USDT"
+            pairs={contractData?.pairs || ["E-XAUT-USDT"]}
+            onChange={() => {}}
+            placeholder="Bitrue ticker"
+          />
+          <PairOptions id="bitrue-contracts" pairs={contractData?.pairs || ["E-XAUT-USDT"]} />
           <Input
             type="number" min="10" step="10"
             value={baseCapital}
@@ -1624,6 +1678,7 @@ function GoldLongPanel() {
 
 function HedgePairPanel() {
   const { data: strategies } = useStrategies();
+  const { data: pairData } = useBitunixPairs();
   const { data: accountData } = useAccount();
   const stopStrategy = useStopStrategy();
   const hedgePairStart = useHedgePairStart();
@@ -1734,18 +1789,13 @@ function HedgePairPanel() {
       <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Shield className="h-4 w-4 text-cyan-400" />
-          Hedge Pair
+          Hedge Pair <Badge variant="outline" className="text-[9px]">Bitunix</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <Input
-            data-testid="input-hedge-symbol"
-            value={symbol}
-            onChange={e => setSymbol(e.target.value.toUpperCase())}
-            className="w-28 text-xs font-mono"
-            placeholder="XRPUSDT"
-          />
+          <PairSearch id="bitunix-hedge-pairs" value={symbol} pairs={pairData?.pairs || []} onChange={setSymbol} placeholder="Bitunix ticker" />
+          <PairOptions id="bitunix-hedge-pairs" pairs={pairData?.pairs || []} />
           <Input
             data-testid="input-hedge-capital"
             type="number"
@@ -1886,6 +1936,11 @@ export default function TradingPage() {
             <Link href="/">
               <Button variant="outline" size="sm" data-testid="link-dashboard">
                 <ArrowRight className="h-3 w-3 mr-1" /> Dashboard
+              </Button>
+            </Link>
+            <Link href="/council">
+              <Button variant="outline" size="sm" data-testid="link-council">
+                <Users className="h-3 w-3 mr-1" /> Council
               </Button>
             </Link>
           </div>

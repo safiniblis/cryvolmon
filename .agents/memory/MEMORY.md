@@ -1,1 +1,2 @@
 - [Exchange API Rules](exchange-api-rules.md) — Bitunix vs Bitrue auth, endpoints, order fields — never mix; includes XAUT sizing semantics and blocked pairs list.
+- Explicit user commands authorize the requested scoped action. Agents must use an actual available tool/endpoint, verify live preconditions, and never claim an action happened when the application cannot perform it. Do not bypass exchange safety, locked-risk boundaries, or approval gates.

@@ -2,15 +2,82 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
+import {
+  managerChat,
+  managerChatWithTools,
+  agentChat,
+  runCouncil,
+  tuneStrategy,
+  resetManagedParams,
+  getAgentSlots,
+  setAgentOverrides,
+  isAnyAgentConfigured,
+  type ChatTurn,
+  type AgentPosition,
+  type AgentProvider,
+} from "./council";
 import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOptimizedGrid, simulateGridStrategy, computeVolatilityScores, placeInitialGridBuy, cancelAllGridOrders, cancelAllTandemOrders, getActiveGridOrders, optimizeGapSettings, optimizeFeeMultiplier, executePairRotation, simulateTandem, getPairPrecision } from "./strategy-engine";
 import { priceFeed } from "./ws-price-feed";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
+import { resolve, relative, isAbsolute } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
+import { checkResourceManagerHealth, getResourceManagerStatus, setResourceManagerConfig } from "./resource-manager";
+import { getFreeModels, pingModel, FREE_MODEL_REGISTRY } from "./free-models";
+import { getSlot, AGENT_POSITIONS, selectFallbackModel } from "./council";
+const PROJECT_ROOT = resolve(process.cwd());
+let latestCryptoStats: any[] = [];
+const COUNCIL_TUNE_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const councilTuneLocks = new Set<number>();
+
+async function archiveCouncilMessage(message: {
+  sessionId: string;
+  mode: string;
+  position: string;
+  role: string;
+  provider?: string | null;
+  model?: string | null;
+  content: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  try { await storage.createCouncilMessage({ ...message, metadata: message.metadata || {} }); } catch (e: any) {
+    console.warn(`[CouncilArchive] ${e.message}`);
+  }
+}
+
+async function runDueCouncilTunes(): Promise<void> {
+  if (!process.env.DATABASE_URL) return;
+  const running = await storage.getStrategiesByStatus("running");
+  for (const strategy of running) {
+    const config = (strategy.config || {}) as Record<string, any>;
+    if ((strategy.type !== "grid" && strategy.type !== "tandem") || config.parentTandemId || config.councilAutoTune !== true) continue;
+    const lastTuneAt = Number(config.lastCouncilTuneAt || 0);
+    if (Date.now() - lastTuneAt < COUNCIL_TUNE_INTERVAL_MS || councilTuneLocks.has(strategy.id)) continue;
+
+    councilTuneLocks.add(strategy.id);
+    try {
+      console.log(`[Council] Automatic four-hour debate starting for strategy #${strategy.id}`);
+      await tuneStrategy(strategy.id);
+      const updated = await storage.getStrategy(strategy.id);
+      if (updated) {
+        await storage.updateStrategy(strategy.id, {
+          config: { ...(updated.config || {}), councilAutoTune: true, lastCouncilTuneAt: Date.now() },
+        });
+      }
+    } catch (e: any) {
+      console.error(`[Council] Automatic debate failed for strategy #${strategy.id}: ${e.message}`);
+    } finally {
+      councilTuneLocks.delete(strategy.id);
+    }
+  }
+}
 
 async function fetchTop20CryptoData() {
   try {
     const marketsResponse = await fetch(
-      "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=true"
+      "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=true",
+      { headers: { accept: "application/json", "user-agent": "cryvolmon/1.0" } },
     );
 
     if (!marketsResponse.ok) {
@@ -52,6 +119,7 @@ async function fetchTop20CryptoData() {
         priceHistory,
       });
     }
+    latestCryptoStats = results;
     return results;
   } catch (error) {
     console.error("Error fetching crypto data:", error);
@@ -112,7 +180,9 @@ export async function registerRoutes(
   fetchTop20CryptoData().then(async (data) => {
     if (data.length > 0) {
       console.log(`Fetched data for ${data.length} coins`);
-      await storage.updateCryptoStats(data);
+      try { await storage.updateCryptoStats(data); } catch (e: any) {
+        console.warn(`[Stats] Database unavailable; keeping in-memory CoinGecko cache: ${e.message}`);
+      }
     }
   }).catch(console.error);
 
@@ -123,17 +193,26 @@ export async function registerRoutes(
       startStrategyEngine();
     }
   }).catch(console.error);
+  const councilScheduler = setInterval(() => runDueCouncilTunes().catch((e) => console.error(`[Council] Scheduler error: ${e.message}`)), 5 * 60 * 1000);
+  councilScheduler.unref();
 
-  app.get("/api/stats", async (req, res) => {
-    const stats = await storage.getCryptoStats();
-    res.json(stats.sort((a, b) => (b.hourlySwings || 0) - (a.hourlySwings || 0)));
+  app.get("/api/stats", async (_req, res) => {
+    try {
+      const stats = await storage.getCryptoStats();
+      if (stats.length > 0) latestCryptoStats = stats;
+      res.json((stats.length > 0 ? stats : latestCryptoStats).sort((a, b) => (b.hourlySwings || 0) - (a.hourlySwings || 0)));
+    } catch {
+      res.json([...latestCryptoStats].sort((a, b) => (b.hourlySwings || 0) - (a.hourlySwings || 0)));
+    }
   });
 
   app.post("/api/stats/refresh", async (req, res) => {
     try {
       const data = await fetchTop20CryptoData();
       if (data.length > 0) {
-        await storage.updateCryptoStats(data);
+        try { await storage.updateCryptoStats(data); } catch (e: any) {
+          console.warn(`[Stats] Database unavailable; serving in-memory CoinGecko data: ${e.message}`);
+        }
         res.json({ message: "Data refreshed successfully" });
       } else {
         res.status(429).json({ message: "Rate limit hit, please try again later" });
@@ -214,13 +293,18 @@ export async function registerRoutes(
   });
 
   // === Strategies ===
-  app.get("/api/strategies", async (req, res) => {
-    const strats = await storage.getStrategies();
-    const filtered = strats.filter(s => {
-      const cfg = s.config as any;
-      return !cfg?.parentTandemId;
-    });
-    res.json(filtered);
+  app.get("/api/strategies", async (_req, res) => {
+    try {
+      const strats = await storage.getStrategies();
+      const filtered = strats.filter(s => {
+        const cfg = s.config as any;
+        return !cfg?.parentTandemId;
+      });
+      res.json(filtered);
+    } catch (e: any) {
+      if (process.env.NODE_ENV !== "production") return res.json([]);
+      throw e;
+    }
   });
 
   app.post("/api/strategies", async (req, res) => {
@@ -828,6 +912,9 @@ export async function registerRoutes(
         config: {
           leverage,
           totalCapital,
+          initialCapital: totalCapital,
+          exchangeRealizedPnl: 0,
+          capitalTrackingStartedAt: Date.now(),
           feeMultiplier: 3.5,
           longWeight,
           shortWeight,
@@ -1185,6 +1272,23 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/bitrue/contracts", async (_req, res) => {
+    const fallback = ["E-XAUT-USDT"];
+    try {
+      const { getBitrueClient } = await import("./bitrue");
+      const client = getBitrueClient();
+      if (!client) return res.json({ pairs: fallback, source: "fallback", connected: false });
+      const contracts = await client.getContracts();
+      const pairs = contracts
+        .map((contract: any) => contract.contractName || contract.symbol || contract.name || "")
+        .filter((symbol: string) => symbol.includes("USDT"))
+        .sort();
+      res.json({ pairs: pairs.length > 0 ? pairs : fallback, source: pairs.length > 0 ? "bitrue" : "fallback", connected: true });
+    } catch (e: any) {
+      res.json({ pairs: fallback, source: "fallback", connected: false, error: e.message });
+    }
+  });
+
   // === Market Data (live from Bitunix) ===
   app.get("/api/market/:symbol", async (req, res) => {
     const client = getBitunixClient();
@@ -1283,6 +1387,261 @@ export async function registerRoutes(
       const { removeMarginFromGrid } = await import("./strategy-engine");
       const result = await removeMarginFromGrid(strategy, parsed.data.count);
       res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // === AI Council & Manager (5-slot agent system) ===
+  app.get("/api/council/status", async (_req, res) => {
+    res.json({ configured: isAnyAgentConfigured(), slots: getAgentSlots() });
+  });
+
+  const positionEnum = z.enum(["manager", "critic", "architect", "auditor", "strategist", "resource_manager"]);
+  const providerEnum = z.enum(["opencode", "abacus", "deepseek", "groq", "cerebras", "openrouter", "hyperbolic", "nemotron", "nvidia", "sambanova", "mistral", "hf", "gemini", "ovh"]);
+
+  app.post("/api/council/agents", async (req, res) => {
+    const schema = z.object({
+      slots: z
+        .array(
+          z.object({
+            position: positionEnum,
+            provider: providerEnum.optional(),
+            baseUrl: z.string().url().optional(),
+            model: z.string().min(1).optional(),
+            apiKey: z.string().max(512).optional(),
+          }),
+        )
+        .max(5),
+    });
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ message: "Invalid agent config." });
+    setAgentOverrides(parsed.data.slots as { position: AgentPosition; provider?: AgentProvider; baseUrl?: string; model?: string; apiKey?: string }[]);
+    res.json({ slots: getAgentSlots() });
+  });
+
+  app.post("/api/council/chat", async (req, res) => {
+    const schema = z.object({
+      message: z.string().min(1).max(8000),
+      mode: z.enum(["manager", "council", "agent"]).default("manager"),
+      position: positionEnum.optional(),
+      history: z
+        .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(8000) }))
+        .max(40)
+        .default([]),
+      toolsToken: z.string().max(512).optional(),
+    });
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const detail = parsed.error.issues[0]?.message || "Invalid request";
+      const path = parsed.error.issues[0]?.path?.join(".") || "body";
+      return res.status(400).json({ message: `${detail} (at ${path})` });
+    }
+
+    const { message, mode, position, history, toolsToken } = parsed.data;
+    const turns: ChatTurn[] = [...history, { role: "user", content: message }];
+    const sessionId = req.header("x-council-session") || "default";
+    await archiveCouncilMessage({ sessionId, mode, position: position || "manager", role: "user", content: message });
+    try {
+      if (mode === "manager") {
+        const reply = await managerChatWithTools(turns, toolsToken);
+        if (reply.content) await archiveCouncilMessage({ sessionId, mode, position: "manager", role: "assistant", provider: reply.provider, model: reply.model, content: reply.content });
+        res.json({ mode: "manager", configured: isAnyAgentConfigured(), slots: getAgentSlots(), reply });
+      } else if (mode === "agent") {
+        if (!position) return res.status(400).json({ message: "An agent position is required." });
+        const reply = await agentChat(position, turns);
+        if (reply.content) await archiveCouncilMessage({ sessionId, mode, position, role: "assistant", provider: reply.provider, model: reply.model, content: reply.content });
+        res.json({ mode: "agent", position, configured: isAnyAgentConfigured(), slots: getAgentSlots(), reply });
+      } else {
+        const result = await runCouncil(turns);
+        for (const member of result.members || []) {
+          if (member.content) await archiveCouncilMessage({ sessionId, mode: "council", position: member.position, role: "assistant", provider: member.provider, model: member.model, content: member.content, metadata: { phase: "cross_talk" } });
+        }
+        if (result.synthesis?.content) await archiveCouncilMessage({ sessionId, mode: "council", position: "manager", role: "assistant", provider: result.synthesis.provider, model: result.synthesis.model, content: result.synthesis.content, metadata: { phase: "synthesis" } });
+        res.json(result);
+      }
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.get("/api/resource-manager/status", async (_req, res) => {
+    res.json({ ...getResourceManagerStatus(), health: await checkResourceManagerHealth() });
+  });
+
+  app.post("/api/resource-manager/config", async (req, res) => {
+    const parsed = z.object({ baseUrl: z.string().url(), apiKey: z.string().max(512).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ message: "A valid base URL and API key are required." });
+    setResourceManagerConfig(parsed.data.baseUrl, parsed.data.apiKey);
+    res.json({ ...getResourceManagerStatus(), health: await checkResourceManagerHealth() });
+  });
+
+  app.get("/api/council/archive", async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(String(req.query.limit || "200"), 10) || 200, 500);
+      const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : undefined;
+      res.json(await storage.getCouncilMessages(limit, sessionId));
+    } catch {
+      res.json([]);
+    }
+  });
+
+  // === Append operator-provided context into the council archive (token-guarded) ===
+  app.post("/api/council/context", async (req, res) => {
+    const configuredToken = process.env.COUNCIL_WRITE_TOKEN;
+    const suppliedToken = req.header("x-council-write-token") || "";
+    if (!configuredToken) {
+      return res.status(503).json({ message: "Council context writes are disabled. Set COUNCIL_WRITE_TOKEN first." });
+    }
+    const expected = Buffer.from(configuredToken);
+    const supplied = Buffer.from(suppliedToken);
+    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+      return res.status(403).json({ message: "Invalid Council write approval token." });
+    }
+    const parsed = z
+      .object({
+        content: z.string().min(1).max(20000),
+        position: z.string().default("manager"),
+        metadata: z.record(z.string(), z.unknown()).default({}),
+      })
+      .safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ message: "A non-empty content string is required." });
+    await archiveCouncilMessage({
+      sessionId: "operator-context",
+      mode: "context",
+      position: parsed.data.position,
+      role: "user",
+      content: parsed.data.content,
+      metadata: { ...parsed.data.metadata, injectedBy: "operator" },
+    });
+    res.json({ ok: true, archived: true });
+  });
+
+  // === Free-model registry & auto-heal ===
+  app.get("/api/council/models", (_req, res) => {
+    const assignments = AGENT_POSITIONS.map((p) => ({ position: p, model: getSlot(p).model, provider: getSlot(p).provider }));
+    res.json({ models: getFreeModels(), assignments });
+  });
+
+  app.post("/api/council/models/recheck", async (_req, res) => {
+    const openrouterKey = process.env.OPENROUTER_API_KEY;
+    if (!openrouterKey) return res.status(503).json({ message: "OPENROUTER_API_KEY not set — cannot recheck." });
+    const results = [];
+    for (const model of FREE_MODEL_REGISTRY) {
+      const r = await pingModel(model.id, openrouterKey);
+      results.push({ id: model.id, ok: r.ok, ms: r.ms, error: r.error ?? null });
+    }
+    res.json({ models: getFreeModels(), results });
+  });
+
+  app.post("/api/council/heal", async (req, res) => {
+    if (process.env.COUNCIL_AUTO_HEAL !== "1") {
+      return res.status(403).json({
+        message: "Auto-heal is disabled. Set COUNCIL_AUTO_HEAL=1 to allow model rescue swaps. Manager is never auto-healed.",
+        slots: getAgentSlots(),
+      });
+    }
+    const parsed = z.object({ position: positionEnum }).safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ message: "A valid position is required." });
+    const position = parsed.data.position;
+    if (position === "manager" || position === "resource_manager") {
+      return res.status(403).json({ message: `Refusing to auto-heal ${position} — operator lock.`, slots: getAgentSlots() });
+    }
+    const current = getSlot(position);
+    const pick = await selectFallbackModel(position, current.model);
+    if (!pick) {
+      return res.status(503).json({ message: "No working fallback model found — every free model is down or rate-limited.", slots: getAgentSlots() });
+    }
+    res.json({ healed: true, from: current.model, to: pick.model, slots: getAgentSlots() });
+  });
+
+  app.post("/api/strategies/:id/council-tune", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ message: "Invalid strategy id" });
+    try {
+      const result = await tuneStrategy(id);
+      const strategy = await storage.getStrategy(id);
+      if (strategy) {
+        await storage.updateStrategy(id, {
+          config: {
+            ...(strategy.config || {}),
+            councilAutoTune: true,
+            lastCouncilTuneAt: Date.now(),
+          },
+        });
+      }
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/strategies/:id/council-reset", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ message: "Invalid strategy id" });
+    try {
+      const result = await resetManagedParams(id);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // === File access for council context injection ===
+  const READONLY_EXTERNAL_ROOTS = ["/home/safin/gridbot"];
+  const isWithinRoot = (target: string, root: string): boolean => {
+    const rel = target === root ? "" : relative(root, target);
+    return rel !== ".." && !rel.startsWith("..\\") && !rel.startsWith("../") && !isAbsolute(rel);
+  };
+  const resolveReadablePath = (p: string): string | null => {
+    const candidateRoots = [PROJECT_ROOT, ...READONLY_EXTERNAL_ROOTS];
+    for (const root of candidateRoots) {
+      const target = resolve(root, p);
+      if (isWithinRoot(target, root)) return target;
+    }
+    return null;
+  };
+  app.get("/api/council/file", async (req, res) => {
+    const p = req.query.path;
+    if (typeof p !== "string" || !p) return res.status(400).json({ message: "path query required" });
+    const safe = resolveReadablePath(p);
+    if (!safe) {
+      return res.status(403).json({ message: "Path outside project" });
+    }
+    try {
+      const content = readFileSync(safe, "utf-8");
+      res.json({ path: p, content });
+    } catch {
+      res.status(404).json({ message: "File not readable" });
+    }
+  });
+
+  app.post("/api/council/file", async (req, res) => {
+    const configuredToken = process.env.COUNCIL_WRITE_TOKEN;
+    const suppliedToken = req.header("x-council-write-token") || "";
+    if (!configuredToken) {
+      return res.status(503).json({ message: "Council file writes are disabled. Set COUNCIL_WRITE_TOKEN first." });
+    }
+    const expected = Buffer.from(configuredToken);
+    const supplied = Buffer.from(suppliedToken);
+    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+      return res.status(403).json({ message: "Invalid Council write approval token." });
+    }
+
+    const schema = z.object({ path: z.string().min(1), content: z.string() });
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ message: "path and content required" });
+    const { path: relPath, content } = parsed.data;
+    if (relPath.startsWith(".env") || relPath.endsWith("auth.json") || relPath.includes("node_modules")) {
+      return res.status(403).json({ message: "Sensitive or dependency files cannot be edited." });
+    }
+    const safe = resolve(PROJECT_ROOT, relPath);
+    if (!safe.startsWith(PROJECT_ROOT + "\\") && safe !== PROJECT_ROOT) {
+      return res.status(403).json({ message: "Path outside project" });
+    }
+    try {
+      writeFileSync(safe, content, "utf-8");
+      res.json({ path: relPath, ok: true });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }

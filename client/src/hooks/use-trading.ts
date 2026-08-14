@@ -101,6 +101,22 @@ export function useBitrueAccount() {
   });
 }
 
+export function useBitunixPairs() {
+  return useQuery<{ pairs: string[]; source: string }>({
+    queryKey: ["/api/bitunix/pairs"],
+    refetchInterval: 300000,
+    staleTime: 300000,
+  });
+}
+
+export function useBitrueContracts() {
+  return useQuery<{ pairs: string[]; source: string; connected?: boolean }>({
+    queryKey: ["/api/bitrue/contracts"],
+    refetchInterval: 300000,
+    staleTime: 300000,
+  });
+}
+
 export function useStrategies() {
   return useQuery<Strategy[]>({
     queryKey: ["/api/strategies"],
@@ -194,23 +210,6 @@ export function useTradeLogs(strategyId?: number) {
       return res.json();
     },
     refetchInterval: 10000,
-  });
-}
-
-export function useGridCalculator() {
-  const { toast } = useToast();
-
-  return useMutation({
-    mutationFn: async (data: { symbol: string; feeRate?: number }) => {
-      const res = await apiRequest("POST", "/api/grid/calculate", {
-        symbol: data.symbol,
-        feeRate: data.feeRate || 0.0006,
-      });
-      return res.json();
-    },
-    onError: (e: Error) => {
-      toast({ title: "Calculation Failed", description: e.message, variant: "destructive" });
-    },
   });
 }
 
@@ -326,7 +325,7 @@ export function useTandemStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
-    mutationFn: async (data: { symbol: string; totalCapital: number; leverage: number; rotationEnabled?: boolean }) => {
+    mutationFn: async (data: { symbol: string; totalCapital: number; leverage: number; rotationEnabled?: boolean; longWeight?: number; shortWeight?: number }) => {
       const res = await apiRequest("POST", "/api/strategies/tandem-start", data);
       return res.json();
     },

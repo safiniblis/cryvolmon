@@ -33,8 +33,8 @@ import {
   clampManaged,
   type ManagedParamKey,
 } from "./managed-params";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getBitunixClient } from "./bitunix";
@@ -88,7 +88,10 @@ const SHARED_COMMUNICATION = `COMMUNICATION RULES (always):
 - Never chant "=0" without saying what number is missing and why that matters in money terms.
 - Do not refuse forever. If blocked, state: (1) what is wrong in plain words, (2) what must be fixed first, (3) the next concrete step.
 - Trading engines are ONE domain. Other valid domains: product/UI, deployment/VM, council workflow, resource efficiency, documentation, and operator questions.
-- Never invent budgets, P&L, prices, or fills. If a number is unknown, say "unknown" and ask one clear question.`;
+- Never invent budgets, P&L, prices, or fills. If a number is unknown, say "unknown" and ask one clear question.
+- NEVER paste raw file contents, git status/diff output, service logs, build logs, or source code into your reply. Tool output is for your own analysis; the operator only sees your written reply. Summarize findings in short plain English.
+- When you have to say what changed, write a short human summary — never dump the diff. Log technical detail to data/changelog.md via log_change instead of posting it in chat.
+- Keep replies short. A reply that fits on one screen is best. If you used tools, close with one or two lines on what you did and what to look at.`;
 
 const MANAGER_SYSTEM = `You are the MANAGER / BUILDER of cryvolmon (crypto trading bot + multi-agent council on a VM).
 
@@ -219,7 +222,8 @@ const UNCERTAINTY_POLICY = `UNCERTAINTY POLICY:
 const execFileAsync = promisify(execFile);
 const MANAGER_TOOLS = [
   { type: "function" as const, function: { name: "read_file", description: "Read a non-sensitive project file before proposing or applying a change.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
-  { type: "function" as const, function: { name: "apply_patch", description: "Replace one exact old text block with new text in a project file. You have full local write permissions on this system — apply the edit directly.", parameters: { type: "object", properties: { path: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path", "oldText", "newText"] } } },
+  { type: "function" as const, function: { name: "write_file", description: "Create a NEW project file with full content, or overwrite an existing project file entirely. Use this to create new files (apply_patch cannot create them). The parent directory is created automatically.", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] } } },
+  { type: "function" as const, function: { name: "apply_patch", description: "Replace one exact old text block with new text in an EXISTING project file (creates the file if it does not exist yet and oldText is empty). You have full local write permissions on this system — apply the edit directly.", parameters: { type: "object", properties: { path: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path", "oldText", "newText"] } } },
   { type: "function" as const, function: { name: "run_check", description: "Run the project's TypeScript check after an edit.", parameters: { type: "object", properties: {} } } },
   { type: "function" as const, function: { name: "run_build", description: "Build the project after an edit.", parameters: { type: "object", properties: {} } } },
   { type: "function" as const, function: { name: "git_status", description: "Inspect the current repository status without changing files.", parameters: { type: "object", properties: {} } } },
@@ -227,7 +231,22 @@ const MANAGER_TOOLS = [
   { type: "function" as const, function: { name: "restart_service", description: "Restart the deployed Cryvolmon systemd service after a build.", parameters: { type: "object", properties: {} } } },
   { type: "function" as const, function: { name: "run_shell", description: "Run an explicit project/VM command as the service user. You have full local permissions — use for build, diagnostics, deployment, and service operations; do not merely print commands when the user asked you to execute them.", parameters: { type: "object", properties: { command: { type: "string" }, timeoutMs: { type: "number" } }, required: ["command"] } } },
   { type: "function" as const, function: { name: "run_sudo", description: "Run an explicit command as root via passwordless sudo (sudo -n). Use for privileged VM operations the service user cannot perform, such as editing /etc/caddy/Caddyfile, installing packages, or managing other system services. Never use for routine project work.", parameters: { type: "object", properties: { command: { type: "string" }, timeoutMs: { type: "number" } }, required: ["command"] } } },
+  { type: "function" as const, function: { name: "git_commit", description: "Commit ALL current uncommitted project changes with a short message. Safe to run after an edit passes run_check/run_build. Returns the commit hash.", parameters: { type: "object", properties: { message: { type: "string" } }, required: ["message"] } } },
+  { type: "function" as const, function: { name: "log_change", description: "Append a plain-English change-log entry to data/changelog.md describing what was just changed and verified. The operator reads this file to see actual work. One concise line.", parameters: { type: "object", properties: { entry: { type: "string" } }, required: ["entry"] } } },
+  { type: "function" as const, function: { name: "mark_job", description: "Record or clear your current active job so it can be resumed after a server restart. Call with status=\"in_progress\" and a short summary when you START a multi-step job, and status=\"done\" when you finish it. The server reads this on startup to wake you up to continue unfinished work.", parameters: { type: "object", properties: { status: { type: "string", enum: ["in_progress", "done"] }, summary: { type: "string" } }, required: ["status"] } } },
 ];
+
+interface ActiveJobState { status: "in_progress" | "done"; summary: string; startedAt: string; }
+
+const ACTIVE_JOB_FILE = () => join(process.cwd(), "data", "active-job.json");
+
+export function getActiveJob(): ActiveJobState | null {
+  try { return JSON.parse(readFileSync(ACTIVE_JOB_FILE(), "utf8")) as ActiveJobState; } catch { return null; }
+}
+
+function setActiveJob(state: ActiveJobState): void {
+  writeFileSync(ACTIVE_JOB_FILE(), JSON.stringify(state, null, 2), "utf8");
+}
 
 /** Read-only external directories the council may inspect but never patch. */
 const READONLY_EXTERNAL_ROOTS: string[] = [
@@ -252,19 +271,39 @@ function safeToolPath(path: string, { allowExternalRead = false } = {}): string 
   return target;
 }
 
-async function executeManagerTool(name: string, args: Record<string, unknown>, approved: boolean): Promise<string> {
+async function executeManagerTool(name: string, args: Record<string, unknown>, approved: boolean, allowRestart: boolean = true): Promise<string> {
   if (name === "read_file") {
     const target = safeToolPath(String(args.path || ""), { allowExternalRead: true });
     return readFileSync(target, "utf8").slice(0, 16000);
   }
   if (!approved) return "ACTION_BLOCKED: agent tools are disabled (COUNCIL_AGENT_TOOLS_ENABLED is not \"true\").";
+  if (name === "write_file") {
+    const target = safeToolPath(String(args.path || ""));
+    const content = String(args.content ?? "");
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, content, "utf8");
+    return `FILE_WRITTEN: ${args.path} (${Buffer.byteLength(content, "utf8")} bytes)`;
+  }
   if (name === "apply_patch") {
     const target = safeToolPath(String(args.path || ""));
-    const current = readFileSync(target, "utf8");
     const oldText = String(args.oldText || "");
+    const newText = String(args.newText || "");
+    let current = "";
+    let exists = true;
+    try {
+      current = readFileSync(target, "utf8");
+    } catch {
+      exists = false;
+    }
+    if (!exists) {
+      if (oldText) return "PATCH_REJECTED: target file does not exist (create it with write_file).";
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, newText, "utf8");
+      return `PATCH_APPLIED: ${args.path} (created)`;
+    }
     if (!oldText || !current.includes(oldText)) return "PATCH_REJECTED: oldText was not found exactly once.";
     if (current.indexOf(oldText) !== current.lastIndexOf(oldText)) return "PATCH_REJECTED: oldText matched more than once.";
-    writeFileSync(target, current.replace(oldText, String(args.newText || "")), "utf8");
+    writeFileSync(target, current.replace(oldText, newText), "utf8");
     return `PATCH_APPLIED: ${args.path}`;
   }
   if (name === "run_check") {
@@ -289,7 +328,8 @@ async function executeManagerTool(name: string, args: Record<string, unknown>, a
   }
   if (name === "restart_service") {
     if (process.platform === "win32") return "SERVICE_RESTART_UNAVAILABLE_ON_WINDOWS";
-    const result = await execFileAsync("systemctl", ["restart", "cryvolmon"], { cwd: process.cwd(), timeout: 30_000, maxBuffer: 500_000 });
+    if (!allowRestart) return "SERVICE_ALREADY_RUNNING: the service just restarted (that is why you are running now). Do NOT restart again. Verify the current build is live with service_logs or an HTTP check, then continue to log_change, git_commit, and mark_job done.";
+    const result = await execFileAsync("/bin/bash", ["-lc", "sudo -n systemctl restart cryvolmon"], { cwd: process.cwd(), timeout: 30_000, maxBuffer: 500_000 });
     return `${result.stdout}\n${result.stderr}\nSERVICE_RESTARTED`;
   }
   if (name === "run_shell") {
@@ -308,6 +348,50 @@ async function executeManagerTool(name: string, args: Record<string, unknown>, a
     const timeoutMs = Math.min(Math.max(Number(args.timeoutMs) || 120_000, 1_000), 300_000);
     const result = await execFileAsync("/bin/bash", ["-lc", `sudo -n ${command}`], { cwd: process.cwd(), timeout: timeoutMs, maxBuffer: 2_000_000 });
     return `${result.stdout}\n${result.stderr}`.slice(-16000);
+  }
+  if (name === "git_commit") {
+    const git = process.platform === "win32" ? "git.exe" : "git";
+    const message = String(args.message || "council change").slice(0, 120);
+    const identityCommands: Array<[string, string[]]> = [
+      [git, ["config", "user.name", "Cryvolmon Manager"]],
+      [git, ["config", "user.email", "manager@cryvolmon.local"]],
+    ];
+    for (const [cmd, cmdArgs] of identityCommands) {
+      try { await execFileAsync(cmd, cmdArgs, { cwd: process.cwd(), timeout: 20_000 }); } catch { /* identity already set */ }
+    }
+    await execFileAsync(git, ["add", "-A"], { cwd: process.cwd(), timeout: 30_000 });
+    try {
+      const commit = await execFileAsync(git, ["commit", "-m", message], { cwd: process.cwd(), timeout: 30_000 });
+      const log = await execFileAsync(git, ["log", "--oneline", "-1"], { cwd: process.cwd(), timeout: 20_000 });
+      return `COMMITTED ${log.stdout.trim()}\n${commit.stdout}\n${commit.stderr}`.slice(-4000);
+    } catch (error: any) {
+      const stderr = String(error?.stderr || error?.message || "");
+      if (/nothing to commit|no changes added|nothing added/i.test(stderr)) return "COMMITTED nothing to commit (working tree clean)";
+      return `COMMIT_ERROR: ${stderr.slice(-1500)}`;
+    }
+  }
+  if (name === "log_change") {
+    const entry = String(args.entry || "").trim().slice(0, 500);
+    if (!entry) return "LOG_REJECTED: entry is empty.";
+    const changelog = join(process.cwd(), "data", "changelog.md");
+    const existing = (() => { try { return readFileSync(changelog, "utf8"); } catch { return ""; } })();
+    const line = `- ${new Date().toISOString()} — ${entry.replace(/\s*\n\s*/g, " ")}`;
+    const next = existing.trim() ? `${existing.trimEnd()}\n${line}\n` : `# Cryvolmon Change Log\n\n${line}\n`;
+    writeFileSync(changelog, next, "utf8");
+    return `LOG_APPENDED: data/changelog.md\n${line}`;
+  }
+  if (name === "mark_job") {
+    const status = String(args.status || "");
+    if (status === "in_progress") {
+      const summary = String(args.summary || "").trim().slice(0, 500) || "unspecified job";
+      setActiveJob({ status: "in_progress", summary, startedAt: new Date().toISOString() });
+      return `JOB_MARKED_IN_PROGRESS: ${summary}`;
+    }
+    if (status === "done") {
+      setActiveJob({ status: "done", summary: "", startedAt: new Date().toISOString() });
+      return "JOB_MARKED_DONE: active job cleared";
+    }
+    return "JOB_REJECTED: status must be \"in_progress\" or \"done\".";
   }
   return `UNKNOWN_TOOL: ${name}`;
 }
@@ -518,14 +602,30 @@ export async function managerChat(messages: ChatTurn[]): Promise<ManagerReply> {
   };
 }
 
-export async function managerChatWithTools(messages: ChatTurn[], approvalToken?: string): Promise<ManagerReply> {
+export async function managerChatWithTools(messages: ChatTurn[], approvalToken?: string, opts: { allowRestart?: boolean } = {}): Promise<ManagerReply> {
   const approved = process.env.COUNCIL_AGENT_TOOLS_ENABLED !== "false";
+  const allowRestart = opts.allowRestart !== false;
   const context = await buildAppContext();
   const autonomous = process.env.COUNCIL_AUTONOMOUS_PATCHES !== "false";
-  const system = `${MANAGER_SYSTEM}\n\nAutonomous Manager tools are enabled by the server and you have full local read/write/execute permissions on this system, including passwordless sudo (run_sudo) for privileged VM operations. Do not ask the user for a token or claim that tools are unavailable. When the user explicitly asks you to inspect, edit, build, deploy, or change the project, execute the work with the available tools instead of only printing code or commands. The UI is source code in client/src; inspect it with read_file when the user asks about visible controls or behavior. You may apply edits, run shell commands, checks, builds, or service operations through those tools. Use run_sudo for system-level files like /etc/caddy/Caddyfile or other services; when you change such a file, reload the service to make it live. You may DELEGATE write/edit work to individual council members by instructing them to apply the change — members share the same patch/build/check tools, so a delegated member can make the edit directly. You decide whether to apply a patch yourself or hand it to a member; no quorum vote is required. Never alter leverage, capital, ticker, exchange order semantics, authentication, or live risk behavior without explicit user confirmation. If a tool rejects an action, report the exact tool result and stop.\n\nAUTONOMOUS_PATCH_MODE=${autonomous ? "ENABLED" : "DISABLED"}`;
+  const system = `${MANAGER_SYSTEM}\n\nAutonomous Manager tools are enabled by the server and you have full local read/write/execute permissions on this system, including passwordless sudo (run_sudo) for privileged VM operations. Do not ask the user for a token or claim that tools are unavailable. When the user explicitly asks you to inspect, edit, build, deploy, or change the project, execute the work with the available tools instead of only printing code or commands. The UI is source code in client/src; inspect it with read_file when the user asks about visible controls or behavior. Use run_sudo for system-level files like /etc/caddy/Caddyfile or other services; when you change such a file, reload the service to make it live. You may DELEGATE write/edit work to individual council members by instructing them to apply the change — members share the same patch/build/check tools, so a delegated member can make the edit directly. You decide whether to apply a patch yourself or hand it to a member; no quorum vote is required. Never alter leverage, capital, ticker, exchange order semantics, authentication, or live risk behavior without explicit user confirmation. If a tool rejects an action, report the exact tool result and stop.
+
+EXECUTION WORKFLOW (follow for every concrete build/fix/deploy request):
+1. Start: call mark_job with status "in_progress" and a one-line summary of the job. This lets the server wake you to continue after a restart.
+2. Inspect: read_file / git_status to see current state.
+3. Edit: apply_patch for each change. Apply the change yourself — do not only describe it.
+4. Verify: run_check, then run_build.
+5. If anything failed, fix it with apply_patch and re-verify. Do not report success until run_build passes.
+6. If the change is server-side or affects the running app, restart_service, then confirm with service_logs or a live HTTP check.
+7. Record: log_change with one plain-English line, then git_commit with a short message.
+8. Finish: call mark_job with status "done".
+9. Reply to the operator in short plain English: what you changed (in words, not diff), verification result, and the commit hash. Never paste raw tool output.
+
+AUTONOMOUS_PATCH_MODE=${autonomous ? "ENABLED" : "DISABLED"}`;
   const reply = await chatSlot("manager", toAgentMessages(messages, system, context), {
     tools: MANAGER_TOOLS,
-    executeTool: (name, args) => executeManagerTool(name, args, approved),
+    executeTool: (name, args) => executeManagerTool(name, args, approved, allowRestart),
+    maxTokens: 8000,
+    timeoutMs: 300_000,
   });
   return {
     ok: reply.ok,
@@ -536,6 +636,49 @@ export async function managerChatWithTools(messages: ChatTurn[], approvalToken?:
     model: reply.model,
     ms: reply.ms,
   };
+}
+
+/**
+ * Called on server startup. If the manager left an in-progress job in
+ * data/active-job.json (e.g. the service was restarted mid-build), wake the
+ * manager to inspect the change log and git state and continue the job.
+ * Runs in the background so server startup is never blocked.
+ */
+export async function resumeInterruptedJob(): Promise<void> {
+  try {
+    const job = getActiveJob();
+    if (!job || job.status !== "in_progress" || !job.summary) return;
+    if (process.env.COUNCIL_RESUME_ON_START === "false") return;
+    console.log(`[Council] Resuming interrupted job after restart: ${job.summary}`);
+    await pause(5000);
+    const context = await buildAppContext();
+    const prompt: ChatTurn[] = [
+      {
+        role: "user",
+        content: `The server restarted while you were working. Your last in-progress job (started ${job.startedAt}) was: ${job.summary}\n\nInspect the current state: read the latest lines of data/changelog.md, run git_status to see uncommitted work, and check what remains unfinished. Then CONTINUE the job to completion following the EXECUTION WORKFLOW (inspect → edit → verify → build → log_change → git_commit). IMPORTANT: the service is already running fresh right now — that is why you are running. Do NOT call restart_service or restart the service yourself; instead confirm the current build is live with service_logs or an HTTP check, then continue. When finished, call mark_job with status "done" and reply in short plain English what you completed. If the job turns out to be already finished or no longer relevant, call mark_job with status "done" and say so in one line. Never paste raw tool output into your reply.`,
+      },
+    ];
+    const reply = await managerChatWithTools(prompt, undefined, { allowRestart: false });
+    if (reply?.content) {
+      try {
+        await storage.createCouncilMessage({
+          sessionId: "default",
+          mode: "manager",
+          position: "manager",
+          role: "assistant",
+          provider: reply.provider,
+          model: reply.model,
+          content: reply.content,
+          metadata: { resumed: true, job: job.summary },
+        });
+        console.log(`[Council] Resume reply archived (job: ${job.summary})`);
+      } catch (e: any) {
+        console.warn(`[Council] Failed to archive resume reply: ${e.message}`);
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[Council] resumeInterruptedJob failed: ${e.message}`);
+  }
 }
 
 export async function agentChat(position: AgentPosition, messages: ChatTurn[]): Promise<ManagerReply> {
@@ -600,10 +743,15 @@ export async function runCouncil(messages: ChatTurn[]): Promise<CouncilChatResul
   const synthesisPrompt: ChatTurn[] = [
     {
       role: "user",
-      content: `The user asked: ${question}\n\nThe specialists produced initial reports and then cross-talked in a compact machine round. INITIAL REPORTS:\n${reports}\n\nCROSS-TALK ROUND:\n${crossTalkReports}\n\nSynthesize ONE final decision. If the reports lack enough reliable data or contain unresolved contradictions, ask exactly one question instead using:\n- ## Clarification Needed\n- [one targeted question]\nDo not recommend an action in that case. Otherwise use:\n- ## Recommendation (1-3 sentences)\n- ## Plan (ordered, actionable)\n- ## Disagreements (what the members disagreed on and your resolution)\n- ## What We're NOT Doing`,
+      content: `The user asked: ${question}\n\nThe specialists produced initial reports and then cross-talked in a compact machine round. INITIAL REPORTS:\n${reports}\n\nCROSS-TALK ROUND:\n${crossTalkReports}\n\nIf the user explicitly asked you to build, edit, fix, clean up, or deploy something, EXECUTE it now with your tools instead of only writing a plan. EXECUTION WORKFLOW: (0) mark_job in_progress with a one-line summary, (1) read_file/git_status to inspect, (2) apply_patch to make each edit yourself, (3) run_check then run_build, (4) if it fails fix it and re-verify until build passes, (5) if server-side restart_service and confirm with service_logs or a live check, (6) log_change one plain-English line then git_commit a short message, (7) mark_job done. Apply concrete edits directly — do not only describe them. Never leave the change half-done: report the finished state.\n\nThen reply to the operator in SHORT PLAIN ENGLISH — a few sentences: what you changed (in words), verification result, and the commit hash. NEVER paste file contents, diffs, git status, build logs, or tool output into your reply.\n\nIf the user did NOT ask for concrete work and the reports lack enough reliable data or contain unresolved contradictions, ask exactly one question instead using:\n- ## Clarification Needed\n- [one targeted question]\nDo not recommend an action in that case. Otherwise use:\n- ## Recommendation (1-3 sentences)\n- ## Plan (ordered, actionable)\n- ## Disagreements (what the members disagreed on and your resolution)\n- ## What We're NOT Doing`,
     },
   ];
-  const synthesis = await chatSlot("manager", toAgentMessages(synthesisPrompt, MANAGER_SYSTEM, context));
+  const synthesis = await chatSlot("manager", toAgentMessages(synthesisPrompt, MANAGER_SYSTEM, context), {
+    tools: memberTools?.tools,
+    executeTool: memberTools?.executeTool,
+    maxTokens: 8000,
+    timeoutMs: 300_000,
+  });
 
   return {
     mode: "council",

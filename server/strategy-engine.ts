@@ -3,6 +3,7 @@ import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
 import { priceFeed } from "./ws-price-feed";
 import { managedParam } from "./managed-params";
+import { tandemCellFor, tandemGridRatio, isTandemCellReservedNear, hasPendingCloseAtPrice } from "./order-coordinator";
 
 interface TickerData {
   symbol: string;
@@ -676,6 +677,27 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const isTandemChild = !!(config as any).parentTandemId;
 
+  // Tandem children share one parent's order-coordination cells. Read the
+  // parent config once so cell keys match the parent's close reservations.
+  let tandemParentId = 0;
+  let tandemAnchor = 0;
+  let tandemRatio = 1;
+  if (isTandemChild) {
+    const rawParentId = Number((config as any).parentTandemId);
+    if (Number.isInteger(rawParentId) && rawParentId > 0) {
+      try {
+        const parent = await storage.getStrategy(rawParentId);
+        const parentCfg = (parent?.config || {}) as any;
+        tandemParentId = rawParentId;
+        const parentEntry = Number(parentCfg.entryPrice || 0);
+        tandemAnchor = parentEntry > 0 ? parentEntry : 0;
+        tandemRatio = tandemGridRatio(parentCfg);
+      } catch (e: any) {
+        console.warn(`[${tag}] Tandem parent fetch failed: ${e.message}`);
+      }
+    }
+  }
+
   const maxGridWindow = isTandemChild ? 6 : gridLevels.length;
   const windowedGridLevels = gridLevels
     .map(l => ({ level: l, dist: Math.abs(l - currentPrice) }))
@@ -839,6 +861,16 @@ async function executeGridStrategy(strategy: Strategy) {
 
   let placedGrids = 0;
   for (const level of gridSlice) {
+    // A tandem parent may have a close/reduce pending in this cell (or a CLOSE
+    // order resting near this price). Skip the open so it does not churn fees
+    // by offsetting the parent's close at the same grid level.
+    if (tandemParentId > 0 && tandemAnchor > 0) {
+      const cell = tandemCellFor(level, tandemAnchor, tandemRatio);
+      if (isTandemCellReservedNear(tandemParentId, tandemAnchor, tandemRatio, level, 1) || hasPendingCloseAtPrice(openOrders, level)) {
+        console.log(`[${tag}] Skipping ${gridOrderSide} open @ ${roundPrice(level, precision.quotePrecision)}: tandem close pending near cell ${cell}`);
+        continue;
+      }
+    }
     const rawMargin = Math.min(marginPerOrder, (availableBalance - 0.1) * 0.95);
     const effectiveMargin = Math.min(rawMargin * gridSizeMultiplier, (availableBalance - 0.1) * 0.95);
     if (effectiveMargin < minMarginPerOrder * 0.9) break;

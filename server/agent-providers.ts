@@ -463,7 +463,7 @@ export type AgentToolExecutor = (name: string, args: Record<string, unknown>) =>
 export async function chatSlot(
   position: AgentPosition,
   messages: AgentMessage[],
-  opts: { timeoutMs?: number; maxTokens?: number; modelOverride?: string; providerOverride?: AgentProvider; tools?: AgentToolDefinition[]; executeTool?: AgentToolExecutor; requestMessages?: any[]; toolRound?: number; toolResults?: string[]; fallbackDepth?: number } = {},
+  opts: { timeoutMs?: number; maxTokens?: number; modelOverride?: string; providerOverride?: AgentProvider; tools?: AgentToolDefinition[]; executeTool?: AgentToolExecutor; requestMessages?: any[]; toolRound?: number; toolResults?: string[]; fallbackDepth?: number; nudged?: boolean } = {},
 ): Promise<AgentReply> {
   const started = Date.now();
   const slot = getSlot(position);
@@ -556,7 +556,7 @@ export async function chatSlot(
 
     const data = await res.json();
     const toolCalls = data?.choices?.[0]?.message?.tool_calls || [];
-    if (toolCalls.length > 0 && opts.executeTool && (opts.toolRound || 0) < 4) {
+    if (toolCalls.length > 0 && opts.executeTool && (opts.toolRound || 0) < 12) {
       const assistantMessage = data.choices[0].message;
       const toolMessages = [...requestMessages, assistantMessage];
       const toolResults = [...(opts.toolResults || [])];
@@ -573,8 +573,26 @@ export async function chatSlot(
         toolMessages.push({ role: "tool", tool_call_id: call.id, content: result });
       }
       const followUp = await chatSlot(position, messages, { ...opts, requestMessages: toolMessages, toolRound: (opts.toolRound || 0) + 1, toolResults });
-      if (!followUp.ok && followUp.error === "Empty completion" && toolResults.length > 0) {
-        return { ...followUp, ok: true, error: undefined, content: toolResults.join("\n") };
+      if (!followUp.ok && followUp.error === "Empty completion" && toolResults.length > 0 && !opts.nudged) {
+        // The manager likely hit the tool-round cap mid-workflow or returned an
+        // empty final message. Give it ONE more bounded round, tools still
+        // available, to finish remaining steps (build/restart/commit/mark_job)
+        // and then write a real plain-English summary. If that also fails,
+        // fall back to a short note instead of dumping raw tool output.
+        try {
+          const nudged = await chatSlot(position, messages, {
+            ...opts,
+            toolRound: 0,
+            nudged: true,
+            requestMessages: [
+              ...toolMessages,
+              { role: "user", content: "You were interrupted mid-task and produced no final reply. If you still have remaining steps for this job (e.g. run_build, restart_service, log_change, git_commit, mark_job done), complete them now. When everything is done, reply to the operator in short plain English summarizing what you did and the result. Do not paste raw tool output. Do not call more tools once you reply." },
+            ],
+            timeoutMs: 60_000,
+          });
+          if (nudged.ok && nudged.content) return nudged;
+        } catch { /* fall through to note */ }
+        return { ...followUp, ok: true, error: undefined, content: `Tool executions completed but the model returned no final reply. ${toolResults.length} tool call(s) ran; results were recorded in the server log. Ask the manager to summarize what it changed.` };
       }
       return followUp;
     }

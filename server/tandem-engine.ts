@@ -5,6 +5,7 @@ import { priceFeed } from "./ws-price-feed";
 import { getPairPrecision, checkPairRotation, type GridConfig, type PairPrecision } from "./strategy-engine";
 import { logTandemRebalanceDecision, logTandemRebalanceTrade, type TandemRebalanceContext } from "./tandem-decision-log";
 import { managedParam } from "./managed-params";
+import { tandemCellFor, tandemGridRatio, reserveTandemCell, expireStaleTandemReservations } from "./order-coordinator";
 
 function roundQty(qty: number, precision: number): string {
   return qty.toFixed(precision);
@@ -16,7 +17,7 @@ function roundPrice(price: number, precision: number): string {
 
 async function placeLimitClose(
   client: any,
-  params: { symbol: string; qty: string; side: "BUY" | "SELL"; positionId?: string; price: number; quotePrecision: number },
+  params: { symbol: string; qty: string; side: "BUY" | "SELL"; positionId?: string; price: number; quotePrecision: number; strategyId?: number; cell?: string },
 ): Promise<{ result: any; filled: boolean }> {
   const result = await client.placeOrder({
     symbol: params.symbol,
@@ -30,6 +31,13 @@ async function placeLimitClose(
   });
   if (result?.code !== 0 || !result?.data?.orderId) return { result, filled: false };
 
+  // Reserve the cell for a while so a child grid cannot immediately open an
+  // offsetting order at the same level while this close settles. The TTL sweep
+  // in executeTandemStrategy releases it once the close is confirmed done.
+  if (params.strategyId && params.cell) {
+    reserveTandemCell(params.strategyId, params.cell, String(result.data.orderId));
+  }
+
   await new Promise((resolve) => setTimeout(resolve, 500));
   try {
     const history = await client.getOrderHistory(params.symbol);
@@ -40,6 +48,10 @@ async function placeLimitClose(
   } catch {
     return { result, filled: false };
   }
+}
+
+function tandemCloseCell(config: TandemConfig, price: number): string {
+  return tandemCellFor(price, config.entryPrice, tandemGridRatio(config));
 }
 
 async function getTickerPrice(symbol: string): Promise<{ symbol: string; lastPrice: number; high24h: number; low24h: number; volume24h: number; change24h: number } | null> {
@@ -223,6 +235,7 @@ export async function executeTandemStrategy(strategy: Strategy) {
   if (!client) throw new Error("Bitunix client not configured");
 
   const config = strategy.config as TandemConfig;
+  expireStaleTandemReservations();
   await refreshExchangeCapital(strategy, config, client);
   const phase = config.phase || "entry";
 
@@ -611,6 +624,8 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
               positionId: posToTrim?.positionId,
               price: currentPrice,
               quotePrecision: precision.quotePrecision,
+              strategyId: strategy.id,
+              cell: tandemCloseCell(config, currentPrice),
             });
 
             if (filled) {
@@ -780,6 +795,8 @@ async function bailOutAndRestart(
       positionId: config.survivingPositionId || undefined,
       price: currentPrice,
       quotePrecision: precision.quotePrecision,
+      strategyId: strategy.id,
+      cell: tandemCloseCell(config, currentPrice),
     });
 
     const profitPerUnit = direction * (currentPrice - config.entryPrice);
@@ -904,6 +921,8 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
             positionId: config.survivingPositionId || undefined,
             price: currentPrice,
             quotePrecision: precision.quotePrecision,
+            strategyId: strategy.id,
+            cell: tandemCloseCell(config, currentPrice),
           });
 
           const profitPerUnit = direction * (currentPrice - config.entryPrice);
@@ -1018,6 +1037,8 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
         positionId: survivingPos?.positionId,
         price: currentPrice,
         quotePrecision: precision.quotePrecision,
+        strategyId: strategy.id,
+        cell: tandemCloseCell(config, currentPrice),
       });
 
       const direction = config.survivingSide === "LONG" ? 1 : -1;

@@ -233,6 +233,7 @@ const MANAGER_TOOLS = [
   { type: "function" as const, function: { name: "git_commit", description: "Commit ALL current uncommitted project changes with a short message. Safe to run after an edit passes run_check/run_build. Returns the commit hash.", parameters: { type: "object", properties: { message: { type: "string" } }, required: ["message"] } } },
   { type: "function" as const, function: { name: "log_change", description: "Append a plain-English change-log entry to data/changelog.md describing what was just changed and verified. The operator reads this file to see actual work. One concise line.", parameters: { type: "object", properties: { entry: { type: "string" } }, required: ["entry"] } } },
   { type: "function" as const, function: { name: "mark_job", description: "Record or clear your current active job so it can be resumed after a server restart. Call with status=\"in_progress\" and a short summary when you START a multi-step job, and status=\"done\" when you finish it. The server reads this on startup to wake you up to continue unfinished work.", parameters: { type: "object", properties: { status: { type: "string", enum: ["in_progress", "done"] }, summary: { type: "string" } }, required: ["status"] } } },
+  { type: "function" as const, function: { name: "remember", description: "Save a short plain-English note to the council's persistent memory (data/council-memory.json) about something just learned or decided that future sessions should NOT have to re-derive: what was done, why, and any gotcha. One concise line. Injected into every later query, so it is read repeatedly — keep it small.", parameters: { type: "object", properties: { note: { type: "string" } }, required: ["note"] } } },
 ];
 
 interface ActiveJobState {
@@ -271,6 +272,48 @@ function recordToolProgress(tool: string): void {
   const job = getActiveJob();
   if (!job || job.status !== "in_progress") return;
   setActiveJob({ ...job, lastTool: tool });
+}
+
+// ---------------------------------------------------------------------------
+// Episodic memory: the manager writes back a short "what I did / why" note on
+// job completion. It is injected into every subsequent council query so agents
+// do not re-derive history each time (cheaper + more focused on the task).
+// ---------------------------------------------------------------------------
+
+const MEMORY_FILE = () => join(process.cwd(), "data", "council-memory.json");
+const MEMORY_LIMIT = 40;
+const MEMORY_INJECT_COUNT = 12;
+
+interface MemoryEntry {
+  at: string;
+  text: string;
+}
+
+function readMemoryEntries(): MemoryEntry[] {
+  try {
+    const raw = JSON.parse(readFileSync(MEMORY_FILE(), "utf8")) as { entries?: MemoryEntry[] };
+    return Array.isArray(raw?.entries) ? raw.entries : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendMemoryEntry(note: string): void {
+  const text = note.replace(/\s*\n\s*/g, " ").trim().slice(0, 240);
+  if (!text) return;
+  const entries = [...readMemoryEntries(), { at: new Date().toISOString(), text }];
+  try {
+    writeFileSync(MEMORY_FILE(), JSON.stringify({ updatedAt: new Date().toISOString(), entries: entries.slice(-MEMORY_LIMIT) }, null, 2), "utf8");
+  } catch (e: any) {
+    console.warn(`[Council] Could not write memory: ${e.message}`);
+  }
+}
+
+function memoryContext(): string {
+  const entries = readMemoryEntries().slice(-MEMORY_INJECT_COUNT);
+  if (entries.length === 0) return "";
+  const lines = entries.map((entry) => `- ${entry.at.slice(0, 16)} — ${entry.text}`);
+  return `COUNCIL MEMORY (past decisions — do not re-derive; question only if clearly stale):\n${lines.join("\n")}\nEND COUNCIL MEMORY`;
 }
 
 /** Read-only external directories the council may inspect but never patch. */
@@ -401,6 +444,12 @@ async function executeManagerTool(name: string, args: Record<string, unknown>, a
     }
     return "JOB_REJECTED: status must be \"in_progress\" or \"done\".";
   }
+  if (name === "remember") {
+    const note = String(args.note || "").trim();
+    if (!note) return "REMEMBER_REJECTED: note is empty.";
+    appendMemoryEntry(note);
+    return "MEMORY_SAVED: data/council-memory.json (will be injected into future queries)";
+  }
   return `UNKNOWN_TOOL: ${name}`;
 }
 
@@ -519,7 +568,8 @@ async function getExchangeHistoryContext(strategies: Array<{ symbol: string }>):
 
 async function buildAppContext(): Promise<string> {
   const workspace = buildWorkspaceContext();
-  const fallback = `CURRENT OPERATION SNAPSHOT:\n(database unavailable)\n\n${workspace}`;
+  const memory = memoryContext();
+  const fallback = `CURRENT OPERATION SNAPSHOT:\n(database unavailable)\n\n${workspace}\n\n${memory}`;
   const inner = (async () => {
     try {
       const [strategies, positions, balances] = await Promise.all([
@@ -560,7 +610,7 @@ async function buildAppContext(): Promise<string> {
         }
       }
       lines.push("END SNAPSHOT");
-      return `${lines.join("\n")}\n\n${workspace}`;
+      return `${lines.join("\n")}\n\n${workspace}\n\n${memory}`;
     } catch {
       return fallback;
     }
@@ -625,8 +675,9 @@ EXECUTION WORKFLOW (follow for every concrete build/fix/deploy request):
 5. If anything failed, fix it with apply_patch and re-verify. Do not report success until run_build passes.
 6. If the change is server-side or affects the running app, call restart_service — the restart is QUEUED and fires automatically right after your final reply, so you do NOT lose your closing steps. Then finish the remaining steps before replying; the service restarts itself once you reply.
 7. Record: log_change with one plain-English line, then git_commit with a short message.
-8. Finish: call mark_job with status "done".
-9. Reply to the operator in short plain English: what you changed (in words, not diff), verification result, and the commit hash. Never paste raw tool output.
+8. Remember: call remember once with a concise note (what was done, why, and any gotcha) so future sessions do not re-derive it.
+9. Finish: call mark_job with status "done".
+10. Reply to the operator in short plain English: what you changed (in words, not diff), verification result, and the commit hash. Never paste raw tool output.
 
 AUTONOMOUS_PATCH_MODE=${autonomous ? "ENABLED" : "DISABLED"}`;
   let reply = await chatSlot("manager", toAgentMessages(messages, system, context), {
@@ -782,7 +833,7 @@ export async function runCouncil(messages: ChatTurn[]): Promise<CouncilChatResul
   const synthesisPrompt: ChatTurn[] = [
     {
       role: "user",
-      content: `The user asked: ${question}\n\nThe specialists produced initial reports and then cross-talked in a compact machine round. INITIAL REPORTS:\n${reports}\n\nCROSS-TALK ROUND:\n${crossTalkReports}\n\nIf the user explicitly asked you to build, edit, fix, clean up, or deploy something, EXECUTE it now with your tools instead of only writing a plan. EXECUTION WORKFLOW: (0) mark_job in_progress with a one-line summary, (1) read_file/git_status to inspect, (2) apply_patch to make each edit yourself, (3) run_check then run_build, (4) if it fails fix it and re-verify until build passes, (5) if server-side restart_service and confirm with service_logs or a live check, (6) log_change one plain-English line then git_commit a short message, (7) mark_job done. Apply concrete edits directly — do not only describe them. Never leave the change half-done: report the finished state.\n\nThen reply to the operator in SHORT PLAIN ENGLISH — a few sentences: what you changed (in words), verification result, and the commit hash. NEVER paste file contents, diffs, git status, build logs, or tool output into your reply.\n\nIf the user did NOT ask for concrete work and the reports lack enough reliable data or contain unresolved contradictions, ask exactly one question instead using:\n- ## Clarification Needed\n- [one targeted question]\nDo not recommend an action in that case. Otherwise use:\n- ## Recommendation (1-3 sentences)\n- ## Plan (ordered, actionable)\n- ## Disagreements (what the members disagreed on and your resolution)\n- ## What We're NOT Doing`,
+      content: `The user asked: ${question}\n\nThe specialists produced initial reports and then cross-talked in a compact machine round. INITIAL REPORTS:\n${reports}\n\nCROSS-TALK ROUND:\n${crossTalkReports}\n\nIf the user explicitly asked you to build, edit, fix, clean up, or deploy something, EXECUTE it now with your tools instead of only writing a plan. EXECUTION WORKFLOW: (0) mark_job in_progress with a one-line summary, (1) read_file/git_status to inspect, (2) apply_patch to make each edit yourself, (3) run_check then run_build, (4) if it fails fix it and re-verify until build passes, (5) if server-side call restart_service (restart is queued and fires after your reply), (6) log_change one plain-English line then git_commit a short message, (7) remember a concise note so future sessions do not re-derive it, (8) mark_job done. Apply concrete edits directly — do not only describe them. Never leave the change half-done: report the finished state.\n\nThen reply to the operator in SHORT PLAIN ENGLISH — a few sentences: what you changed (in words), verification result, and the commit hash. NEVER paste file contents, diffs, git status, build logs, or tool output into your reply.\n\nIf the user did NOT ask for concrete work and the reports lack enough reliable data or contain unresolved contradictions, ask exactly one question instead using:\n- ## Clarification Needed\n- [one targeted question]\nDo not recommend an action in that case. Otherwise use:\n- ## Recommendation (1-3 sentences)\n- ## Plan (ordered, actionable)\n- ## Disagreements (what the members disagreed on and your resolution)\n- ## What We're NOT Doing`,
     },
   ];
   const synthesis = await chatSlot("manager", toAgentMessages(synthesisPrompt, MANAGER_SYSTEM, context), {

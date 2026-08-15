@@ -1,0 +1,13 @@
+{
+  "updatedAt": "2026-08-15T19:10:00.000Z",
+  "entries": [
+    {
+      "at": "2026-08-15T18:52:00.000Z",
+      "text": "Manager work loop: restart_service is DEFERRED until after the manager's final reply so log_change/git_commit/mark_job done run first. run_shell/run_sudo reject systemctl/service restart of cryvolmon. A final reply auto-completes the active job."
+    },
+    {
+      "at": "2026-08-15T19:10:00.000Z",
+      "text": "Episodic memory lives in data/council-memory.json, injected into every query. Call the remember tool at job completion with a one-line note so future sessions don't re-derive history. Keep notes short (under ~240 chars)."
+    }
+  ]
+}

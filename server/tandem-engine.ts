@@ -324,6 +324,8 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
 
     const fm = managedParam(config, "feeMultiplier", config.feeMultiplier || 3.5);
     const longGridConfig = defaultGridConfigForSide("LONG", currentPrice, leverage, longCapital, fm, false, 0.006, tandemReservePct);
+    (longGridConfig as any).openOrderGrowth = 1.05;
+    (longGridConfig as any).closeOrderDecay = 0.95;
     (longGridConfig as any).parentTandemId = strategy.id;
     (longGridConfig as any).fixedInitialQty = symmetricQtyStr;
     (longGridConfig as any).fixedInitialShare = initialShare;

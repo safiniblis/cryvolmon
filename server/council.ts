@@ -155,12 +155,6 @@ Format:
 - ## Risks I See
 - ## What Needs More Data`;
 
-const RESOURCE_MANAGER_SYSTEM = `You are the RESOURCE MANAGER for cryvolmon. Strictly read-only.
-
-${SHARED_COMMUNICATION}
-
-Inspect snapshot, workspace context, archive, logs, and exchange data. Organize facts and point to sources. Never edit files, run commands, change parameters, place orders, or restart services. If information is missing, state exactly what source is needed.`;
-
 const DELEGATION_RULE = `DELEGATION: You have the same edit/build/check tools as the manager. If the MANAGER explicitly delegates a specific write/edit to you, carry it out with your tools and report the exact result. Otherwise do not modify files — propose changes in text and let the manager or a delegated member apply them. Never alter leverage, capital, ticker, exchange order semantics, authentication, or live risk behavior without explicit user confirmation.`;
 
 const ROLE_SYSTEMS: Record<Exclude<AgentPosition, "manager">, string> = {
@@ -168,7 +162,6 @@ const ROLE_SYSTEMS: Record<Exclude<AgentPosition, "manager">, string> = {
   architect: ARCHITECT_SYSTEM,
   auditor: AUDITOR_SYSTEM,
   strategist: STRATEGIST_SYSTEM,
-  resource_manager: RESOURCE_MANAGER_SYSTEM,
 };
 
 const COUNCIL_POSITIONS: Exclude<AgentPosition, "manager">[] = ["critic", "architect", "auditor", "strategist"];

@@ -95,6 +95,7 @@ export const PROVIDER_BASE_URLS: Record<string, string> = {
   hf: "https://router.huggingface.co/v1",
   gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
   ovh: "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+  local: "http://127.0.0.1:11434/v1",
 };
 
 /**
@@ -102,7 +103,7 @@ export const PROVIDER_BASE_URLS: Record<string, string> = {
  * cloud endpoint rejects any Authorization header (verified 2026-08-13), so
  * these are pinged with no auth at all.
  */
-export const KEYLESS_PROVIDERS: ReadonlySet<string> = new Set(["ovh"]);
+export const KEYLESS_PROVIDERS: ReadonlySet<string> = new Set(["ovh", "local"]);
 
 /** Ping any OpenAI-compatible endpoint; used by the auto-heal to test candidates. */
 export async function pingEndpoint(provider: string, modelId: string, apiKey: string | null, timeoutMs = 10_000): Promise<{ ok: boolean; ms: number; error?: string }> {

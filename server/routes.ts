@@ -1,8 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
-import { getBitunixClient, resetBitunixClient } from "./bitunix";
-import { resetBitrueClient } from "./bitrue";
+import { getBitunixClient } from "./bitunix";
 import {
   managerChat,
   managerChatWithTools,
@@ -24,7 +23,6 @@ import { z } from "zod";
 import { resolve, relative, isAbsolute } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
-import { checkResourceManagerHealth, getResourceManagerStatus, setResourceManagerConfig } from "./resource-manager";
 import { getFreeModels, pingModel, FREE_MODEL_REGISTRY } from "./free-models";
 import { getSlot, AGENT_POSITIONS, selectFallbackModel } from "./council";
 const PROJECT_ROOT = resolve(process.cwd());
@@ -224,24 +222,6 @@ export async function registerRoutes(
   });
 
   // === API Connection Status ===
-  app.post("/api/exchange-keys/:exchange", (req, res) => {
-    const exchange = req.params.exchange.toLowerCase();
-    if (exchange !== "bitunix" && exchange !== "bitrue") return res.status(400).json({ message: "Unknown exchange" });
-    const key = String(req.body?.apiKey || "").trim();
-    const secret = String(req.body?.secretKey || "").trim();
-    if (!key || !secret) return res.status(400).json({ message: "API key and secret key are required" });
-    if (exchange === "bitunix") {
-      process.env.BITUNIX_API_KEY = key;
-      process.env.BITUNIX_SECRET_KEY = secret;
-      resetBitunixClient();
-    } else {
-      process.env.BITRUE_API_KEY = key;
-      process.env.BITRUE_SECRET_KEY = secret;
-      resetBitrueClient();
-    }
-    res.json({ ok: true, exchange });
-  });
-
   app.get("/api/connection", async (req, res) => {
     const client = getBitunixClient();
     if (!client) {
@@ -308,18 +288,6 @@ export async function registerRoutes(
     } catch (e: any) {
       console.error(`[Bitrue Account] ${e.message}`);
       res.json({ available: 0, total: 0, positions: [], connected: false, error: e.message });
-    }
-  });
-
-  // === Work Log: strategy decision events (ledger of what was decided/done) ===
-  app.get("/api/decisions", async (req, res) => {
-    try {
-      const strategyId = req.query.strategyId ? parseInt(String(req.query.strategyId)) : undefined;
-      const limit = req.query.limit ? parseInt(String(req.query.limit)) : 100;
-      const events = await storage.getStrategyDecisionEvents(strategyId, limit);
-      res.json(events);
-    } catch (e) {
-      res.json([]);
     }
   });
 
@@ -1428,8 +1396,8 @@ export async function registerRoutes(
     res.json({ configured: isAnyAgentConfigured(), slots: getAgentSlots() });
   });
 
-  const positionEnum = z.enum(["manager", "critic", "architect", "auditor", "strategist", "resource_manager"]);
-  const providerEnum = z.enum(["opencode", "abacus", "deepseek", "groq", "cerebras", "openrouter", "hyperbolic", "nemotron", "nvidia", "sambanova", "mistral", "hf", "gemini", "ovh"]);
+  const positionEnum = z.enum(["manager", "critic", "architect", "auditor", "strategist"]);
+  const providerEnum = z.enum(["opencode", "abacus", "deepseek", "groq", "cerebras", "openrouter", "hyperbolic", "nemotron", "nvidia", "sambanova", "mistral", "hf", "gemini", "ovh", "local"]);
 
   app.post("/api/council/agents", async (req, res) => {
     const schema = z.object({
@@ -1494,17 +1462,6 @@ export async function registerRoutes(
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
-  });
-
-  app.get("/api/resource-manager/status", async (_req, res) => {
-    res.json({ ...getResourceManagerStatus(), health: await checkResourceManagerHealth() });
-  });
-
-  app.post("/api/resource-manager/config", async (req, res) => {
-    const parsed = z.object({ baseUrl: z.string().url(), apiKey: z.string().max(512).optional() }).safeParse(req.body ?? {});
-    if (!parsed.success) return res.status(400).json({ message: "A valid base URL and API key are required." });
-    setResourceManagerConfig(parsed.data.baseUrl, parsed.data.apiKey);
-    res.json({ ...getResourceManagerStatus(), health: await checkResourceManagerHealth() });
   });
 
   app.get("/api/council/archive", async (req, res) => {
@@ -1575,7 +1532,7 @@ export async function registerRoutes(
     const parsed = z.object({ position: positionEnum }).safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ message: "A valid position is required." });
     const position = parsed.data.position;
-    if (position === "manager" || position === "resource_manager") {
+    if (position === "manager") {
       return res.status(403).json({ message: `Refusing to auto-heal ${position} — operator lock.`, slots: getAgentSlots() });
     }
     const current = getSlot(position);

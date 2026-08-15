@@ -265,6 +265,8 @@ export interface GridConfig {
   parentTandemId?: number;
   twinMode?: boolean;
   twinGapPct?: number;
+  openOrderGrowth?: number;
+  closeOrderDecay?: number;
 }
 
 export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
@@ -837,10 +839,18 @@ async function executeGridStrategy(strategy: Strategy) {
   }
 
   const gridSizeMultiplier = Math.max(0.5, Math.min(1.5, managedParam(config, "gridSizeMultiplier", 1)));
+  const openGrowth = isTandemChild ? Math.min(1.05, Math.max(1, Number(config.openOrderGrowth || 1.05))) : 1;
+  const rankedOpenLevels = [...gridSlice].sort((a, b) => Math.abs(a - currentPrice) - Math.abs(b - currentPrice));
+  const openWeights = rankedOpenLevels.map((_, index) => Math.pow(openGrowth, index));
+  const openWeightTotal = openWeights.reduce((sum, weight) => sum + weight, 0);
+  const openWeightByPrice = new Map(rankedOpenLevels.map((level, index) => [roundPrice(level, precision.quotePrecision), openWeights[index]]));
 
   let placedGrids = 0;
   for (const level of gridSlice) {
-    const rawMargin = Math.min(marginPerOrder, (availableBalance - 0.1) * 0.95);
+    const distanceWeight = openWeightTotal > 0
+      ? ((openWeightByPrice.get(roundPrice(level, precision.quotePrecision)) || 1) * rankedOpenLevels.length) / openWeightTotal
+      : 1;
+    const rawMargin = Math.min(marginPerOrder * distanceWeight, (availableBalance - 0.1) * 0.95);
     const effectiveMargin = Math.min(rawMargin * gridSizeMultiplier, (availableBalance - 0.1) * 0.95);
     if (effectiveMargin < minMarginPerOrder * 0.9) break;
     const notional = effectiveMargin * leverage * 0.95;
@@ -1022,27 +1032,28 @@ async function executeGridStrategy(strategy: Strategy) {
         precision.minTradeVolume
       );
 
+      const closeDecay = isTandemChild ? Math.max(0.95, Math.min(1, Number(config.closeOrderDecay || 0.95))) : 1;
+      const closeWeights = cappedTpLevels.map((_, index) => Math.pow(closeDecay, index));
+      const closeWeightTotal = closeWeights.reduce((sum, weight) => sum + weight, 0);
       let levelsToPlace = cappedTpLevels;
-      if (tpQtyPerLevel * cappedTpLevels.length > sellableQty * 1.02) {
-        const maxLevels = Math.floor(sellableQty / tpQtyPerLevel);
-        levelsToPlace = cappedTpLevels.slice(0, Math.max(maxLevels, 1));
+      if (closeWeightTotal * precision.minTradeVolume > sellableQty * 1.02) {
+        levelsToPlace = cappedTpLevels.slice(0, Math.max(Math.floor(sellableQty / precision.minTradeVolume), 1));
       }
+      const placedCloseWeights = closeWeights.slice(0, levelsToPlace.length);
+      const placedCloseWeightTotal = placedCloseWeights.reduce((sum, weight) => sum + weight, 0);
 
       if (sellableQty < precision.minTradeVolume) {
         console.log(`[${tag}] Sellable qty too small for TPs (${sellableQty.toFixed(precision.basePrecision)} < minVol ${precision.minTradeVolume}) — skipping`);
         await storage.updateStrategy(strategy.id, { config });
       } else {
-        const lastLevelQty = Math.max(
-          Math.round((sellableQty - tpQtyPerLevel * (levelsToPlace.length - 1)) * basePrecisionMultiplier) / basePrecisionMultiplier,
-          precision.minTradeVolume
-        );
-
-        console.log(`[${tag}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (basis: ${tpQtyBasis.toFixed(precision.basePrecision)}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, entry: ${tpRefPrice.toFixed(4)})`);
+        console.log(`[${tag}] Placing ${levelsToPlace.length} TP orders with ${closeDecay.toFixed(2)} close decay (basis: ${tpQtyBasis.toFixed(precision.basePrecision)}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, entry: ${tpRefPrice.toFixed(4)})`);
 
         for (let i = 0; i < levelsToPlace.length; i++) {
           const level = levelsToPlace[i];
-          const isLast = i === levelsToPlace.length - 1;
-          const qty = isLast ? lastLevelQty : tpQtyPerLevel;
+          const qty = Math.max(
+            Math.floor((sellableQty * placedCloseWeights[i] / placedCloseWeightTotal) * basePrecisionMultiplier) / basePrecisionMultiplier,
+            precision.minTradeVolume
+          );
           const qtyStr = qty.toFixed(precision.basePrecision);
           const priceStr = roundPrice(level, precision.quotePrecision);
           try {

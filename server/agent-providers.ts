@@ -60,10 +60,10 @@ function persistOverrides(): void {
   }
 }
 
-export type AgentPosition = "manager" | "critic" | "architect" | "auditor" | "strategist" | "resource_manager";
-export type AgentProvider = "opencode" | "abacus" | "deepseek" | "groq" | "cerebras" | "openrouter" | "hyperbolic" | "nemotron" | "nvidia" | "sambanova" | "mistral" | "hf" | "gemini" | "ovh";
+export type AgentPosition = "manager" | "critic" | "architect" | "auditor" | "strategist";
+export type AgentProvider = "opencode" | "abacus" | "deepseek" | "groq" | "cerebras" | "openrouter" | "hyperbolic" | "nemotron" | "nvidia" | "sambanova" | "mistral" | "hf" | "gemini" | "ovh" | "local";
 
-export const AGENT_POSITIONS: AgentPosition[] = ["manager", "critic", "architect", "auditor", "strategist", "resource_manager"];
+export const AGENT_POSITIONS: AgentPosition[] = ["manager", "critic", "architect", "auditor", "strategist"];
 
 export interface AgentRoleDef {
   position: AgentPosition;
@@ -114,14 +114,6 @@ export const AGENT_ROLES: AgentRoleDef[] = [
     description: "Grok-class / Nemotron (OpenRouter). Fast market and account read in English + math.",
     defaultProvider: "openrouter",
     defaultModel: "x-ai/grok-4.1-fast",
-  },
-  {
-    position: "resource_manager",
-    role: "Read-only resource and context retrieval",
-    title: "Resource Manager",
-    description: "Read-only HTTP connector (Replit resource service). Not an LLM seat — health/context only.",
-    defaultProvider: "openrouter",
-    defaultModel: "cohere/north-mini-code:free",
   },
 ];
 
@@ -186,6 +178,10 @@ const PROVIDER_DEFAULTS: Record<AgentProvider, ProviderDefaults> = {
   ovh: {
     baseUrl: process.env.OVH_BASE_URL || "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
     model: process.env.OVH_MODEL || "gpt-oss-20b",
+  },
+  local: {
+    baseUrl: process.env.LOCAL_BASE_URL || "http://127.0.0.1:11434/v1",
+    model: process.env.LOCAL_MODEL || "qwen3:4b",
   },
 };
 
@@ -253,6 +249,7 @@ function providerKeyName(provider: AgentProvider): string {
     case "hf": return "HF_TOKEN";
     case "gemini": return "GEMINI_API_KEY";
     case "ovh": return "none (keyless)";
+    case "local": return "none (keyless)";
   }
 }
 
@@ -273,6 +270,7 @@ export function resolveSlotKey(provider: AgentProvider, overrideKey: string | nu
     case "hf": return process.env.HF_TOKEN || process.env.HUGGINGFACE_API_KEY || openCodeAuthKey(provider);
     case "gemini": return process.env.GEMINI_API_KEY || openCodeAuthKey(provider);
     case "ovh": return null; // keyless anonymous tier
+    case "local": return null; // local Ollama needs no key
   }
 }
 
@@ -362,15 +360,14 @@ function assignedModels(): Map<AgentPosition, string> {
  *    elsewhere.
  * 2. Extra verified free endpoints on other providers (Groq etc.).
  * 3. Every OTHER slot's current model (manager first, then critic, architect,
- *    auditor, strategist) — the seat-taking chain. resource_manager is never a
- *    source: it is an external fixed service (Claude on the user's Replit).
+ *    auditor, strategist) — the seat-taking chain.
  * 4. Healthy free-registry models not yet assigned to any slot (diversity).
  * 5. Remaining registry models.
  */
 function fallbackCandidates(position: AgentPosition, exclude: string): { provider: string; model: string }[] {
   const assigned = assignedModels();
   const others = AGENT_POSITIONS
-    .filter((p) => p !== position && p !== "resource_manager")
+    .filter((p) => p !== position)
     .map((p) => assigned.get(p)!);
   const healthy = getHealthyFreeModels().map((m) => m.id);
   const assignedSet = new Set([...others, exclude]);
@@ -485,8 +482,8 @@ export async function chatSlot(
   const tryFallbackChain = async (reason: string): Promise<AgentReply | null> => {
     if (process.env.COUNCIL_AUTO_HEAL !== "1") return null;
     if ((opts.fallbackDepth ?? 0) >= 1) return null;
-    // Never auto-heal manager or resource_manager — operator chose them on purpose.
-    if (position === "resource_manager" || position === "manager") return null;
+    // Never auto-heal manager — operator chose it on purpose.
+    if (position === "manager") return null;
     const hasKeyed = ["openrouter", "groq", "nvidia", "nemotron"].some((p) => resolveSlotKey(p as AgentProvider, null));
     if (!hasKeyed && !KEYLESS_PROVIDERS.has("ovh")) return null;
     const pick = await selectFallbackModel(position, model);
@@ -526,6 +523,7 @@ export async function chatSlot(
         messages: requestMessages,
         max_tokens: opts.maxTokens ?? 1400,
         ...(opts.tools ? { tools: opts.tools, tool_choice: "auto" } : {}),
+        ...(provider === "local" ? { think: false } : {}),
       };
 
   try {
@@ -556,13 +554,7 @@ export async function chatSlot(
 
     const data = await res.json();
     const toolCalls = data?.choices?.[0]?.message?.tool_calls || [];
-    // A complete build/deploy job can legitimately need more than a dozen tool calls
-    // (inspect, several patches, check, build, deploy, verify, log, commit, close).
-    // The old cap interrupted the manager at exactly the point where it needed to
-    // write its final reply, leaving active-job.json stuck in progress.
-    // Keep enough room for a full inspect → edit → verify → deploy → commit cycle.
-    // A shorter cap could stop exactly before the manager's final reply.
-    if (toolCalls.length > 0 && opts.executeTool && (opts.toolRound || 0) < 64) {
+    if (toolCalls.length > 0 && opts.executeTool && (opts.toolRound || 0) < 12) {
       const assistantMessage = data.choices[0].message;
       const toolMessages = [...requestMessages, assistantMessage];
       const toolResults = [...(opts.toolResults || [])];

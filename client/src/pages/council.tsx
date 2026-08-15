@@ -19,7 +19,6 @@ import {
 } from "@/hooks/use-council";
 import { cn } from "@/lib/utils";
 import { MANAGER_BASE_URL, MANAGER_MODEL } from "@shared/council-config";
-import { DEFAULT_RESOURCE_MANAGER_BASE_URL, useConfigureResourceManager, useResourceManagerStatus } from "@/hooks/use-resource-manager";
 
 interface ChatEntry { role: "user" | "assistant"; content: string; result?: CouncilChatResult; }
 
@@ -44,6 +43,7 @@ const PROVIDER_OPTIONS: { value: AgentProvider; label: string; defaultModel: str
   { value: "hf", label: "HuggingFace Router", defaultModel: "meta-llama/Llama-3.3-70B-Instruct", defaultBaseUrl: "https://router.huggingface.co/v1" },
   { value: "gemini", label: "Google Gemini (free)", defaultModel: "gemini-3.5-flash", defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
   { value: "ovh", label: "OVHcloud (keyless)", defaultModel: "gpt-oss-20b", defaultBaseUrl: "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1" },
+  { value: "local", label: "Local Ollama (qwen3:4b)", defaultModel: "qwen3:4b", defaultBaseUrl: "http://127.0.0.1:11434/v1" },
 ];
 
 const MODEL_OPTIONS: Record<AgentProvider, string[]> = {
@@ -61,6 +61,7 @@ const MODEL_OPTIONS: Record<AgentProvider, string[]> = {
   hf: ["meta-llama/Llama-3.3-70B-Instruct", "meta-llama/Llama-3.1-8B-Instruct", "Qwen/Qwen2.5-7B-Instruct"],
   gemini: ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
   ovh: ["gpt-oss-20b", "gpt-oss-120b", "Qwen3.5-397B-A17B", "Qwen3.6-27B", "Qwen3-32B", "Qwen3-Coder-30B-A3B-Instruct", "Meta-Llama-3_3-70B-Instruct", "Mistral-Small-3.2-24B-Instruct-2506"],
+  local: ["qwen3:4b", "qwen2.5:3b", "phi4-mini", "gemma3:4b"],
 };
 
 const MANAGER_CHOICES = [
@@ -80,7 +81,7 @@ const MANAGER_CHOICES = [
 ];
 
 const POSITION_COPY: Record<AgentPosition, string> = {
-  manager: "Manager / Builder", critic: "Critic", architect: "Architect", auditor: "Auditor", strategist: "Strategist", resource_manager: "Resource Manager",
+  manager: "Manager / Builder", critic: "Critic", architect: "Architect", auditor: "Auditor", strategist: "Strategist",
 };
 
 interface EditState { provider: AgentProvider; baseUrl: string; model: string; apiKey: string; prompt: string; }
@@ -216,74 +217,6 @@ function SlotCard({
   );
 }
 
-function ResourceManagerCard() {
-  const { data, isError: statusError, isFetching } = useResourceManagerStatus();
-  const configure = useConfigureResourceManager();
-  const [baseUrl, setBaseUrl] = useState(data?.baseUrl || DEFAULT_RESOURCE_MANAGER_BASE_URL);
-  const [apiKey, setApiKey] = useState("");
-  const [lastResult, setLastResult] = useState<{ ok: boolean; status: number; body: unknown } | null>(null);
-  const baseUrlDirtyRef = useRef(false);
-
-  useEffect(() => {
-    if (data?.baseUrl && !baseUrlDirtyRef.current) setBaseUrl(data.baseUrl);
-  }, [data?.baseUrl]);
-  useEffect(() => {
-    if (data?.health) setLastResult(data.health);
-  }, [data?.health]);
-
-  const health = lastResult || data?.health;
-  const canSave = !!baseUrl.trim() && (!!apiKey.trim() || !!data?.hasKey);
-
-  const onSave = () => {
-    configure.mutate(
-      { baseUrl: baseUrl.trim(), apiKey: apiKey.trim() },
-      {
-        onSuccess: (result: any) => {
-          if (result?.health) setLastResult(result.health);
-          baseUrlDirtyRef.current = false;
-          setApiKey("");
-        },
-      },
-    );
-  };
-
-  return (
-    <Card className="p-4 border border-sky-500/40 bg-sky-500/5">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-xs font-bold uppercase tracking-wider">Resource Manager</div>
-          <p className="mt-1 text-[11px] text-muted-foreground">Read-only HTTP connector for external resources. Uses <code>X-API-Key</code> and never edits or trades.</p>
-        </div>
-        <Badge variant={health?.ok ? "default" : "outline"}>
-          {configure.isPending || isFetching ? "Checking…" : health?.ok ? "Healthy" : "Not connected"}
-        </Badge>
-      </div>
-      <div className="mt-3 space-y-2">
-        <Input value={baseUrl} onChange={e => { baseUrlDirtyRef.current = true; setBaseUrl(e.target.value); }} placeholder="https://resource-service.example" className="h-9 text-xs" />
-        <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={data?.hasKey ? "•••••••• (leave blank to keep)" : "X-API-Key"} className="h-9 text-xs" />
-        <Button size="sm" className="w-full" disabled={configure.isPending || !canSave} onClick={onSave}>
-          {configure.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <CheckCircle2 className="h-3.5 w-3.5 mr-1" />}Save and Check Health
-        </Button>
-        {configure.isError && (
-          <p className="text-[11px] text-rose-400">
-            Save failed: {(configure.error as Error)?.message || "backend unreachable — start the server first"}
-          </p>
-        )}
-        {statusError && !configure.isError && (
-          <p className="text-[11px] text-amber-400">Backend offline — status unavailable until the API is running.</p>
-        )}
-        {health && (
-          <p className={cn("text-[11px] font-mono break-all", health.ok ? "text-emerald-400" : "text-amber-300")}>
-            {health.status > 0 ? `HTTP ${health.status}: ` : ""}
-            {typeof health.body === "string" ? health.body : JSON.stringify(health.body)}
-          </p>
-        )}
-        {data?.hasKey && <p className="text-[10px] text-muted-foreground">Key is stored server-side for this process.</p>}
-      </div>
-    </Card>
-  );
-}
-
 export default function CouncilPage() {
   const { data: status, slots, isOffline } = useCouncilStatus();
   const binder = useBindAgents();
@@ -415,7 +348,7 @@ export default function CouncilPage() {
 
         {/* 5-slot roster */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-          {slots.filter(slot => slot.position !== "resource_manager").map(slot => (
+          {slots.map(slot => (
             <SlotCard key={slot.position} slot={slot}
               editing={editing === slot.position}
               onToggleEdit={() => setEditing(editing === slot.position ? null : slot.position)}
@@ -423,7 +356,6 @@ export default function CouncilPage() {
               saving={binder.isPending && editing === slot.position}
               localPrompts={localPrompts} />
           ))}
-          <ResourceManagerCard />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

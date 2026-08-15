@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { resumeInterruptedJob } from "./council";
 
 const app = express();
 const httpServer = createServer(app);
@@ -98,6 +99,8 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      // Fire-and-forget: if the manager left an in-progress job, wake it to continue.
+      resumeInterruptedJob();
     },
   );
 })();

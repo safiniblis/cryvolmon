@@ -292,6 +292,18 @@ export async function registerRoutes(
     }
   });
 
+  // === Work Log: strategy decision events (ledger of what was decided/done) ===
+  app.get("/api/decisions", async (req, res) => {
+    try {
+      const strategyId = req.query.strategyId ? parseInt(String(req.query.strategyId)) : undefined;
+      const limit = req.query.limit ? parseInt(String(req.query.limit)) : 100;
+      const events = await storage.getStrategyDecisionEvents(strategyId, limit);
+      res.json(events);
+    } catch (e) {
+      res.json([]);
+    }
+  });
+
   // === Strategies ===
   app.get("/api/strategies", async (_req, res) => {
     try {

@@ -12,7 +12,7 @@ import { useStrategies } from "@/hooks/use-trading";
 import {
   useCouncilStatus, useBindAgents, useCouncilChat, useStrategyTune,
   useStrategyResetManaged, useReadFile, useWriteFile,
-  useCouncilArchive,
+  useCouncilArchive, useDecisionEvents,
   loadLocalAgents, saveLocalAgents, loadLocalPrompts, saveLocalPrompts,
   type AgentPosition, type AgentProvider, type AgentSlotView,
   type CouncilChatResult, type MemberResult, type TuneResult, DEFAULT_SLOTS,
@@ -294,6 +294,7 @@ export default function CouncilPage() {
   const readFile = useReadFile();
   const writeFile = useWriteFile();
   const archive = useCouncilArchive();
+  const decisions = useDecisionEvents();
 
   const [mode, setMode] = useState<"manager" | "council" | "agent">("council");
   const [agentPosition, setAgentPosition] = useState<AgentPosition>("architect");
@@ -538,6 +539,29 @@ export default function CouncilPage() {
                   </div>
                 ))}
                 {archive.data?.length === 0 && <p className="text-xs text-muted-foreground">No archived messages yet.</p>}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="py-3 px-4">
+                <CardTitle className="text-sm">Work Log</CardTitle>
+                <CardDescription className="text-xs">Live decision events from the trading engines — what was considered, done, and why. Backed by /api/decisions.</CardDescription>
+              </CardHeader>
+              <CardContent className="px-4 pb-4 space-y-2 max-h-[360px] overflow-y-auto">
+                {(decisions.data || []).map(ev => (
+                  <div key={ev.id} className="rounded border border-border/30 bg-card/20 p-2">
+                    <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                      <span className="uppercase">#{ev.strategyId} {ev.symbol} · {ev.actionConsidered}</span>
+                      <span>{ev.createdAt ? new Date(ev.createdAt).toLocaleString() : ""}</span>
+                    </div>
+                    <div className="mt-1 text-xs">
+                      <Badge variant={ev.outcome === "done" || ev.outcome === "executed" ? "default" : "secondary"} className="text-[10px] mr-1">{ev.outcome}</Badge>
+                      {ev.actionTaken && <span className="text-foreground/90">{ev.actionTaken}</span>}
+                    </div>
+                    {ev.reasonText && <p className="mt-1 text-[11px] text-muted-foreground">{ev.reasonText}</p>}
+                  </div>
+                ))}
+                {decisions.data?.length === 0 && <p className="text-xs text-muted-foreground">No decision events logged yet.</p>}
               </CardContent>
             </Card>
 

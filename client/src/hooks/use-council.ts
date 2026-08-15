@@ -231,6 +231,35 @@ export function useStrategyTune() {
   });
 }
 
+export interface DecisionEvent {
+  id: number;
+  strategyId: number;
+  engine: string;
+  phase: string;
+  eventType: string;
+  actionConsidered: string;
+  actionTaken: string | null;
+  outcome: string;
+  reasonCode: string | null;
+  reasonText: string | null;
+  symbol: string;
+  price: number | null;
+  createdAt: string | null;
+}
+
+export function useDecisionEvents(strategyId?: number) {
+  return useQuery<DecisionEvent[]>({
+    queryKey: ["/api/decisions", strategyId ?? "all"],
+    queryFn: async () => {
+      const qs = strategyId ? `?strategyId=${strategyId}&limit=50` : "?limit=50";
+      const res = await fetch(`/api/decisions${qs}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return (await res.json()) as DecisionEvent[];
+    },
+    refetchInterval: 30000,
+  });
+}
+
 export function useStrategyResetManaged() {
   const queryClient = useQueryClient();
   return useMutation({

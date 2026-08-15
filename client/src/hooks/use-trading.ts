@@ -70,6 +70,7 @@ export function useQuickStart() {
 }
 
 export function useSaveExchangeKeys() {
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
     mutationFn: async ({ exchange, apiKey, secretKey }: { exchange: "bitunix" | "bitrue"; apiKey: string; secretKey: string }) => {

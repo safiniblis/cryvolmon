@@ -12,7 +12,7 @@ import { useStrategies } from "@/hooks/use-trading";
 import {
   useCouncilStatus, useBindAgents, useCouncilChat, useStrategyTune,
   useStrategyResetManaged, useReadFile, useWriteFile,
-  useCouncilArchive, useDecisionEvents,
+  useCouncilArchive,
   loadLocalAgents, saveLocalAgents, loadLocalPrompts, saveLocalPrompts,
   type AgentPosition, type AgentProvider, type AgentSlotView,
   type CouncilChatResult, type MemberResult, type TuneResult, DEFAULT_SLOTS,
@@ -294,9 +294,8 @@ export default function CouncilPage() {
   const readFile = useReadFile();
   const writeFile = useWriteFile();
   const archive = useCouncilArchive();
-  const decisions = useDecisionEvents();
 
-  const [mode, setMode] = useState<"manager" | "council" | "agent">("council");
+  const [mode, setMode] = useState<"manager" | "council" | "agent">("manager");
   const [agentPosition, setAgentPosition] = useState<AgentPosition>("architect");
   const [managerChoice, setManagerChoice] = useState("opencode:gpt-5.6-luna");
   const [messageChannels, setMessageChannels] = useState<Record<string, ChatEntry[]>>({});
@@ -330,7 +329,7 @@ export default function CouncilPage() {
 
   useEffect(() => {
     if (boundLocalRef.current) return;
-    const local = loadLocalAgents();
+    const local = loadLocalAgents().filter(slot => slot.position !== "manager");
     if (local.length > 0) { boundLocalRef.current = true; binder.mutate(local); }
     else boundLocalRef.current = true;
   }, []);
@@ -434,11 +433,19 @@ export default function CouncilPage() {
               <CardHeader className="py-3 px-4 border-b border-border/40">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <CardTitle className="text-sm">Ask the team</CardTitle>
-                  <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/30 border border-border/40">
-                    <Button variant={mode === "manager" ? "default" : "ghost"} size="sm" className="text-xs h-7" onClick={() => setMode("manager")}><Bot className="h-3 w-3 mr-1" />Manager</Button>
-                    <Button variant={mode === "council" ? "default" : "ghost"} size="sm" className="text-xs h-7" onClick={() => setMode("council")}><Users className="h-3 w-3 mr-1" />Council</Button>
-                    <Button variant={mode === "agent" ? "default" : "ghost"} size="sm" className="text-xs h-7" onClick={() => setMode("agent")}><Bot className="h-3 w-3 mr-1" />Agent</Button>
-                  </div>
+                  <select className="h-7 max-w-[240px] rounded-md border border-input bg-background px-2 text-[11px]" value={mode === "council" ? "council" : mode === "agent" ? agentPosition : "manager"} onChange={e => {
+                    const target = e.target.value;
+                    if (target === "council") setMode("council");
+                    else if (target === "manager") setMode("manager");
+                    else { setMode("agent"); setAgentPosition(target as AgentPosition); }
+                  }} disabled={busy} title="Choose who to ask">
+                    <option value="manager">Manager</option>
+                    <option value="critic">Critic</option>
+                    <option value="architect">Architect</option>
+                    <option value="auditor">Auditor</option>
+                    <option value="strategist">Strategist</option>
+                    <option value="council">Council</option>
+                  </select>
                   <select className="h-7 max-w-[220px] rounded-md border border-input bg-background px-2 text-[11px]" value={managerChoice} onChange={e => changeManager(e.target.value)} disabled={busy} title="Change Manager provider/model">
                     {MANAGER_CHOICES.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
                   </select>
@@ -447,11 +454,6 @@ export default function CouncilPage() {
                    {mode === "manager" ? `Manager (${MANAGER_CHOICES.find(choice => choice.id === managerChoice)?.label || MANAGER_MODEL}) with live operation snapshot.` : mode === "agent" ? "Ask one specialist directly with live operation and workspace context." : "Critic · Architect · Auditor · Strategist debate → Manager decides."}
                   {isOffline && " (chat needs the server running)"}
                 </CardDescription>
-                {mode === "agent" && (
-                  <select className="mt-2 flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-xs" value={agentPosition} onChange={e => setAgentPosition(e.target.value as AgentPosition)}>
-                    {(["manager", "critic", "architect", "auditor", "strategist", "resource_manager"] as AgentPosition[]).map(position => <option key={position} value={position}>{POSITION_COPY[position]}</option>)}
-                  </select>
-                )}
               </CardHeader>
 
               <CardContent className="flex-1 overflow-y-auto space-y-3 py-4" ref={scrollRef}>
@@ -539,29 +541,6 @@ export default function CouncilPage() {
                   </div>
                 ))}
                 {archive.data?.length === 0 && <p className="text-xs text-muted-foreground">No archived messages yet.</p>}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="py-3 px-4">
-                <CardTitle className="text-sm">Work Log</CardTitle>
-                <CardDescription className="text-xs">Live decision events from the trading engines — what was considered, done, and why. Backed by /api/decisions.</CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 pb-4 space-y-2 max-h-[360px] overflow-y-auto">
-                {(decisions.data || []).map(ev => (
-                  <div key={ev.id} className="rounded border border-border/30 bg-card/20 p-2">
-                    <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                      <span className="uppercase">#{ev.strategyId} {ev.symbol} · {ev.actionConsidered}</span>
-                      <span>{ev.createdAt ? new Date(ev.createdAt).toLocaleString() : ""}</span>
-                    </div>
-                    <div className="mt-1 text-xs">
-                      <Badge variant={ev.outcome === "done" || ev.outcome === "executed" ? "default" : "secondary"} className="text-[10px] mr-1">{ev.outcome}</Badge>
-                      {ev.actionTaken && <span className="text-foreground/90">{ev.actionTaken}</span>}
-                    </div>
-                    {ev.reasonText && <p className="mt-1 text-[11px] text-muted-foreground">{ev.reasonText}</p>}
-                  </div>
-                ))}
-                {decisions.data?.length === 0 && <p className="text-xs text-muted-foreground">No decision events logged yet.</p>}
               </CardContent>
             </Card>
 

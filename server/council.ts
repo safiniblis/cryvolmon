@@ -235,16 +235,31 @@ const MANAGER_TOOLS = [
   { type: "function" as const, function: { name: "mark_job", description: "Record or clear your current active job so it can be resumed after a server restart. Call with status=\"in_progress\" and a short summary when you START a multi-step job, and status=\"done\" when you finish it. The server reads this on startup to wake you up to continue unfinished work.", parameters: { type: "object", properties: { status: { type: "string", enum: ["in_progress", "done"] }, summary: { type: "string" } }, required: ["status"] } } },
 ];
 
-interface ActiveJobState { status: "in_progress" | "done"; summary: string; startedAt: string; }
+interface ActiveJobState {
+  status: "in_progress" | "done";
+  summary: string;
+  startedAt: string;
+  updatedAt?: string;
+  lastTool?: string;
+}
 
 const ACTIVE_JOB_FILE = () => join(process.cwd(), "data", "active-job.json");
+
+// Prevent two startup/request recovery loops from working the same job at once.
+let interruptedJobResumeInFlight = false;
 
 export function getActiveJob(): ActiveJobState | null {
   try { return JSON.parse(readFileSync(ACTIVE_JOB_FILE(), "utf8")) as ActiveJobState; } catch { return null; }
 }
 
 function setActiveJob(state: ActiveJobState): void {
-  writeFileSync(ACTIVE_JOB_FILE(), JSON.stringify(state, null, 2), "utf8");
+  writeFileSync(ACTIVE_JOB_FILE(), JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2), "utf8");
+}
+
+function recordToolProgress(tool: string): void {
+  const job = getActiveJob();
+  if (!job || job.status !== "in_progress") return;
+  setActiveJob({ ...job, lastTool: tool });
 }
 
 /** Read-only external directories the council may inspect but never patch. */
@@ -271,6 +286,7 @@ function safeToolPath(path: string, { allowExternalRead = false } = {}): string 
 }
 
 async function executeManagerTool(name: string, args: Record<string, unknown>, approved: boolean, allowRestart: boolean = true): Promise<string> {
+  recordToolProgress(name);
   if (name === "read_file") {
     const target = safeToolPath(String(args.path || ""), { allowExternalRead: true });
     return readFileSync(target, "utf8").slice(0, 16000);
@@ -600,10 +616,29 @@ EXECUTION WORKFLOW (follow for every concrete build/fix/deploy request):
 9. Reply to the operator in short plain English: what you changed (in words, not diff), verification result, and the commit hash. Never paste raw tool output.
 
 AUTONOMOUS_PATCH_MODE=${autonomous ? "ENABLED" : "DISABLED"}`;
-  const reply = await chatSlot("manager", toAgentMessages(messages, system, context), {
+  let reply = await chatSlot("manager", toAgentMessages(messages, system, context), {
     tools: MANAGER_TOOLS,
     executeTool: (name, args) => executeManagerTool(name, args, approved, allowRestart),
   });
+  // The provider can finish tool execution without emitting the final text turn.
+  // Give it one explicit completion turn here, while the request is still alive,
+  // instead of returning the generic "ask the manager" message to the operator.
+  if (reply.ok && (!reply.content || !reply.content.trim()) && getActiveJob()?.status === "in_progress") {
+    reply = await chatSlot("manager", toAgentMessages(messages, system, context), {
+      tools: MANAGER_TOOLS,
+      executeTool: (name, args) => executeManagerTool(name, args, approved, allowRestart),
+      requestMessages: [
+        ...toAgentMessages(messages, system, context),
+        { role: "user", content: "Complete the current job now. If all work is finished, call mark_job done and then provide a short plain-English final summary. Do not stop after tool calls." },
+      ],
+      timeoutMs: 60_000,
+      nudged: true,
+    });
+  }
+  const activeJob = getActiveJob();
+  if (activeJob?.status === "in_progress" && (!reply.ok || !reply.content?.trim())) {
+    console.warn(`[Council] Manager ended without a final reply; job remains resumable after ${activeJob.lastTool || "unknown tool"}.`);
+  }
   return {
     ok: reply.ok,
     content: reply.content,
@@ -622,6 +657,8 @@ AUTONOMOUS_PATCH_MODE=${autonomous ? "ENABLED" : "DISABLED"}`;
  * Runs in the background so server startup is never blocked.
  */
 export async function resumeInterruptedJob(): Promise<void> {
+  if (interruptedJobResumeInFlight) return;
+  interruptedJobResumeInFlight = true;
   try {
     const job = getActiveJob();
     if (!job || job.status !== "in_progress" || !job.summary) return;

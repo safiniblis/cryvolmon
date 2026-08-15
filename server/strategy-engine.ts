@@ -3,6 +3,7 @@ import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
 import { priceFeed } from "./ws-price-feed";
 import { managedParam } from "./managed-params";
+import { canPlaceTandemOpen } from "./order-coordinator";
 
 interface TickerData {
   symbol: string;
@@ -849,6 +850,14 @@ async function executeGridStrategy(strategy: Strategy) {
     const priceStr = roundPrice(level, precision.quotePrecision);
 
     try {
+      if (isTandemChild) {
+        const parentId = Number((config as any).parentTandemId);
+        const allowed = await canPlaceTandemOpen(client, strategy.symbol, parentId, level, config, precision.quotePrecision);
+        if (!allowed) {
+          console.log(`[${tag}] Deferred tandem OPEN @ ${priceStr}: close ownership or exchange state unresolved`);
+          continue;
+        }
+      }
       const result = await client.placeOrder({
         symbol: strategy.symbol,
         qty: qtyStr,

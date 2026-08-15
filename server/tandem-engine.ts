@@ -5,6 +5,27 @@ import { priceFeed } from "./ws-price-feed";
 import { getPairPrecision, checkPairRotation, type GridConfig, type PairPrecision } from "./strategy-engine";
 import { logTandemRebalanceDecision, logTandemRebalanceTrade, type TandemRebalanceContext } from "./tandem-decision-log";
 import { managedParam } from "./managed-params";
+import { reserveTandemClose } from "./order-coordinator";
+
+// Parent-level coordinator: close/reduce intents own a spacing-defined cell.
+const tandemActionLocks = new Set<number>();
+const tandemCellReservations = new Map<string, { kind: "CLOSE"; orderId?: string; at: number }>();
+function tandemCell(price: number, anchor: number, ratio: number): string {
+  if (!(price > 0) || !(anchor > 0) || !(ratio > 1)) return `price:${price.toFixed(8)}`;
+  return `cell:${Math.round(Math.log(price / anchor) / Math.log(ratio))}`;
+}
+function tandemReservationKey(strategyId: number, cell: string): string { return `${strategyId}:${cell}`; }
+async function reconcileBeforeOpen(client: any, symbol: string, strategyId: number, cell: string, price: number): Promise<boolean> {
+  if (tandemCellReservations.has(tandemReservationKey(strategyId, cell))) return false;
+  try {
+    const response = await client.getOpenOrders(symbol);
+    if (response?.code !== 0) return false;
+    let orders = response.data;
+    if (!Array.isArray(orders) && Array.isArray(orders?.orderList)) orders = orders.orderList;
+    if (!Array.isArray(orders)) return false;
+    return !orders.some((order: any) => String(order.tradeSide || order.trade_side || "").toUpperCase() === "CLOSE" && Math.abs(Number(order.price || order.orderPrice || 0) - price) <= Math.max(price * 0.0000001, 0.00000001));
+  } catch { return false; }
+}
 
 function roundQty(qty: number, precision: number): string {
   return qty.toFixed(precision);
@@ -16,8 +37,14 @@ function roundPrice(price: number, precision: number): string {
 
 async function placeLimitClose(
   client: any,
-  params: { symbol: string; qty: string; side: "BUY" | "SELL"; positionId?: string; price: number; quotePrecision: number },
+  params: { symbol: string; qty: string; side: "BUY" | "SELL"; positionId?: string; price: number; quotePrecision: number; strategyId?: number; cell?: string },
 ): Promise<{ result: any; filled: boolean }> {
+  const reservationKey = params.strategyId && params.cell ? tandemReservationKey(params.strategyId, params.cell) : null;
+  if (reservationKey) tandemCellReservations.set(reservationKey, { kind: "CLOSE", at: Date.now() });
+  if (params.strategyId && params.cell) {
+    const parent = await storage.getStrategy(params.strategyId);
+    if (parent) reserveTandemClose(params.strategyId, params.price, (parent.config as any), undefined);
+  }
   const result = await client.placeOrder({
     symbol: params.symbol,
     qty: params.qty,
@@ -611,6 +638,8 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
               positionId: posToTrim?.positionId,
               price: currentPrice,
               quotePrecision: precision.quotePrecision,
+              strategyId: strategy.id,
+              cell: tandemCell(currentPrice, config.entryPrice || currentPrice, (config as any).gridRatio || 1.001),
             });
 
             if (filled) {

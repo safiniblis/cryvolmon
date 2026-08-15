@@ -556,7 +556,13 @@ export async function chatSlot(
 
     const data = await res.json();
     const toolCalls = data?.choices?.[0]?.message?.tool_calls || [];
-    if (toolCalls.length > 0 && opts.executeTool && (opts.toolRound || 0) < 12) {
+    // A complete build/deploy job can legitimately need more than a dozen tool calls
+    // (inspect, several patches, check, build, deploy, verify, log, commit, close).
+    // The old cap interrupted the manager at exactly the point where it needed to
+    // write its final reply, leaving active-job.json stuck in progress.
+    // Keep enough room for a full inspect → edit → verify → deploy → commit cycle.
+    // A shorter cap could stop exactly before the manager's final reply.
+    if (toolCalls.length > 0 && opts.executeTool && (opts.toolRound || 0) < 64) {
       const assistantMessage = data.choices[0].message;
       const toolMessages = [...requestMessages, assistantMessage];
       const toolResults = [...(opts.toolResults || [])];

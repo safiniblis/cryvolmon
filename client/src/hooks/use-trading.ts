@@ -77,7 +77,11 @@ export function useSaveExchangeKeys() {
       const res = await apiRequest("POST", `/api/exchange-keys/${exchange}`, { apiKey, secretKey });
       return res.json();
     },
-    onSuccess: (_data, variables) => toast({ title: `${variables.exchange === "bitrue" ? "Bitrue" : "Bitunix"} keys added`, description: "Keys are active for this server session." }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/connection"] });
+      queryClient.invalidateQueries({ queryKey: [variables.exchange === "bitrue" ? "/api/bitrue-account" : "/api/account"] });
+      toast({ title: `${variables.exchange === "bitrue" ? "Bitrue" : "Bitunix"} keys added`, description: "Keys are active for this server session." });
+    },
     onError: (e: Error) => toast({ title: "Could not add keys", description: e.message, variant: "destructive" }),
   });
 }

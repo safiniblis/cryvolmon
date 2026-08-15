@@ -1,7 +1,7 @@
 {
   "status": "in_progress",
-  "summary": "Cancel all open orders without closing positions, then observe whether the patched tandem pattern is rebuilt.",
-  "startedAt": "2026-08-15T17:50:50.926Z",
-  "updatedAt": "2026-08-15T17:51:56.754Z",
+  "summary": "Resume tandem rebalance fix: inspect current changes, correct target-weight 3% calculation, verify, document, and commit without restarting service.",
+  "startedAt": "2026-08-15T18:06:52.265Z",
+  "updatedAt": "2026-08-15T18:07:52.961Z",
   "lastTool": "git_commit"
 }

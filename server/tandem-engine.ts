@@ -495,12 +495,21 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
     const totalQtyValue = longQty + shortQty;
     const actualLongRatio = totalQtyValue > 0 ? longQty / totalQtyValue : targetLongRatio;
     const divergence = actualLongRatio - targetLongRatio;
-    const absDivergence = Math.abs(divergence);
-
-    if (absDivergence > 0.03 && config.longGridId && config.shortGridId) {
-      const rebalFactor = Math.min(absDivergence * 4, 0.5);
-      const longMultiplier = divergence > 0 ? (1 - rebalFactor) : (1 + rebalFactor);
-      const shortMultiplier = divergence > 0 ? (1 + rebalFactor) : (1 - rebalFactor);
+    const actualShortRatio = 1 - actualLongRatio;
+    const targetShortRatio = 1 - targetLongRatio;
+    // The tolerance is 3% of each configured target weight, not 3 percentage
+    // points from a hard-coded 50/50 split. This preserves any initial L/S
+    // weighting such as 60/40 or 70/30.
+    const WEIGHT_TOLERANCE = 0.03;
+    const longRelativeError = targetLongRatio > 0 ? Math.abs(divergence) / targetLongRatio : 0;
+    const shortRelativeError = targetShortRatio > 0 ? Math.abs(actualShortRatio - targetShortRatio) / targetShortRatio : 0;
+    const exceedsWeightTolerance = Math.max(longRelativeError, shortRelativeError) > WEIGHT_TOLERANCE;
+    if (exceedsWeightTolerance && config.longGridId && config.shortGridId) {
+      const correctionStrength = 0.5;
+      const longCorrection = targetLongRatio / Math.max(actualLongRatio, Number.EPSILON);
+      const shortCorrection = targetShortRatio / Math.max(actualShortRatio, Number.EPSILON);
+      const longMultiplier = Math.min(1.5, Math.max(0.5, 1 + correctionStrength * (longCorrection - 1)));
+      const shortMultiplier = Math.min(1.5, Math.max(0.5, 1 + correctionStrength * (shortCorrection - 1)));
 
       try {
         const lg = await storage.getStrategy(config.longGridId);
@@ -523,7 +532,7 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
       } catch (e: any) {
         console.error(`[Tandem ${strategy.id}] Grid size multiplier update error:`, e.message);
       }
-    } else if (absDivergence <= 0.03 && config.longGridId && config.shortGridId) {
+    } else if (!exceedsWeightTolerance && config.longGridId && config.shortGridId) {
       try {
         const lg = await storage.getStrategy(config.longGridId);
         const sg = await storage.getStrategy(config.shortGridId);

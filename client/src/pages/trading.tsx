@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,14 +33,13 @@ import {
   useGoldLongStart,
   usePairInfo,
   useEmergencyStop,
-  useSaveExchangeKeys,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Wifi, WifiOff,
   DollarSign, Activity,
   AlertTriangle, ArrowRight, Zap,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, TrendingUp, ArrowDownToLine,
-  RefreshCw, ArrowUpDown, OctagonX, Users, KeyRound, X,
+  RefreshCw, ArrowUpDown, OctagonX, Users,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -104,19 +102,16 @@ function ConnectionBanner() {
   );
 }
 
-function BitunixAccountPanel({ onAddKeys }: { onAddKeys: () => void }) {
+function BitunixAccountPanel() {
   const { data, isLoading } = useAccount();
 
   return (
     <Card className="bg-card/40 border-border/50">
-      <CardHeader className="pb-2 pt-3 px-4 flex-row items-center justify-between space-y-0">
+      <CardHeader className="pb-2 pt-3 px-4">
         <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
           <span className="inline-block w-2 h-2 rounded-full bg-sky-400" />
           Bitunix · Futures
         </CardTitle>
-        <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={onAddKeys} data-testid="button-add-keys-bitunix">
-          <KeyRound className="h-3 w-3 mr-1" /> Add Keys
-        </Button>
       </CardHeader>
       <CardContent className="px-4 pb-3">
         {isLoading ? (
@@ -151,19 +146,16 @@ function BitunixAccountPanel({ onAddKeys }: { onAddKeys: () => void }) {
   );
 }
 
-function BitrueAccountPanel({ onAddKeys }: { onAddKeys: () => void }) {
+function BitrueAccountPanel() {
   const { data, isLoading } = useBitrueAccount();
 
   return (
     <Card className="bg-card/40 border-border/50">
-      <CardHeader className="pb-2 pt-3 px-4 flex-row items-center justify-between space-y-0">
+      <CardHeader className="pb-2 pt-3 px-4">
         <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
           <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
           Bitrue · Gold Futures (E-XAUT-USDT)
         </CardTitle>
-        <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={onAddKeys} data-testid="button-add-keys-bitrue">
-          <KeyRound className="h-3 w-3 mr-1" /> Add Keys
-        </Button>
       </CardHeader>
       <CardContent className="px-4 pb-3">
         {isLoading ? (
@@ -203,44 +195,11 @@ function BitrueAccountPanel({ onAddKeys }: { onAddKeys: () => void }) {
   );
 }
 
-function AccountOverview({ onAddKeys }: { onAddKeys: (exchange: "bitunix" | "bitrue") => void }) {
+function AccountOverview() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <BitunixAccountPanel onAddKeys={() => onAddKeys("bitunix")} />
-      <BitrueAccountPanel onAddKeys={() => onAddKeys("bitrue")} />
-    </div>
-  );
-}
-
-function ExchangeKeysDialog({ exchange, onClose }: { exchange: "bitunix" | "bitrue" | null; onClose: () => void }) {
-  const saveKeys = useSaveExchangeKeys();
-  const [apiKey, setApiKey] = useState("");
-  const [secretKey, setSecretKey] = useState("");
-  if (!exchange) return null;
-  const label = exchange === "bitrue" ? "Bitrue" : "Bitunix";
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    saveKeys.mutate({ exchange, apiKey, secretKey }, { onSuccess: () => { setApiKey(""); setSecretKey(""); onClose(); } });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold">Add {label} API keys</h2>
-          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close"><X className="h-4 w-4" /></Button>
-        </div>
-        <p className="text-xs text-muted-foreground mb-3">Keys are used for this server session. Never share them in chat.</p>
-        <div className="space-y-3">
-          <Input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="API key" autoComplete="off" required data-testid={`input-api-key-${exchange}`} />
-          <Input value={secretKey} onChange={e => setSecretKey(e.target.value)} placeholder="Secret key" type="password" autoComplete="new-password" required data-testid={`input-secret-key-${exchange}`} />
-        </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="submit" disabled={saveKeys.isPending}>{saveKeys.isPending ? "Saving..." : "Save keys"}</Button>
-        </div>
-      </form>
+      <BitunixAccountPanel />
+      <BitrueAccountPanel />
     </div>
   );
 }
@@ -1947,7 +1906,6 @@ function HedgePairPanel() {
 
 export default function TradingPage() {
   const emergencyStop = useEmergencyStop();
-  const [keyExchange, setKeyExchange] = useState<"bitunix" | "bitrue" | null>(null);
 
   return (
     <div className="min-h-screen w-full bg-[#0a0f1e] text-foreground p-3 sm:p-6 relative overflow-x-hidden">
@@ -1988,8 +1946,7 @@ export default function TradingPage() {
           </div>
         </header>
 
-        <AccountOverview onAddKeys={setKeyExchange} />
-        <ExchangeKeysDialog exchange={keyExchange} onClose={() => setKeyExchange(null)} />
+        <AccountOverview />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 space-y-4">

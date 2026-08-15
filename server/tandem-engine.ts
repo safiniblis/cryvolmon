@@ -5,27 +5,7 @@ import { priceFeed } from "./ws-price-feed";
 import { getPairPrecision, checkPairRotation, type GridConfig, type PairPrecision } from "./strategy-engine";
 import { logTandemRebalanceDecision, logTandemRebalanceTrade, type TandemRebalanceContext } from "./tandem-decision-log";
 import { managedParam } from "./managed-params";
-import { reserveTandemClose } from "./order-coordinator";
-
-// Parent-level coordinator: close/reduce intents own a spacing-defined cell.
-const tandemActionLocks = new Set<number>();
-const tandemCellReservations = new Map<string, { kind: "CLOSE"; orderId?: string; at: number }>();
-function tandemCell(price: number, anchor: number, ratio: number): string {
-  if (!(price > 0) || !(anchor > 0) || !(ratio > 1)) return `price:${price.toFixed(8)}`;
-  return `cell:${Math.round(Math.log(price / anchor) / Math.log(ratio))}`;
-}
-function tandemReservationKey(strategyId: number, cell: string): string { return `${strategyId}:${cell}`; }
-async function reconcileBeforeOpen(client: any, symbol: string, strategyId: number, cell: string, price: number): Promise<boolean> {
-  if (tandemCellReservations.has(tandemReservationKey(strategyId, cell))) return false;
-  try {
-    const response = await client.getOpenOrders(symbol);
-    if (response?.code !== 0) return false;
-    let orders = response.data;
-    if (!Array.isArray(orders) && Array.isArray(orders?.orderList)) orders = orders.orderList;
-    if (!Array.isArray(orders)) return false;
-    return !orders.some((order: any) => String(order.tradeSide || order.trade_side || "").toUpperCase() === "CLOSE" && Math.abs(Number(order.price || order.orderPrice || 0) - price) <= Math.max(price * 0.0000001, 0.00000001));
-  } catch { return false; }
-}
+import { tandemCellFor, tandemGridRatio, reserveTandemCell, expireStaleTandemReservations } from "./order-coordinator";
 
 function roundQty(qty: number, precision: number): string {
   return qty.toFixed(precision);
@@ -39,12 +19,6 @@ async function placeLimitClose(
   client: any,
   params: { symbol: string; qty: string; side: "BUY" | "SELL"; positionId?: string; price: number; quotePrecision: number; strategyId?: number; cell?: string },
 ): Promise<{ result: any; filled: boolean }> {
-  const reservationKey = params.strategyId && params.cell ? tandemReservationKey(params.strategyId, params.cell) : null;
-  if (reservationKey) tandemCellReservations.set(reservationKey, { kind: "CLOSE", at: Date.now() });
-  if (params.strategyId && params.cell) {
-    const parent = await storage.getStrategy(params.strategyId);
-    if (parent) reserveTandemClose(params.strategyId, params.price, (parent.config as any), undefined);
-  }
   const result = await client.placeOrder({
     symbol: params.symbol,
     qty: params.qty,
@@ -57,6 +31,13 @@ async function placeLimitClose(
   });
   if (result?.code !== 0 || !result?.data?.orderId) return { result, filled: false };
 
+  // Reserve the cell for a while so a child grid cannot immediately open an
+  // offsetting order at the same level while this close settles. The TTL sweep
+  // in executeTandemStrategy releases it once the close is confirmed done.
+  if (params.strategyId && params.cell) {
+    reserveTandemCell(params.strategyId, params.cell, String(result.data.orderId));
+  }
+
   await new Promise((resolve) => setTimeout(resolve, 500));
   try {
     const history = await client.getOrderHistory(params.symbol);
@@ -67,6 +48,10 @@ async function placeLimitClose(
   } catch {
     return { result, filled: false };
   }
+}
+
+function tandemCloseCell(config: TandemConfig, price: number): string {
+  return tandemCellFor(price, config.entryPrice, tandemGridRatio(config));
 }
 
 async function getTickerPrice(symbol: string): Promise<{ symbol: string; lastPrice: number; high24h: number; low24h: number; volume24h: number; change24h: number } | null> {
@@ -250,6 +235,7 @@ export async function executeTandemStrategy(strategy: Strategy) {
   if (!client) throw new Error("Bitunix client not configured");
 
   const config = strategy.config as TandemConfig;
+  expireStaleTandemReservations();
   await refreshExchangeCapital(strategy, config, client);
   const phase = config.phase || "entry";
 
@@ -324,8 +310,6 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
 
     const fm = managedParam(config, "feeMultiplier", config.feeMultiplier || 3.5);
     const longGridConfig = defaultGridConfigForSide("LONG", currentPrice, leverage, longCapital, fm, false, 0.006, tandemReservePct);
-    (longGridConfig as any).openOrderGrowth = 1.05;
-    (longGridConfig as any).closeOrderDecay = 0.95;
     (longGridConfig as any).parentTandemId = strategy.id;
     (longGridConfig as any).fixedInitialQty = symmetricQtyStr;
     (longGridConfig as any).fixedInitialShare = initialShare;
@@ -497,21 +481,12 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
     const totalQtyValue = longQty + shortQty;
     const actualLongRatio = totalQtyValue > 0 ? longQty / totalQtyValue : targetLongRatio;
     const divergence = actualLongRatio - targetLongRatio;
-    const actualShortRatio = 1 - actualLongRatio;
-    const targetShortRatio = 1 - targetLongRatio;
-    // The tolerance is 3% of each configured target weight, not 3 percentage
-    // points from a hard-coded 50/50 split. This preserves any initial L/S
-    // weighting such as 60/40 or 70/30.
-    const WEIGHT_TOLERANCE = 0.03;
-    const longRelativeError = targetLongRatio > 0 ? Math.abs(divergence) / targetLongRatio : 0;
-    const shortRelativeError = targetShortRatio > 0 ? Math.abs(actualShortRatio - targetShortRatio) / targetShortRatio : 0;
-    const exceedsWeightTolerance = Math.max(longRelativeError, shortRelativeError) > WEIGHT_TOLERANCE;
-    if (exceedsWeightTolerance && config.longGridId && config.shortGridId) {
-      const correctionStrength = 0.5;
-      const longCorrection = targetLongRatio / Math.max(actualLongRatio, Number.EPSILON);
-      const shortCorrection = targetShortRatio / Math.max(actualShortRatio, Number.EPSILON);
-      const longMultiplier = Math.min(1.5, Math.max(0.5, 1 + correctionStrength * (longCorrection - 1)));
-      const shortMultiplier = Math.min(1.5, Math.max(0.5, 1 + correctionStrength * (shortCorrection - 1)));
+    const absDivergence = Math.abs(divergence);
+
+    if (absDivergence > 0.03 && config.longGridId && config.shortGridId) {
+      const rebalFactor = Math.min(absDivergence * 4, 0.5);
+      const longMultiplier = divergence > 0 ? (1 - rebalFactor) : (1 + rebalFactor);
+      const shortMultiplier = divergence > 0 ? (1 + rebalFactor) : (1 - rebalFactor);
 
       try {
         const lg = await storage.getStrategy(config.longGridId);
@@ -534,7 +509,7 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
       } catch (e: any) {
         console.error(`[Tandem ${strategy.id}] Grid size multiplier update error:`, e.message);
       }
-    } else if (!exceedsWeightTolerance && config.longGridId && config.shortGridId) {
+    } else if (absDivergence <= 0.03 && config.longGridId && config.shortGridId) {
       try {
         const lg = await storage.getStrategy(config.longGridId);
         const sg = await storage.getStrategy(config.shortGridId);
@@ -650,7 +625,7 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
               price: currentPrice,
               quotePrecision: precision.quotePrecision,
               strategyId: strategy.id,
-              cell: tandemCell(currentPrice, config.entryPrice || currentPrice, (config as any).gridRatio || 1.001),
+              cell: tandemCloseCell(config, currentPrice),
             });
 
             if (filled) {
@@ -820,6 +795,8 @@ async function bailOutAndRestart(
       positionId: config.survivingPositionId || undefined,
       price: currentPrice,
       quotePrecision: precision.quotePrecision,
+      strategyId: strategy.id,
+      cell: tandemCloseCell(config, currentPrice),
     });
 
     const profitPerUnit = direction * (currentPrice - config.entryPrice);
@@ -944,6 +921,8 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
             positionId: config.survivingPositionId || undefined,
             price: currentPrice,
             quotePrecision: precision.quotePrecision,
+            strategyId: strategy.id,
+            cell: tandemCloseCell(config, currentPrice),
           });
 
           const profitPerUnit = direction * (currentPrice - config.entryPrice);
@@ -1058,6 +1037,8 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
         positionId: survivingPos?.positionId,
         price: currentPrice,
         quotePrecision: precision.quotePrecision,
+        strategyId: strategy.id,
+        cell: tandemCloseCell(config, currentPrice),
       });
 
       const direction = config.survivingSide === "LONG" ? 1 : -1;

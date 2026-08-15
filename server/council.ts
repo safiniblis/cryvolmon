@@ -18,9 +18,11 @@
 
 import {
   getAgentSlots,
+  getSlot,
   chatSlot,
   resolveSlotKey,
   AGENT_ROLES,
+  AGENT_POSITIONS,
   type AgentMessage,
   type AgentPosition,
   type AgentProvider,
@@ -778,6 +780,67 @@ export async function agentChat(position: AgentPosition, messages: ChatTurn[]): 
     ms: reply.ms,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Seat validation probes
+// ---------------------------------------------------------------------------
+
+export interface SeatProbeResult {
+  position: AgentPosition;
+  ok: boolean;
+  provider: string;
+  model: string;
+  ms: number;
+  error?: string | null;
+}
+
+const probeInFlight = new Set<AgentPosition>();
+
+/**
+ * Lightweight health/latency probe for one seat. A single tiny completion with a
+ * short timeout — cheap on every provider (including the free tiers) so it can
+ * be run on demand or on boot without tripping rate limits.
+ */
+export async function probeSeat(position: AgentPosition): Promise<SeatProbeResult> {
+  const slot = getSlot(position);
+  const base = { position, provider: slot.provider, model: slot.model };
+  if (probeInFlight.has(position)) {
+    return { ...base, ok: false, ms: 0, error: "probe already in flight" };
+  }
+  probeInFlight.add(position);
+  try {
+    const reply = await chatSlot(position, [
+      { role: "system", content: "Reply with exactly one word and nothing else." },
+      { role: "user", content: "Confirm you are online." },
+    ], { maxTokens: 256, timeoutMs: 45_000 });
+    return {
+      ...base,
+      ok: reply.ok,
+      provider: reply.provider,
+      model: reply.model,
+      ms: reply.ms,
+      error: reply.error ?? null,
+    };
+  } catch (e: any) {
+    return { ...base, ok: false, ms: 0, error: String(e?.message || e) };
+  } finally {
+    probeInFlight.delete(position);
+  }
+}
+
+/**
+ * Probe every seat sequentially (low concurrency by design so the free tiers are
+ * never hit with a burst). Skips any seat that is currently in flight elsewhere.
+ */
+export async function probeAllSeats(positions: AgentPosition[] = AGENT_POSITIONS): Promise<SeatProbeResult[]> {
+  const results: SeatProbeResult[] = [];
+  for (const position of positions) {
+    results.push(await probeSeat(position));
+    await pause(800);
+  }
+  return results;
+}
+
 
 // ---------------------------------------------------------------------------
 // Full council

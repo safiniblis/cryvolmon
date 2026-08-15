@@ -12,6 +12,7 @@ import {
   getAgentSlots,
   setAgentOverrides,
   isAnyAgentConfigured,
+  probeAllSeats,
   type ChatTurn,
   type AgentPosition,
   type AgentProvider,
@@ -1504,6 +1505,42 @@ export async function registerRoutes(
     });
     res.json({ ok: true, archived: true });
   });
+
+  // === Seat validation probe (latency + health of every configured slot) ===
+  const probeState = { active: false, lastAt: 0 };
+  app.get("/api/council/probe", async (_req, res) => {
+    if (probeState.active) return res.status(409).json({ message: "Probe already running" });
+    if (Date.now() - probeState.lastAt < 30_000) return res.status(429).json({ message: "Probe too frequent; wait 30s between probes." });
+    probeState.active = true;
+    probeState.lastAt = Date.now();
+    try {
+      const results = await probeAllSeats();
+      res.json({
+        at: new Date().toISOString(),
+        results,
+        healthy: results.filter((r) => r.ok).length,
+        total: results.length,
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    } finally {
+      probeState.active = false;
+    }
+  });
+
+  // Quiet boot-time seat check (background, sequential) so a dead/free-tier
+  // slot is surfaced in the first probe instead of only on first use.
+  if (process.env.COUNCIL_PROBE_ON_BOOT !== "false") {
+    setTimeout(() => {
+      probeAllSeats()
+        .then((results) => {
+          for (const r of results) {
+            console.log(`[SeatProbe] ${r.position}: ${r.ok ? "OK" : "DOWN"} (${r.provider}/${r.model}) ${r.ms}ms${r.error ? " — " + r.error : ""}`);
+          }
+        })
+        .catch((e) => console.warn(`[SeatProbe] boot probe failed: ${e.message}`));
+    }, 30_000);
+  }
 
   // === Free-model registry & auto-heal ===
   app.get("/api/council/models", (_req, res) => {

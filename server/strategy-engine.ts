@@ -3,7 +3,7 @@ import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
 import { priceFeed } from "./ws-price-feed";
 import { managedParam } from "./managed-params";
-import { canPlaceTandemOpen } from "./order-coordinator";
+import { tandemCellFor, tandemGridRatio, isTandemCellReservedNear, hasPendingCloseAtPrice } from "./order-coordinator";
 
 interface TickerData {
   symbol: string;
@@ -265,8 +265,6 @@ export interface GridConfig {
   parentTandemId?: number;
   twinMode?: boolean;
   twinGapPct?: number;
-  openOrderGrowth?: number;
-  closeOrderDecay?: number;
 }
 
 export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
@@ -679,6 +677,27 @@ async function executeGridStrategy(strategy: Strategy) {
 
   const isTandemChild = !!(config as any).parentTandemId;
 
+  // Tandem children share one parent's order-coordination cells. Read the
+  // parent config once so cell keys match the parent's close reservations.
+  let tandemParentId = 0;
+  let tandemAnchor = 0;
+  let tandemRatio = 1;
+  if (isTandemChild) {
+    const rawParentId = Number((config as any).parentTandemId);
+    if (Number.isInteger(rawParentId) && rawParentId > 0) {
+      try {
+        const parent = await storage.getStrategy(rawParentId);
+        const parentCfg = (parent?.config || {}) as any;
+        tandemParentId = rawParentId;
+        const parentEntry = Number(parentCfg.entryPrice || 0);
+        tandemAnchor = parentEntry > 0 ? parentEntry : 0;
+        tandemRatio = tandemGridRatio(parentCfg);
+      } catch (e: any) {
+        console.warn(`[${tag}] Tandem parent fetch failed: ${e.message}`);
+      }
+    }
+  }
+
   const maxGridWindow = isTandemChild ? 6 : gridLevels.length;
   const windowedGridLevels = gridLevels
     .map(l => ({ level: l, dist: Math.abs(l - currentPrice) }))
@@ -839,18 +858,20 @@ async function executeGridStrategy(strategy: Strategy) {
   }
 
   const gridSizeMultiplier = Math.max(0.5, Math.min(1.5, managedParam(config, "gridSizeMultiplier", 1)));
-  const openGrowth = isTandemChild ? Math.min(1.05, Math.max(1, Number(config.openOrderGrowth || 1.05))) : 1;
-  const rankedOpenLevels = [...gridSlice].sort((a, b) => Math.abs(a - currentPrice) - Math.abs(b - currentPrice));
-  const openWeights = rankedOpenLevels.map((_, index) => Math.pow(openGrowth, index));
-  const openWeightTotal = openWeights.reduce((sum, weight) => sum + weight, 0);
-  const openWeightByPrice = new Map(rankedOpenLevels.map((level, index) => [roundPrice(level, precision.quotePrecision), openWeights[index]]));
 
   let placedGrids = 0;
   for (const level of gridSlice) {
-    const distanceWeight = openWeightTotal > 0
-      ? ((openWeightByPrice.get(roundPrice(level, precision.quotePrecision)) || 1) * rankedOpenLevels.length) / openWeightTotal
-      : 1;
-    const rawMargin = Math.min(marginPerOrder * distanceWeight, (availableBalance - 0.1) * 0.95);
+    // A tandem parent may have a close/reduce pending in this cell (or a CLOSE
+    // order resting near this price). Skip the open so it does not churn fees
+    // by offsetting the parent's close at the same grid level.
+    if (tandemParentId > 0 && tandemAnchor > 0) {
+      const cell = tandemCellFor(level, tandemAnchor, tandemRatio);
+      if (isTandemCellReservedNear(tandemParentId, tandemAnchor, tandemRatio, level, 1) || hasPendingCloseAtPrice(openOrders, level)) {
+        console.log(`[${tag}] Skipping ${gridOrderSide} open @ ${roundPrice(level, precision.quotePrecision)}: tandem close pending near cell ${cell}`);
+        continue;
+      }
+    }
+    const rawMargin = Math.min(marginPerOrder, (availableBalance - 0.1) * 0.95);
     const effectiveMargin = Math.min(rawMargin * gridSizeMultiplier, (availableBalance - 0.1) * 0.95);
     if (effectiveMargin < minMarginPerOrder * 0.9) break;
     const notional = effectiveMargin * leverage * 0.95;
@@ -860,14 +881,6 @@ async function executeGridStrategy(strategy: Strategy) {
     const priceStr = roundPrice(level, precision.quotePrecision);
 
     try {
-      if (isTandemChild) {
-        const parentId = Number((config as any).parentTandemId);
-        const allowed = await canPlaceTandemOpen(client, strategy.symbol, parentId, level, config, precision.quotePrecision);
-        if (!allowed) {
-          console.log(`[${tag}] Deferred tandem OPEN @ ${priceStr}: close ownership or exchange state unresolved`);
-          continue;
-        }
-      }
       const result = await client.placeOrder({
         symbol: strategy.symbol,
         qty: qtyStr,
@@ -1032,28 +1045,27 @@ async function executeGridStrategy(strategy: Strategy) {
         precision.minTradeVolume
       );
 
-      const closeDecay = isTandemChild ? Math.max(0.95, Math.min(1, Number(config.closeOrderDecay || 0.95))) : 1;
-      const closeWeights = cappedTpLevels.map((_, index) => Math.pow(closeDecay, index));
-      const closeWeightTotal = closeWeights.reduce((sum, weight) => sum + weight, 0);
       let levelsToPlace = cappedTpLevels;
-      if (closeWeightTotal * precision.minTradeVolume > sellableQty * 1.02) {
-        levelsToPlace = cappedTpLevels.slice(0, Math.max(Math.floor(sellableQty / precision.minTradeVolume), 1));
+      if (tpQtyPerLevel * cappedTpLevels.length > sellableQty * 1.02) {
+        const maxLevels = Math.floor(sellableQty / tpQtyPerLevel);
+        levelsToPlace = cappedTpLevels.slice(0, Math.max(maxLevels, 1));
       }
-      const placedCloseWeights = closeWeights.slice(0, levelsToPlace.length);
-      const placedCloseWeightTotal = placedCloseWeights.reduce((sum, weight) => sum + weight, 0);
 
       if (sellableQty < precision.minTradeVolume) {
         console.log(`[${tag}] Sellable qty too small for TPs (${sellableQty.toFixed(precision.basePrecision)} < minVol ${precision.minTradeVolume}) — skipping`);
         await storage.updateStrategy(strategy.id, { config });
       } else {
-        console.log(`[${tag}] Placing ${levelsToPlace.length} TP orders with ${closeDecay.toFixed(2)} close decay (basis: ${tpQtyBasis.toFixed(precision.basePrecision)}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, entry: ${tpRefPrice.toFixed(4)})`);
+        const lastLevelQty = Math.max(
+          Math.round((sellableQty - tpQtyPerLevel * (levelsToPlace.length - 1)) * basePrecisionMultiplier) / basePrecisionMultiplier,
+          precision.minTradeVolume
+        );
+
+        console.log(`[${tag}] Placing ${levelsToPlace.length} TP orders, ${tpQtyPerLevel.toFixed(precision.basePrecision)} each (basis: ${tpQtyBasis.toFixed(precision.basePrecision)}, sellable: ${sellableQty.toFixed(precision.basePrecision)}, entry: ${tpRefPrice.toFixed(4)})`);
 
         for (let i = 0; i < levelsToPlace.length; i++) {
           const level = levelsToPlace[i];
-          const qty = Math.max(
-            Math.floor((sellableQty * placedCloseWeights[i] / placedCloseWeightTotal) * basePrecisionMultiplier) / basePrecisionMultiplier,
-            precision.minTradeVolume
-          );
+          const isLast = i === levelsToPlace.length - 1;
+          const qty = isLast ? lastLevelQty : tpQtyPerLevel;
           const qtyStr = qty.toFixed(precision.basePrecision);
           const priceStr = roundPrice(level, precision.quotePrecision);
           try {

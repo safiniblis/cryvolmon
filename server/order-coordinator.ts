@@ -1,44 +1,121 @@
-import type { GridConfig } from "./strategy-engine";
+// Shared coordinator between a tandem parent and its grid children.
+//
+// Grid spacing defines ownership "cells" anchored at the tandem entry price.
+// A tandem close/reduce intent reserves its cell so a child grid cannot place
+// an offsetting OPEN in the same cell while the close is still settling. This
+// prevents the fee churn where one side closes while the other opens at the
+// same grid level. Close/reduce orders get priority; new opens are delayed
+// until the reservation expires (the close is confirmed done or cancelled).
 
-type Reservation = { at: number; orderId?: string };
-const closeReservations = new Map<string, Reservation>();
+const RESERVATION_TTL_MS = 30_000;
 
-function cell(price: number, config: GridConfig): string {
-  const anchor = Number(config.startPrice);
-  const ratio = Number(config.gridRatio);
+const tandemCellReservations = new Map<string, { orderId?: string; at: number }>();
+
+function cellKey(strategyId: number, cell: string): string {
+  return `${strategyId}:${cell}`;
+}
+
+/** Bucket a price into a cell given the grid anchor and ratio (mirrors grid level math). */
+export function tandemCellFor(price: number, anchor: number, ratio: number): string {
   if (!(price > 0) || !(anchor > 0) || !(ratio > 1)) return `price:${price.toFixed(8)}`;
   return `cell:${Math.round(Math.log(price / anchor) / Math.log(ratio))}`;
 }
 
-function key(parentId: number, price: number, config: GridConfig): string {
-  return `${parentId}:${cell(price, config)}`;
+/** Grid ratio used by tandem child grids, derived from the parent config the same way defaultGridConfigForSide does. */
+export function tandemGridRatio(config: { feeMultiplier?: number; twinMode?: boolean; twinGapPct?: number }): number {
+  const feeRate = 0.0006;
+  const roundTripFee = 2 * feeRate;
+  const fm = config?.feeMultiplier || 3.5;
+  if (config?.twinMode) {
+    const twinGapPct = config?.twinGapPct || 0.006;
+    return 1 + roundTripFee * ((twinGapPct / 2) / roundTripFee);
+  }
+  return 1 + roundTripFee * fm;
 }
 
-export function reserveTandemClose(parentId: number, price: number, config: GridConfig, orderId?: string): void {
-  closeReservations.set(key(parentId, price, config), { at: Date.now(), orderId });
+export function reserveTandemCell(strategyId: number, cell: string, orderId?: string): void {
+  tandemCellReservations.set(cellKey(strategyId, cell), { orderId, at: Date.now() });
 }
 
-export function releaseTandemClose(parentId: number, price: number, config: GridConfig): void {
-  closeReservations.delete(key(parentId, price, config));
+export function releaseTandemCell(strategyId: number, cell: string): void {
+  tandemCellReservations.delete(cellKey(strategyId, cell));
 }
 
-/** Fail closed: an unclear exchange response must not permit a new tandem open. */
-export async function canPlaceTandemOpen(client: any, symbol: string, parentId: number, price: number, config: GridConfig, quotePrecision: number): Promise<boolean> {
-  const reservationKey = key(parentId, price, config);
-  if (closeReservations.has(reservationKey)) return false;
+export function isTandemCellReserved(strategyId: number, cell: string): boolean {
+  const key = cellKey(strategyId, cell);
+  const entry = tandemCellReservations.get(key);
+  if (!entry) return false;
+  if (Date.now() - entry.at > RESERVATION_TTL_MS) {
+    tandemCellReservations.delete(key);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * True if any reservation exists within `halfWidth` cells of the given price.
+ * A close price often sits between grid levels, so a child grid opening at the
+ * nearest level lives in a neighbouring cell; check the small band to catch it.
+ */
+export function isTandemCellReservedNear(strategyId: number, anchor: number, ratio: number, price: number, halfWidth = 1): boolean {
+  if (!(anchor > 0) || !(ratio > 1) || !(price > 0)) return false;
+  const center = Math.round(Math.log(price / anchor) / Math.log(ratio));
+  const now = Date.now();
+  for (let d = -halfWidth; d <= halfWidth; d++) {
+    const key = cellKey(strategyId, `cell:${center + d}`);
+    const entry = tandemCellReservations.get(key);
+    if (!entry) continue;
+    if (now - entry.at > RESERVATION_TTL_MS) {
+      tandemCellReservations.delete(key);
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Drop reservations older than the TTL. Called each tandem manage cycle. */
+export function expireStaleTandemReservations(): void {
+  const now = Date.now();
+  for (const [key, entry] of tandemCellReservations) {
+    if (now - entry.at > RESERVATION_TTL_MS) tandemCellReservations.delete(key);
+  }
+}
+
+/** True if any resting order on the exchange is a CLOSE at (nearly) the given price. */
+export function hasPendingCloseAtPrice(openOrders: unknown[] | undefined, price: number): boolean {
+  if (!Array.isArray(openOrders) || openOrders.length === 0) return false;
+  const tolerance = Math.max(price * 0.000001, 0.00000001);
+  return openOrders.some((order: any) => {
+    if (order === null || typeof order !== "object") return false;
+    const orderSide = String(order.tradeSide ?? order.trade_side ?? "").toUpperCase();
+    if (orderSide !== "CLOSE") return false;
+    const orderPrice = Number(order.price ?? order.orderPrice ?? 0);
+    return Math.abs(orderPrice - price) <= tolerance;
+  });
+}
+
+/**
+ * True if it is safe to OPEN an order in this cell. False (blocked) when a
+ * tandem close/reduce is pending there: either an in-memory reservation or a
+ * resting CLOSE order near the price. On an unclear exchange response we err
+ * on the side of blocking the open.
+ */
+export async function reconcileBeforeTandemOpen(
+  client: any,
+  symbol: string,
+  strategyId: number,
+  cell: string,
+  price: number,
+): Promise<boolean> {
+  if (isTandemCellReserved(strategyId, cell)) return false;
   try {
     const response = await client.getOpenOrders(symbol);
     if (response?.code !== 0) return false;
     let orders = response.data;
     if (!Array.isArray(orders) && Array.isArray(orders?.orderList)) orders = orders.orderList;
     if (!Array.isArray(orders)) return false;
-    const roundedPrice = Number(price.toFixed(quotePrecision));
-    const hasClose = orders.some((order: any) => {
-      const tradeSide = String(order.tradeSide || order.trade_side || "").toUpperCase();
-      const orderPrice = Number(order.price || order.orderPrice || 0);
-      return tradeSide === "CLOSE" && Number(orderPrice.toFixed(quotePrecision)) === roundedPrice && cell(orderPrice, config) === cell(price, config);
-    });
-    return !hasClose;
+    return !hasPendingCloseAtPrice(orders, price);
   } catch {
     return false;
   }

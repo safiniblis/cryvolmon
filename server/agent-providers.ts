@@ -523,7 +523,6 @@ export async function chatSlot(
         messages: requestMessages,
         max_tokens: opts.maxTokens ?? 1400,
         ...(opts.tools ? { tools: opts.tools, tool_choice: "auto" } : {}),
-        ...(provider === "local" ? { think: false } : {}),
       };
 
   try {

@@ -6,3 +6,4 @@
 - 2026-08-15T17:48:16.628Z — Completed the resumable manager workflow and tandem order-coordination changes; TypeScript check and production build passed, and the already-running service answered live HTTP checks without another restart.
 - 2026-08-15T17:51:54.787Z — Cancelled all ADAUSDT pending orders without closing positions and verified the running tandem rebuilt child grid orders after the test.
 - 2026-08-15T18:07:51.588Z — Corrected tandem rebalance tolerance to measure 3% relative to each configured side weight, adjusted both grid multipliers toward target weights, and verified type-check, production build, and live service logs.
+- 2026-08-15T18:43:09.781Z — 2026-08-15 — Resumed tandem balancing verification after server restart; source already contained weight-relative correction, TypeScript check and production build passed, and the running service returned HTTP 200 with live tandem/grid cycles.

@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
-import { getBitunixClient } from "./bitunix";
+import { getBitunixClient, resetBitunixClient } from "./bitunix";
+import { resetBitrueClient } from "./bitrue";
 import {
   managerChat,
   managerChatWithTools,
@@ -223,6 +224,24 @@ export async function registerRoutes(
   });
 
   // === API Connection Status ===
+  app.post("/api/exchange-keys/:exchange", (req, res) => {
+    const exchange = req.params.exchange.toLowerCase();
+    if (exchange !== "bitunix" && exchange !== "bitrue") return res.status(400).json({ message: "Unknown exchange" });
+    const key = String(req.body?.apiKey || "").trim();
+    const secret = String(req.body?.secretKey || "").trim();
+    if (!key || !secret) return res.status(400).json({ message: "API key and secret key are required" });
+    if (exchange === "bitunix") {
+      process.env.BITUNIX_API_KEY = key;
+      process.env.BITUNIX_SECRET_KEY = secret;
+      resetBitunixClient();
+    } else {
+      process.env.BITRUE_API_KEY = key;
+      process.env.BITRUE_SECRET_KEY = secret;
+      resetBitrueClient();
+    }
+    res.json({ ok: true, exchange });
+  });
+
   app.get("/api/connection", async (req, res) => {
     const client = getBitunixClient();
     if (!client) {

@@ -3,7 +3,7 @@
     {
       "position": "manager",
       "provider": "opencode",
-      "baseUrl": "https://opencode.ai/zen/v1",
+      "baseUrl": "https://routellm.abacus.ai/v1",
       "model": "gpt-5.6-luna",
       "apiKey": null
     },
@@ -36,5 +36,5 @@
       "apiKey": null
     }
   ],
-  "updatedAt": "2026-08-15T00:23:28.506Z"
+  "updatedAt": "2026-08-15T00:59:58.728Z"
 }

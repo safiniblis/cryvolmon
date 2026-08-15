@@ -1,5 +1,5 @@
 {
-  "status": "done",
-  "summary": "",
-  "startedAt": "2026-08-15T00:30:55.338Z"
+  "status": "in_progress",
+  "summary": "Redesign the Trade page into a compact organized layout, add Bitunix/Bitrue key controls, build, deploy, restart, and verify live",
+  "startedAt": "2026-08-15T01:06:45.287Z"
 }

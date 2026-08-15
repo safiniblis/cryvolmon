@@ -33,13 +33,14 @@ import {
   useGoldLongStart,
   usePairInfo,
   useEmergencyStop,
+  useSaveExchangeKeys,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Wifi, WifiOff,
   DollarSign, Activity,
   AlertTriangle, ArrowRight, Zap,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, TrendingUp, ArrowDownToLine,
-  RefreshCw, ArrowUpDown, OctagonX, Users,
+  RefreshCw, ArrowUpDown, OctagonX, Users, KeyRound, X,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -102,7 +103,7 @@ function ConnectionBanner() {
   );
 }
 
-function BitunixAccountPanel() {
+function BitunixAccountPanel({ onAddKeys }: { onAddKeys: () => void }) {
   const { data, isLoading } = useAccount();
 
   return (
@@ -146,7 +147,7 @@ function BitunixAccountPanel() {
   );
 }
 
-function BitrueAccountPanel() {
+function BitrueAccountPanel({ onAddKeys }: { onAddKeys: () => void }) {
   const { data, isLoading } = useBitrueAccount();
 
   return (

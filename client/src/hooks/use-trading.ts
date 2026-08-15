@@ -69,6 +69,18 @@ export function useQuickStart() {
   });
 }
 
+export function useSaveExchangeKeys() {
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ exchange, apiKey, secretKey }: { exchange: "bitunix" | "bitrue"; apiKey: string; secretKey: string }) => {
+      const res = await apiRequest("POST", `/api/exchange-keys/${exchange}`, { apiKey, secretKey });
+      return res.json();
+    },
+    onSuccess: (_data, variables) => toast({ title: `${variables.exchange === "bitrue" ? "Bitrue" : "Bitunix"} keys added`, description: "Keys are active for this server session." }),
+    onError: (e: Error) => toast({ title: "Could not add keys", description: e.message, variant: "destructive" }),
+  });
+}
+
 export function useConnectionStatus() {
   return useQuery<{ connected: boolean; message: string }>({
     queryKey: ["/api/connection"],

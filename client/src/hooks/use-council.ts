@@ -134,6 +134,46 @@ export function useCouncilArchive() {
   });
 }
 
+export function useWorkerStatus() {
+  return useQuery<{
+    updatedAt: string;
+    counts: Record<string, number>;
+    foreman: { provider: string; model: string } | null;
+    worker: { provider: string; model: string } | null;
+    runningTask: { id: string; title: string } | null;
+    recent: Array<{
+      id: string;
+      title: string;
+      type: string;
+      status: string;
+      phase: string;
+      retries: number;
+      createdAt: string;
+      finishedAt: string | null;
+      assigned: { provider: string; model: string } | null;
+      foreman: { provider: string; model: string } | null;
+      verified: { by: string; accept: boolean; note: string } | null;
+      needsManagerReview: boolean | null;
+      resultPath: string | null;
+      error: string | null;
+    }>;
+  }>({
+    queryKey: ["/api/worker/status"],
+    refetchInterval: 30000,
+  });
+}
+
+export function useWorkerResult(id: string, enabled: boolean) {
+  return useQuery<{ content: string }>({
+    queryKey: [`/api/worker/tasks/${id}/result`],
+    enabled,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/worker/tasks/${id}/result`);
+      return { content: await res.text() };
+    },
+  });
+}
+
 export function useBindAgents() {
   const queryClient = useQueryClient();
   return useMutation({

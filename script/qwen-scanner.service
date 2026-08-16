@@ -1,0 +1,18 @@
+[Unit]
+Description=Cryvolmon Qwen code auditor (always-on, low priority)
+After=network-online.target cryvolmon.service ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/cryvolmon
+EnvironmentFile=/etc/cryvolmon.env
+ExecStart=/usr/bin/node /opt/cryvolmon/script/qwen-scanner.mjs
+Restart=always
+RestartSec=15
+StandardOutput=append:/var/log/cryvolmon/qwen.log
+StandardError=append:/var/log/cryvolmon/qwen.log
+
+[Install]
+WantedBy=multi-user.target

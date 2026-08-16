@@ -1,0 +1,17 @@
+{
+  "files": {
+    "server/routes.ts": {
+      "hash": "f5fabbbdc15e41716a5e64096f343d5703aedb27",
+      "scannedAt": "2026-08-15T23:42:51.715Z"
+    },
+    "server/agent-providers.ts": {
+      "hash": "430cf9368d06f93b8766f14ade319411520da592",
+      "scannedAt": "2026-08-15T23:08:53.668Z"
+    },
+    "client/src/pages/trading.tsx": {
+      "hash": "edd22cbe6a6346653227463794f4b3fc71cf7021",
+      "scannedAt": "2026-08-15T23:56:49.032Z"
+    }
+  },
+  "recent": []
+}

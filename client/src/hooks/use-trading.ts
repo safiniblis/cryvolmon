@@ -76,6 +76,37 @@ export function useConnectionStatus() {
   });
 }
 
+export function useExchangeKeysStatus() {
+  return useQuery<{
+    bitunix: { configured: boolean; source: "file" | "env" | "none"; updatedAt: string | null };
+    bitrue:  { configured: boolean; source: "file" | "env" | "none"; updatedAt: string | null };
+  }>({
+    queryKey: ["/api/keys"],
+    refetchInterval: 30000,
+  });
+}
+
+export function useSaveExchangeKeys() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { exchange: "bitunix" | "bitrue"; apiKey: string; secretKey: string }) => {
+      const res = await apiRequest("POST", "/api/keys", data);
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      toast({ title: "Keys saved", description: `${vars.exchange} keys verified and stored.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/keys"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connection"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bitrue-account"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Keys not saved", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useAccount() {
   return useQuery<{
     balances: any[];

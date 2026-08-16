@@ -23,6 +23,7 @@
  */
 
 import crypto from "crypto";
+import { resolveExchangeKey } from "./exchange-keys";
 
 const FUTURES_BASE = "https://fapi.bitrue.com";
 
@@ -275,10 +276,9 @@ let clientInstance: BitrueClient | null = null;
 
 export function getBitrueClient(): BitrueClient | null {
   if (clientInstance) return clientInstance;
-  const apiKey    = process.env.BITRUE_API_KEY;
-  const secretKey = process.env.BITRUE_SECRET_KEY;
-  if (!apiKey || !secretKey) return null;
-  clientInstance = new BitrueClient(apiKey, secretKey);
+  const keys = resolveExchangeKey("bitrue");
+  if (!keys.apiKey || !keys.secretKey) return null;
+  clientInstance = new BitrueClient(keys.apiKey, keys.secretKey);
   return clientInstance;
 }
 

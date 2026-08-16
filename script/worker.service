@@ -1,0 +1,16 @@
+[Unit]
+Description=Cryvolmon Background Task Worker (foreman + worker)
+After=network-online.target cryvolmon.service ollama.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/cryvolmon
+EnvironmentFile=/etc/cryvolmon.env
+ExecStart=/usr/bin/node /opt/cryvolmon/script/worker.mjs
+StandardOutput=append:/var/log/cryvolmon/worker.log
+StandardError=append:/var/log/cryvolmon/worker.log
+TimeoutStartSec=0
+Restart=on-failure
+RestartSec=30

@@ -1,0 +1,11 @@
+[Unit]
+Description=Cryvolmon Worker Poller (every 3 min)
+Requires=worker.service
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=3min
+Unit=worker.service
+
+[Install]
+WantedBy=timers.target

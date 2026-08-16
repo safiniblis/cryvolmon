@@ -6,6 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
+} from "@/components/ui/dialog";
 import { Link } from "wouter";
 import {
   useConnectionStatus,
@@ -33,13 +36,15 @@ import {
   useGoldLongStart,
   usePairInfo,
   useEmergencyStop,
+  useSaveExchangeKeys,
+  useExchangeKeysStatus,
 } from "@/hooks/use-trading";
 import {
   Bot, Play, Square, Trash2, Wifi, WifiOff,
   DollarSign, Activity,
   AlertTriangle, ArrowRight, Zap,
   BarChart3, RotateCcw, Shield, PlusCircle, MinusCircle, Loader2, TrendingUp, ArrowDownToLine,
-  RefreshCw, ArrowUpDown, OctagonX, Users,
+  RefreshCw, ArrowUpDown, OctagonX, Users, KeyRound,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -102,8 +107,73 @@ function ConnectionBanner() {
   );
 }
 
+function ExchangeKeysDialog({ exchange, label, source }: {
+  exchange: "bitunix" | "bitrue";
+  label: string;
+  source?: "file" | "env" | "none";
+}) {
+  const [open, setOpen] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const save = useSaveExchangeKeys();
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] gap-1">
+          <KeyRound className="h-3 w-3" />
+          {source === "file" ? "Update keys" : "Add keys"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{label} API Keys</DialogTitle>
+          <DialogDescription>
+            Keys are verified against {label} before saving. They are stored on this server and take effect immediately.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 pt-1">
+          <Input
+            placeholder="API Key"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <Input
+            placeholder="Secret Key"
+            type="password"
+            value={secretKey}
+            onChange={(e) => setSecretKey(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {save.isError && (
+            <p className="text-xs text-red-400">{save.error?.message}</p>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!apiKey.trim() || !secretKey.trim() || save.isPending}
+              onClick={() =>
+                save.mutate({ exchange, apiKey: apiKey.trim(), secretKey: secretKey.trim() }, {
+                  onSuccess: () => { setOpen(false); setApiKey(""); setSecretKey(""); },
+                })
+              }
+            >
+              {save.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+              {save.isPending ? "Verifying…" : "Save & verify"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function BitunixAccountPanel() {
   const { data, isLoading } = useAccount();
+  const { data: keys } = useExchangeKeysStatus();
 
   return (
     <Card className="bg-card/40 border-border/50">
@@ -111,13 +181,23 @@ function BitunixAccountPanel() {
         <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
           <span className="inline-block w-2 h-2 rounded-full bg-sky-400" />
           Bitunix · Futures
+          <span className="ml-auto">
+            <ExchangeKeysDialog exchange="bitunix" label="Bitunix" source={keys?.bitunix?.source} />
+          </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-3">
         {isLoading ? (
           <div className="h-8 animate-pulse bg-muted/30 rounded" />
         ) : !data?.connected ? (
-          <p className="text-xs text-muted-foreground">Not connected</p>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-xs text-muted-foreground">Not connected</p>
+            <p className="text-[10px] text-muted-foreground/60">
+              {keys?.bitunix?.configured
+                ? "Keys are set but Bitunix rejected the request."
+                : "Add your Bitunix API keys to get started."}
+            </p>
+          </div>
         ) : data.balances.length === 0 ? (
           <p className="text-xs text-yellow-400">No balance — transfer USDT to Bitunix futures wallet</p>
         ) : (
@@ -148,6 +228,7 @@ function BitunixAccountPanel() {
 
 function BitrueAccountPanel() {
   const { data, isLoading } = useBitrueAccount();
+  const { data: keys } = useExchangeKeysStatus();
 
   return (
     <Card className="bg-card/40 border-border/50">
@@ -155,13 +236,23 @@ function BitrueAccountPanel() {
         <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
           <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
           Bitrue · Gold Futures (E-XAUT-USDT)
+          <span className="ml-auto">
+            <ExchangeKeysDialog exchange="bitrue" label="Bitrue" source={keys?.bitrue?.source} />
+          </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-3">
         {isLoading ? (
           <div className="h-8 animate-pulse bg-muted/30 rounded" />
         ) : !data?.connected ? (
-          <p className="text-xs text-muted-foreground">Not connected{data?.error ? ` — ${data.error}` : ""}</p>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-xs text-muted-foreground">Not connected{data?.error ? ` — ${data.error}` : ""}</p>
+            {!keys?.bitrue?.configured && (
+              <p className="text-[10px] text-muted-foreground/60">
+                Add your Bitrue API keys to get started.
+              </p>
+            )}
+          </div>
         ) : (
           <div className="flex flex-wrap items-end gap-4">
             <div>

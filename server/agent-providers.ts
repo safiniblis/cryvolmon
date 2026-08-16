@@ -74,28 +74,68 @@ export interface AgentRoleDef {
   defaultModel?: string;
 }
 
+/**
+ * Curated FREE member-seat models (cost rule: paid ONLY for the manager).
+ * Any model here may hold a member seat; everything else (opencode, abacus,
+ * deepseek, random registrations) is rejected for members unless the request
+ * carries the COUNCIL_WRITE_TOKEN (header x-council-write-token). The seat
+ * watchdog picks the MOST COMPETENT healthy model from this set.
+ */
+const MEMBER_FREE_MATRIX: { provider: AgentProvider; model: string }[] = [
+  { provider: "groq", model: "openai/gpt-oss-120b" },
+  { provider: "nvidia", model: "openai/gpt-oss-120b" },
+  { provider: "ovh", model: "gpt-oss-120b" },
+  { provider: "ovh", model: "Qwen3.5-397B-A17B" },
+  { provider: "nvidia", model: "nvidia/nemotron-3-ultra-550b-a55b" },
+  { provider: "groq", model: "llama-3.3-70b-versatile" },
+  { provider: "ovh", model: "Meta-Llama-3_3-70B-Instruct" },
+  { provider: "nvidia", model: "nvidia/nemotron-3-super-120b-a12b" },
+  { provider: "groq", model: "openai/gpt-oss-20b" },
+  { provider: "nvidia", model: "openai/gpt-oss-20b" },
+  { provider: "ovh", model: "gpt-oss-20b" },
+  { provider: "ovh", model: "Qwen3-32B" },
+  { provider: "ovh", model: "Mistral-Small-3.2-24B-Instruct-2506" },
+  { provider: "openrouter", model: "google/gemma-4-26b-a4b-it:free" },
+  { provider: "openrouter", model: "nvidia/nemotron-3.5-lightning:free" },
+  { provider: "openrouter", model: "openai/gpt-oss-20b:free" },
+  { provider: "openrouter", model: "poolside/laguna-s-2.1:free" },
+  { provider: "openrouter", model: "cohere/north-mini-code:free" },
+  { provider: "openrouter", model: "liquid/lfm-2.5-2.6b:free" },
+];
+
+function memberFreePolicy(): { provider: AgentProvider; model: string }[] {
+  return MEMBER_FREE_MATRIX;
+}
+
+export const MEMBER_SEAT_POLICY: Record<Exclude<AgentPosition, "manager">, { provider: AgentProvider; model: string }[]> = {
+  critic: memberFreePolicy(),
+  architect: memberFreePolicy(),
+  auditor: memberFreePolicy(),
+  strategist: memberFreePolicy(),
+};
+
 export const AGENT_ROLES: AgentRoleDef[] = [
   {
     position: "manager",
     role: "Decision & orchestration",
     title: "Manager / Builder",
-    description: "Claude Sonnet (Abacus). Lead agent: clear decisions for a non-coder operator, coordinates council, holds write/patch approval.",
-    defaultProvider: "abacus",
-    defaultModel: "claude-sonnet-4",
+    description: "GPT-5.6 Luna (OpenCode, paid). Lead agent: clear decisions for a non-coder operator, coordinates council, holds write/patch approval. The only paid seat.",
+    defaultProvider: "opencode",
+    defaultModel: "gpt-5.6-luna",
   },
   {
     position: "critic",
     role: "Adversarial risk review",
     title: "Critic",
-    description: "GPT-class (OpenCode Luna). Adversarial risk review in plain English — money risk first.",
-    defaultProvider: "opencode",
-    defaultModel: "gpt-5.6-luna",
+    description: "GPT-OSS 120B (Groq, free). Adversarial risk review in plain English — money risk first.",
+    defaultProvider: "groq",
+    defaultModel: "openai/gpt-oss-120b",
   },
   {
     position: "architect",
     role: "Structure & parameter design",
     title: "Architect",
-    description: "GPT-OSS 120B (Groq). Structure, workflows, and parameter design when asked.",
+    description: "GPT-OSS 120B (Groq, free). Structure, workflows, and parameter design when asked.",
     defaultProvider: "groq",
     defaultModel: "openai/gpt-oss-120b",
   },
@@ -103,17 +143,17 @@ export const AGENT_ROLES: AgentRoleDef[] = [
     position: "auditor",
     role: "Health & rot scan",
     title: "Auditor",
-    description: "GPT-OSS 120B (Cerebras). Health, missing scoreboards, config drift, silent failures.",
-    defaultProvider: "cerebras",
-    defaultModel: "gpt-oss-120b",
+    description: "GPT-OSS 120B (Groq, free). Health, missing scoreboards, config drift, silent failures.",
+    defaultProvider: "groq",
+    defaultModel: "openai/gpt-oss-120b",
   },
   {
     position: "strategist",
     role: "Market read & proposals",
     title: "Strategist",
-    description: "Grok-class / Nemotron (OpenRouter). Fast market and account read in English + math.",
-    defaultProvider: "openrouter",
-    defaultModel: "x-ai/grok-4.1-fast",
+    description: "GPT-OSS 120B (Groq, free). Fast market and account read in English + math.",
+    defaultProvider: "groq",
+    defaultModel: "openai/gpt-oss-120b",
   },
 ];
 
@@ -324,7 +364,11 @@ export function getAgentSlots(): AgentSlotView[] {
   });
 }
 
-export function setAgentOverrides(positions: { position: AgentPosition; provider?: AgentProvider; baseUrl?: string; model?: string; apiKey?: string }[]): void {
+export function setAgentOverrides(
+  positions: { position: AgentPosition; provider?: AgentProvider; baseUrl?: string; model?: string; apiKey?: string }[],
+  opts?: { operator?: boolean },
+): void {
+  const operator = !!opts?.operator;
   for (const p of positions) {
     if (!AGENT_ROLES.some((r) => r.position === p.position)) continue;
     const cur = { ...(overrides.get(p.position) ?? {}) };
@@ -338,6 +382,18 @@ export function setAgentOverrides(positions: { position: AgentPosition; provider
     if (p.model) cur.model = p.model;
     // Do NOT silently rewrite manager model. Operator choice is final.
     if (p.apiKey !== undefined) cur.apiKey = p.apiKey === "" ? null : p.apiKey;
+
+    // Non-operator writers may only move member seats within the approved policy
+    // (manager is exempt — it is the operator's own paid seat).
+    if (!operator && p.position !== "manager") {
+      const allowed = (MEMBER_SEAT_POLICY[p.position] || []).some(
+        (a) => a.provider === cur.provider && a.model === cur.model,
+      );
+      if (!allowed) {
+        console.warn(`[SeatPolicy] Blocked non-operator change of ${p.position} -> ${cur.provider}/${cur.model} (not in approved member matrix).`);
+        continue;
+      }
+    }
     overrides.set(p.position, cur);
   }
   persistOverrides();

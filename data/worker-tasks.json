@@ -1,0 +1,121 @@
+{
+  "updatedAt": "2026-08-15T22:55:10.441Z",
+  "tasks": [
+    {
+      "id": "wt-msuwzxam-iqnbz",
+      "title": "Nightly summary 2026-08-15",
+      "type": "daily-summary",
+      "prompt": "Nightly summary job for Cryvolmon (2026-08-15 UTC).\n\nProduce a concise operational daily summary from the material below: what ran, model health, worker tasks completed, notable events, anomalies, and recommended actions. Keep it under 600 words, plain markdown, no preamble.\n\n=== CHANGELOG (today) ===\n- 2026-08-15T00:30:52.013Z — Added the Council Work Log panel backed by /api/decisions, verified TypeScript and production build, and confirmed the live service returns the endpoint successfully after restart.\n- 2026-08-15T01:08:43.929Z — Redesigned trade page for better user experience and added button to add keys for Bitrue and Bitunix exchanges\n- 2026-08-15T08:13:01.068Z — 2026-08-15 — Completed and verified the compact trading page with simplified account panels, Bitunix/Bitrue Add Keys dialogs using the existing session key route, and live HTTP checks; production build passed and service was already running the new bundle.\n- 2026-08-15T17:48:16.628Z — Completed the resumable manager workflow and tandem order-coordination changes; TypeScript check and production build passed, and the already-running service answered live HTTP checks without another restart.\n- 2026-08-15T17:51:54.787Z — Cancelled all ADAUSDT pending orders without closing positions and verified the running tandem rebuilt child grid orders after the test.\n- 2026-08-15T18:07:51.588Z — Corrected tandem rebalance tolerance to measure 3% relative to each configured side weight, adjusted both grid multipliers toward target weights, and verified type-check, production build, and live service logs.\n- 2026-08-15T18:43:09.781Z — 2026-08-15 — Resumed tandem balancing verification after server restart; source already contained weight-relative correction, TypeScript check and production build passed, and the running service returned HTTP 200 with live tandem/grid cycles.\n- 2026-08-15T18:52:00.000Z — Fixed the autonomous manager work loop so jobs always complete: restart_service is now deferred and fires only AFTER the manager final reply, so the closing steps (log_change, git_commit, mark_job done) are no longer killed mid-restart; run_shell/run_sudo reject cryvolmon service restart/stop/start commands to close the restart-loop bypass; and a turn that ends with a final reply auto-completes the active job. Verified TypeScript check, production build, and live restart.\n- 2026-08-15T19:52:53.527Z — 2026-08-15 — Resumed the interrupted balancing review: confirmed mild 1.05 outer-open growth and 0.95 outer-close decay are implemented for tandem child grids, with missing-order rebuilds on each cycle; TypeScript check and production build passed, and a service restart was queued.\n- 2026-08-15T20:02:33.506Z — Rechecked tandem balancing deployment: strategy remains running in waiting-liquidation with exchange capital tracking active; TypeScript check and production build passed.\n- 2026-08-15T20:31:17.991Z — Investigated the compact trading interface origin: it was created by Manager commits 144e936 and 08a6309; confirmed the current key-button removal is only an uncommitted workspace edit with no recorded author or source.\n\n=== WORKER RESULTS (today) ===\nnone\n\n=== MODEL HEALTH ===\nhealthy: 8\ngroq/openai/gpt-oss-120b 227ms\nnvidia/nvidia/nemotron-3-ultra-550b-a55b 488ms\ngroq/llama-3.3-70b-versatile 311ms\nnvidia/nvidia/nemotron-3-super-120b-a12b 1911ms\ngroq/openai/gpt-oss-20b 188ms\nnvidia/openai/gpt-oss-20b 634ms\novh/Qwen3-32B 385ms\novh/Mistral-Small-3.2-24B-Instruct-2506 218ms\nstale/down: nvidia/openai/gpt-oss-120b, ovh/gpt-oss-120b, ovh/Qwen3.5-397B-A17B, ovh/Meta-Llama-3_3-70B-Instruct, ovh/gpt-oss-20b",
+      "maxOutputTokens": 1200,
+      "status": "done",
+      "createdAt": "2026-08-15T21:55:24.622Z",
+      "assigned": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "reason": "fast summarization job, simple extraction, no deep reasoning needed"
+      },
+      "resultPath": "/opt/cryvolmon/data/worker-results/wt-msuwzxam-iqnbz.md",
+      "error": null,
+      "startedAt": "2026-08-15T21:55:34.029Z",
+      "finishedAt": "2026-08-15T21:55:36.124Z",
+      "ms": 1130
+    },
+    {
+      "id": "wt-msux2k7c-m9tju",
+      "title": "Nightly summary 2026-08-15",
+      "type": "daily-summary",
+      "prompt": "Nightly summary job for Cryvolmon (2026-08-15 UTC).\n\nProduce a concise operational daily summary from the material below: what ran, model health, worker tasks completed, notable events, anomalies, and recommended actions. Keep it under 600 words, plain markdown, no preamble.\n\n=== CHANGELOG (today) ===\n- 2026-08-15T00:30:52.013Z — Added the Council Work Log panel backed by /api/decisions, verified TypeScript and production build, and confirmed the live service returns the endpoint successfully after restart.\n- 2026-08-15T01:08:43.929Z — Redesigned trade page for better user experience and added button to add keys for Bitrue and Bitunix exchanges\n- 2026-08-15T08:13:01.068Z — 2026-08-15 — Completed and verified the compact trading page with simplified account panels, Bitunix/Bitrue Add Keys dialogs using the existing session key route, and live HTTP checks; production build passed and service was already running the new bundle.\n- 2026-08-15T17:48:16.628Z — Completed the resumable manager workflow and tandem order-coordination changes; TypeScript check and production build passed, and the already-running service answered live HTTP checks without another restart.\n- 2026-08-15T17:51:54.787Z — Cancelled all ADAUSDT pending orders without closing positions and verified the running tandem rebuilt child grid orders after the test.\n- 2026-08-15T18:07:51.588Z — Corrected tandem rebalance tolerance to measure 3% relative to each configured side weight, adjusted both grid multipliers toward target weights, and verified type-check, production build, and live service logs.\n- 2026-08-15T18:43:09.781Z — 2026-08-15 — Resumed tandem balancing verification after server restart; source already contained weight-relative correction, TypeScript check and production build passed, and the running service returned HTTP 200 with live tandem/grid cycles.\n- 2026-08-15T18:52:00.000Z — Fixed the autonomous manager work loop so jobs always complete: restart_service is now deferred and fires only AFTER the manager final reply, so the closing steps (log_change, git_commit, mark_job done) are no longer killed mid-restart; run_shell/run_sudo reject cryvolmon service restart/stop/start commands to close the restart-loop bypass; and a turn that ends with a final reply auto-completes the active job. Verified TypeScript check, production build, and live restart.\n- 2026-08-15T19:52:53.527Z — 2026-08-15 — Resumed the interrupted balancing review: confirmed mild 1.05 outer-open growth and 0.95 outer-close decay are implemented for tandem child grids, with missing-order rebuilds on each cycle; TypeScript check and production build passed, and a service restart was queued.\n- 2026-08-15T20:02:33.506Z — Rechecked tandem balancing deployment: strategy remains running in waiting-liquidation with exchange capital tracking active; TypeScript check and production build passed.\n- 2026-08-15T20:31:17.991Z — Investigated the compact trading interface origin: it was created by Manager commits 144e936 and 08a6309; confirmed the current key-button removal is only an uncommitted workspace edit with no recorded author or source.\n- 2026-08-15T21:55:36.124Z — Worker wt-msuwzxam-iqnbz \"Nightly summary 2026-08-15\" done via groq/openai/gpt-oss-20b (fast summarization job, simple extraction, no deep reasoning needed) in 1s.\n\n=== WORKER RESULTS (today) ===\n### wt-msuwzxam-iqnbz.md# Nightly summary 2026-08-15\n\n- task: wt-msuwzxam-iqnbz\n- assigned: groq/openai/gpt-oss-20b\n- foreman reason: fast summarization job, simple extraction, no deep reasoning needed\n- ran: 1.1s\n- done: 2026-08-15T21:55:36.123Z\n\n---\n\n# Nightly Summary – 2026‑08‑15 UTC\n\n## System Activity\n- **Service restarts**: 3 (00:30, 17:48, 18:52). All restarts succeeded without downtime; HTTP 200 responses confirmed.\n- **Feature deployments**:\n  - Council Work Log panel (00:30) – API `/api/decisions` verified.\n  - Trade page redesign (01:08) – added Bitrue/Bitunix key buttons.\n  - Compact trading page (08:13) – simplified account panels, live HTTP checks passed.\n  - Resumable manager workflow & tandem order‑coordination (17:48) – no restart needed.\n  - Tandem rebalance tolerance fix (18:07) – 3 % relative to side weight; verified.\n  - Autonomous manager loop fix (18:52) – ensured job completion before restart; `run_shell/run_sudo` now blocks restart commands.\n  - Balancing review resume (19:52) – outer‑open 1.05, outer‑close 0.95, missing‑order rebuilds; restart queued.\n  - Balancing deployment re‑check (20:02) – strategy still in waiting‑liquidation with capital tracking.\n  - Compact trading interface origin investigation (20:31) – confirmed uncommitted workspace edit.\n\n## Worker Results\n- No worker jobs executed today. All scheduled tasks were either idle or completed in previous cycles.\n\n## Model Health\n| Model | Status | Latency |\n|-------|--------|---------|\n| groq/openai/gpt-oss-120b | healthy | 227 ms |\n| nvidia/nvidia/nemotron-3-ultra-550b-a55b | healthy | 488 ms |\n| groq/llama-3.3-70b-versatile | healthy | 311 ms |\n| nvidia/nvidia/nemotron-3-super-120b-a12b | healthy | 1911 ms |\n| groq/openai/gpt-oss-20b | healthy | 188 ms |\n| nvidia/openai/gpt-oss-20b | healthy | 634 ms |\n| ovh/Qwen3-32B | healthy | 385 ms |\n| ovh/Mistral-Small-3.2-24B-Instruct-2506 | healthy | 218 ms |\n| **Stale** | nvidia/openai/gpt-oss-120b, ovh/gpt-\n\n=== MODEL HEALTH ===\nhealthy: 7\ngroq/openai/gpt-oss-120b 320ms\ngroq/llama-3.3-70b-versatile 244ms\nnvidia/nvidia/nemotron-3-super-120b-a12b 542ms\ngroq/openai/gpt-oss-20b 166ms\nnvidia/openai/gpt-oss-20b 309ms\novh/Qwen3-32B 372ms\novh/Mistral-Small-3.2-24B-Instruct-2506 235ms\nstale/down: nvidia/openai/gpt-oss-120b, ovh/gpt-oss-120b, ovh/Qwen3.5-397B-A17B, nvidia/nvidia/nemotron-3-ultra-550b-a55b, ovh/Meta-Llama-3_3-70B-Instruct, ovh/gpt-oss-20b",
+      "maxOutputTokens": 1200,
+      "status": "done",
+      "createdAt": "2026-08-15T21:57:27.624Z",
+      "assigned": {
+        "provider": "groq",
+        "model": "llama-3.3-70b-versatile",
+        "reason": "fast summarization, simple extraction, no deep reasoning needed"
+      },
+      "resultPath": "/opt/cryvolmon/data/worker-results/wt-msux2k7c-m9tju.md",
+      "error": null,
+      "startedAt": "2026-08-15T22:12:17.233Z",
+      "finishedAt": "2026-08-15T22:12:20.583Z",
+      "retries": 1,
+      "recovery": {
+        "at": "2026-08-15T22:12:17.117Z",
+        "reason": "qwen (fallback): no JSON:"
+      },
+      "ms": 1903
+    },
+    {
+      "id": "wt-msuy9zeh-yjimi",
+      "title": "Ollama on this VM",
+      "type": "summary",
+      "prompt": "Write a concise operational tip titled exactly \"Ollama on this VM\" with exactly 4 numbered lines (one line per point), for a non-coder operator. Cover these four facts: (1) Ollama runs as a systemd service; (2) qwen3:4b needs a large num_predict value to produce non-empty output; (3) the scanner and worker share the Ollama service, so expect serialization rather than parallel processing; (4) connection keep-alive can cause fetch failures. Output only the title and the four numbered lines, with no introduction or conclusion.",
+      "maxOutputTokens": 300,
+      "priority": 5,
+      "review": "manager",
+      "status": "done",
+      "createdAt": "2026-08-15T22:31:13.529Z",
+      "assigned": {
+        "provider": "groq",
+        "model": "llama-3.3-70b-versatile",
+        "reason": "fast short reply suitable for concise summary"
+      },
+      "resultPath": "/opt/cryvolmon/data/worker-results/wt-msuy9zeh-yjimi.md",
+      "error": null,
+      "startedAt": "2026-08-15T22:55:07.886Z",
+      "verified": {
+        "at": "2026-08-15T22:55:10.441Z",
+        "by": "groq/openai/gpt-oss-120b",
+        "accept": true,
+        "note": "short"
+      },
+      "needsManagerReview": true,
+      "finishedAt": "2026-08-15T22:55:10.441Z",
+      "ms": 540,
+      "retries": 1,
+      "attempts": [
+        {
+          "at": "2026-08-15T22:35:59.515Z",
+          "provider": "groq",
+          "model": "openai/gpt-oss-120b",
+          "error": "nightly review rework: Contains extra markdown header and metadata; should be only title line and four numbered points, no other text."
+        }
+      ]
+    },
+    {
+      "id": "wt-msuyg49k-t7w1x",
+      "title": "Nightly summary 2026-08-15",
+      "type": "daily-summary",
+      "prompt": "Nightly summary job for Cryvolmon (2026-08-15 UTC).\n\nProduce a concise operational daily summary from the material below: what ran, model health, worker tasks completed, notable events, anomalies, and recommended actions. Keep it under 600 words, plain markdown, no preamble.\n\n=== CHANGELOG (today) ===\n- 2026-08-15T00:30:52.013Z — Added the Council Work Log panel backed by /api/decisions, verified TypeScript and production build, and confirmed the live service returns the endpoint successfully after restart.\n- 2026-08-15T01:08:43.929Z — Redesigned trade page for better user experience and added button to add keys for Bitrue and Bitunix exchanges\n- 2026-08-15T08:13:01.068Z — 2026-08-15 — Completed and verified the compact trading page with simplified account panels, Bitunix/Bitrue Add Keys dialogs using the existing session key route, and live HTTP checks; production build passed and service was already running the new bundle.\n- 2026-08-15T17:48:16.628Z — Completed the resumable manager workflow and tandem order-coordination changes; TypeScript check and production build passed, and the already-running service answered live HTTP checks without another restart.\n- 2026-08-15T17:51:54.787Z — Cancelled all ADAUSDT pending orders without closing positions and verified the running tandem rebuilt child grid orders after the test.\n- 2026-08-15T18:07:51.588Z — Corrected tandem rebalance tolerance to measure 3% relative to each configured side weight, adjusted both grid multipliers toward target weights, and verified type-check, production build, and live service logs.\n- 2026-08-15T18:43:09.781Z — 2026-08-15 — Resumed tandem balancing verification after server restart; source already contained weight-relative correction, TypeScript check and production build passed, and the running service returned HTTP 200 with live tandem/grid cycles.\n- 2026-08-15T18:52:00.000Z — Fixed the autonomous manager work loop so jobs always complete: restart_service is now deferred and fires only AFTER the manager final reply, so the closing steps (log_change, git_commit, mark_job done) are no longer killed mid-restart; run_shell/run_sudo reject cryvolmon service restart/stop/start commands to close the restart-loop bypass; and a turn that ends with a final reply auto-completes the active job. Verified TypeScript check, production build, and live restart.\n- 2026-08-15T19:52:53.527Z — 2026-08-15 — Resumed the interrupted balancing review: confirmed mild 1.05 outer-open growth and 0.95 outer-close decay are implemented for tandem child grids, with missing-order rebuilds on each cycle; TypeScript check and production build passed, and a service restart was queued.\n- 2026-08-15T20:02:33.506Z — Rechecked tandem balancing deployment: strategy remains running in waiting-liquidation with exchange capital tracking active; TypeScript check and production build passed.\n- 2026-08-15T20:31:17.991Z — Investigated the compact trading interface origin: it was created by Manager commits 144e936 and 08a6309; confirmed the current key-button removal is only an uncommitted workspace edit with no recorded author or source.\n- 2026-08-15T21:55:36.124Z — Worker wt-msuwzxam-iqnbz \"Nightly summary 2026-08-15\" done via groq/openai/gpt-oss-20b (fast summarization job, simple extraction, no deep reasoning needed) in 1s.\n- 2026-08-15T22:12:17.118Z — Qwen recovered wt-msux2k7c-m9tju \"Nightly summary 2026-08-15\" — qwen (fallback): no JSON: (attempt 1/2). Foreman will reassign.\n- 2026-08-15T22:12:20.584Z — Worker wt-msux2k7c-m9tju \"Nightly summary 2026-08-15\" done via groq/llama-3.3-70b-versatile (fast summarization, simple extraction, no deep reasoning needed) in 2s.\n- 2026-08-15T22:31:30.312Z — Worker wt-msuy9zeh-yjimi \"Ollama on this VM\" done via groq/llama-3.3-70b-versatile (foreman accepted) in 1s — queued for manager review.\n- 2026-08-15T22:35:59.515Z — Nightly review: worker wt-msuy9zeh-yjimi \"Ollama on this VM\" needs REWORK — re-queued: Contains extra markdown header and metadata; should be only title line and four numbered points, no other text.\n\n=== WORKER RESULTS (today) ===\n### wt-msuwzxam-iqnbz.md# Nightly summary 2026-08-15\n\n- task: wt-msuwzxam-iqnbz\n- assigned: groq/openai/gpt-oss-20b\n- foreman reason: fast summarization job, simple extraction, no deep reasoning needed\n- ran: 1.1s\n- done: 2026-08-15T21:55:36.123Z\n\n---\n\n# Nightly Summary – 2026‑08‑15 UTC\n\n## System Activity\n- **Service restarts**: 3 (00:30, 17:48, 18:52). All restarts succeeded without downtime; HTTP 200 responses confirmed.\n- **Feature deployments**:\n  - Council Work Log panel (00:30) – API `/api/decisions` verified.\n  - Trade page redesign (01:08) – added Bitrue/Bitunix key buttons.\n  - Compact trading page (08:13) – simplified account panels, live HTTP checks passed.\n  - Resumable manager workflow & tandem order‑coordination (17:48) – no restart needed.\n  - Tandem rebalance tolerance fix (18:07) – 3 % relative to side weight; verified.\n  - Autonomous manager loop fix (18:52) – ensured job completion before restart; `run_shell/run_sudo` now blocks restart commands.\n  - Balancing review resume (19:52) – outer‑open 1.05, outer‑close 0.95, missing‑order rebuilds; restart queued.\n  - Balancing deployment re‑check (20:02) – strategy still in waiting‑liquidation with capital tracking.\n  - Compact trading interface origin investigation (20:31) – confirmed uncommitted workspace edit.\n\n## Worker Results\n- No worker jobs executed today. All scheduled tasks were either idle or completed in previous cycles.\n\n## Model Health\n| Model | Status | Latency |\n|-------|--------|---------|\n| groq/openai/gpt-oss-120b | healthy | 227 ms |\n| nvidia/nvidia/nemotron-3-ultra-550b-a55b | healthy | 488 ms |\n| groq/llama-3.3-70b-versatile | healthy | 311 ms |\n| nvidia/nvidia/nemotron-3-super-120b-a12b | healthy | 1911 ms |\n| groq/openai/gpt-oss-20b | healthy | 188 ms |\n| nvidia/openai/gpt-oss-20b | healthy | 634 ms |\n| ovh/Qwen3-32B | healthy | 385 ms |\n| ovh/Mistral-Small-3.2-24B-Instruct-2506 | healthy | 218 ms |\n| **Stale** | nvidia/openai/gpt-oss-120b, ovh/gpt-### wt-msux2k7c-m9tju.md# Nightly summary 2026-08-15\n\n- task: wt-msux2k7c-m9tju\n- assigned: groq/llama-3.3-70b-versatile\n- foreman reason: fast summarization, simple extraction, no deep reasoning needed\n- ran: 1.9s\n- done: 2026-08-15T22:12:20.581Z\n\n---\n\n## Nightly Summary – 2026‑08‑15 UTC\n\n### System Activity\n- **Service restarts**: 3 (00:30, 17:48, 18:52). All restarts succeeded without downtime; HTTP 200 responses confirmed.\n- **Feature deployments**:\n  - Council Work Log panel (00:30) – API `/api/decisions` verified.\n  - Trade page redesign (01:08) – added Bitrue/Bitunix key buttons.\n  - Compact trading page (08:13) – simplified account panels, live HTTP checks passed.\n  - Resumable manager workflow & tandem order‑coordination (17:48) – no restart needed.\n  - Tandem rebalance tolerance fix (18:07) – 3 % relative to side weight; verified.\n  - Autonomous manager loop fix (18:52) – ensured job completion before restart; `run_shell/run_sudo` now blocks restart commands.\n  - Balancing review resume (19:52) – outer‑open 1.05, outer‑close 0.95, missing‑order rebuilds; restart queued.\n  - Balancing deployment re‑check (20:02) – strategy still in waiting‑liquidation with capital tracking.\n  - Compact trading interface origin investigation (20:31) – confirmed uncommitted workspace edit.\n\n### Worker Results\n- The worker task \"Nightly summary 2026-08-15\" was completed by `groq/openai/gpt-oss-20b` in 1 second.\n\n### Model Health\n- **Healthy models**: 7\n  - `groq/openai/gpt-oss-120b` (320ms)\n  - `groq/llama-3.3-70b-versatile` (244ms)\n  - `nvidia/nvidia/nemotron-3-super-120b-a12b` (542ms)\n  - `groq/openai/gpt-oss-20b` (166ms)\n  - `nvidia/openai/gpt-oss-20b` (309ms)\n  - `ovh/Qwen3-32B` (372ms)\n  - `ovh/Mistral-Small-3.2-24B-Instruct-2506` (235ms)\n- **Stale/Down models**: 5\n  - `nvidia/openai/gpt-oss-120b`\n  - `ovh/gpt-oss-120b`\n  - `ovh/Qwen3.5-397B-A17B`\n  - `nvidia/nvidia/nemotron-3-ultra-550b-a55b`\n  - `ovh/Meta-Llama-3_3-70B-Instruct`\n  - `ovh/gpt-oss-20b`\n\n### ### wt-msuy9zeh-yjimi.md# Ollama on this VM\n\n- task: wt-msuy9zeh-yjimi\n- assigned: groq/llama-3.3-70b-versatile\n- foreman reason: simple summarization, short output, fast turnaround\n- foreman acceptance: accepted — short\n- ran: 1.2s\n- done: 2026-08-15T22:31:30.311Z\n\n---\n\nOllama on this VM\n1. Ollama is managed as a systemd service, allowing for easy start, stop, and restart operations.\n2. To get meaningful output from qwen3:4b, you need to set a sufficiently large num_predict value, as the default may not be enough.\n3. The scanner and worker components share the same Ollama service, resulting in serialized processing rather than parallel execution.\n4. Enabling connection keep-alive can sometimes cause fetch failures, so it's essential to monitor and adjust this setting as needed.\n\n=== MODEL HEALTH ===\nhealthy: 9\ngroq/openai/gpt-oss-120b 211ms\nnvidia/nvidia/nemotron-3-ultra-550b-a55b 419ms\ngroq/llama-3.3-70b-versatile 117ms\novh/Meta-Llama-3_3-70B-Instruct 257ms\nnvidia/nvidia/nemotron-3-super-120b-a12b 357ms\ngroq/openai/gpt-oss-20b 194ms\nnvidia/openai/gpt-oss-20b 290ms\novh/gpt-oss-20b 655ms\novh/Mistral-Small-3.2-24B-Instruct-2506 213ms\nstale/down: nvidia/openai/gpt-oss-120b, ovh/gpt-oss-120b, ovh/Qwen3.5-397B-A17B, ovh/Qwen3-32B",
+      "maxOutputTokens": 1200,
+      "review": "none",
+      "status": "done",
+      "createdAt": "2026-08-15T22:35:59.769Z",
+      "assigned": {
+        "provider": "opencode",
+        "model": "big-pickle",
+        "reason": "local model failed; use preferred capable model for important summarization"
+      },
+      "resultPath": "/opt/cryvolmon/data/worker-results/wt-msuyg49k-t7w1x.md",
+      "error": null,
+      "startedAt": "2026-08-15T22:52:01.757Z",
+      "attempts": [
+        {
+          "at": "2026-08-15T22:52:01.604Z",
+          "provider": "local",
+          "model": "qwen3:4b",
+          "error": "run error: fetch failed"
+        }
+      ],
+      "retries": 1,
+      "finishedAt": "2026-08-15T22:52:16.268Z",
+      "verified": {
+        "at": "2026-08-15T22:52:16.268Z",
+        "by": "groq/openai/gpt-oss-120b",
+        "accept": true,
+        "note": "verification unavailable (verifier reply was not JSON: )"
+      },
+      "needsManagerReview": false,
+      "ms": 12325
+    }
+  ]
+}

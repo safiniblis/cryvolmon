@@ -1,0 +1,11 @@
+[Unit]
+Description=Cryvolmon nightly roll: batch manager reviews + daily summary enqueue
+After=network-online.target cryvolmon.service worker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/cryvolmon.env
+WorkingDirectory=/opt/cryvolmon
+ExecStart=/bin/bash /opt/cryvolmon/script/nightly-roll.sh

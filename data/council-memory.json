@@ -35,7 +35,7 @@
     },
     {
       "at": "2026-08-15T20:10:54.418872Z",
-      "text": "Seat probes (GET /api/council/probe, 30s guard; boot probe +30s) use max_tokens=256 because gpt-oss-120b is a reasoning model and returns empty content when output budget is small. A probe failure is a config/credential warning, not proof of outage — check provider status before rewiring."
+      "text": "Seat probes (GET /api/council/probe, 30s guard; boot probe +30s) use max_tokens=256 because gpt-oss-120b is a reasoning model and returns empty content when output budget is small. A probe failure is a config/credential warning, not proof of outage \u2014 check provider status before rewiring."
     },
     {
       "at": "2026-08-15T20:24:13.434Z",
@@ -48,6 +48,10 @@
     {
       "at": "2026-08-15T20:31:16.439Z",
       "text": "Investigation corrected: compact trading interface was Manager-authored commits 144e936 (01:08) and 08a6309 (08:13); committed 08a6309 still contains Add Keys UI. The later uncommitted removal has no attributable commit or prompt in git his"
+    },
+    {
+      "at": "2026-08-15T21:04:42.129475Z",
+      "text": "SEAT CONFIG IS OPERATOR-LOCKED (policy enforced server-side since this deploy). Member seats (critic/architect/auditor/strategist) may ONLY be set to the approved free matrix: groq openai/gpt-oss-120b (or nvidia openai/gpt-oss-120b). Writes to members from a non-operator caller are rejected with a [SeatPolicy] log line. The manager should NOT attempt to rewire seats; if a seat looks wrong, report it and let the operator change it via the dashboard or the x-council-write-token header. The only paid seat is manager = opencode gpt-5.6-luna."
     }
   ]
 }

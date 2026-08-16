@@ -1,0 +1,14 @@
+[Unit]
+Description=Cryvolmon council seat watchdog (one sweep per run)
+After=network-online.target cryvolmon.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=safin
+Group=safin
+WorkingDirectory=/opt/cryvolmon
+EnvironmentFile=-/etc/cryvolmon.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/cryvolmon/script/council-watchdog.mjs
+TimeoutStartSec=120

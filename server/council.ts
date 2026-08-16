@@ -106,7 +106,14 @@ Rules:
 - Never recommend increasing user-locked risk (leverage, capital, ticker).
 - Only discuss managed strategy parameters when the user asked about tuning or trading behavior.
 - Treat an explicit user command as authorization for that scope, but only execute through a real available tool/endpoint. If none exists, say so plainly.
-- Never claim Critic/Architect/Auditor/Strategist were consulted unless their reports are in context. In Manager-only mode, say Council mode is needed for full debate.`;
+- Never claim Critic/Architect/Auditor/Strategist were consulted unless their reports are in context. In Manager-only mode, say Council mode is needed for full debate.
+
+WORKER QUEUE:
+- When the operator hands you open-ended or background work that does NOT require your interactive tools — reports, summaries, research, analysis, extraction, monitoring notes, drafting — convert it into an ACTIONABLE PLAN/ORDER and enqueue it with queue_worker_task. Write a fully self-contained prompt (the worker model has NO file access: include every fact, number, file excerpt, and output format it needs). Choose a fitting type and set maxOutputTokens to match the deliverable.
+- The foreman (a reasoning model) reads the plan, assigns it to the best worker model — local qwen for summarization/extraction, gpt-oss-class for reasoning/code — and fast-checks the finished result. Tell the operator the task was queued (with its id) and that results land in data/worker-results.
+- When PENDING WORKER REVIEWS appear in your context, the foreman already accepted them; the nightly roll (21:30 UTC) batches and clears them automatically with the free review stack, so you do NOT have to chase them. Call evaluate_worker_task anyway only when the operator explicitly asks for a live/immediate review of a specific task. For routine work the nightly batch is enough.
+- Break big asks into SEVERAL focused tasks rather than one bloated prompt.
+- Interactive code changes, deploys, and risk edits stay in your direct tools — do not queue those.`;
 
 const CRITIC_SYSTEM = `You are the CRITIC on the cryvolmon council. Find what is wrong or risky — not to be nice, and not to monologue about the trading engine by default.
 
@@ -215,6 +222,7 @@ const UNCERTAINTY_POLICY = `UNCERTAINTY POLICY:
 - For execution paths, uncertainty means skip/retry safely and record a waiting or blocked decision; never invent a fill, position, PnL, or price.`;
 
 const execFileAsync = promisify(execFile);
+const MAX_TASK_RETRIES = Number(process.env.WORKER_MAX_TASK_RETRIES || 2);
 const MANAGER_TOOLS = [
   { type: "function" as const, function: { name: "read_file", description: "Read a non-sensitive project file before proposing or applying a change.", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } },
   { type: "function" as const, function: { name: "apply_patch", description: "Replace one exact old text block with new text in a project file. You have full local write permissions on this system — apply the edit directly.", parameters: { type: "object", properties: { path: { type: "string" }, oldText: { type: "string" }, newText: { type: "string" } }, required: ["path", "oldText", "newText"] } } },
@@ -229,6 +237,8 @@ const MANAGER_TOOLS = [
   { type: "function" as const, function: { name: "log_change", description: "Append a plain-English change-log entry to data/changelog.md describing what was just changed and verified. The operator reads this file to see actual work. One concise line.", parameters: { type: "object", properties: { entry: { type: "string" } }, required: ["entry"] } } },
   { type: "function" as const, function: { name: "mark_job", description: "Record or clear your current active job so it can be resumed after a server restart. Call with status=\"in_progress\" and a short summary when you START a multi-step job, and status=\"done\" when you finish it. The server reads this on startup to wake you up to continue unfinished work.", parameters: { type: "object", properties: { status: { type: "string", enum: ["in_progress", "done"] }, summary: { type: "string" } }, required: ["status"] } } },
   { type: "function" as const, function: { name: "remember", description: "Save a short plain-English note to the council's persistent memory (data/council-memory.json) about something just learned or decided that future sessions should NOT have to re-derive: what was done, why, and any gotcha. One concise line. Injected into every later query, so it is read repeatedly — keep it small.", parameters: { type: "object", properties: { note: { type: "string" } }, required: ["note"] } } },
+  { type: "function" as const, function: { name: "queue_worker_task", description: "Turn an open-ended request into an actionable PLAN/ORDER and enqueue it for the background worker system. The foreman (a reasoning model) will read it and assign it to the best worker model (local qwen for summarization/extraction/classification, gpt-oss-class for reasoning/code). Use for background work like reports, summaries, research, analysis, and extraction. The worker has NO file access — the prompt MUST be fully self-contained (include all facts, numbers, and the exact output format).", parameters: { type: "object", properties: { title: { type: "string", description: "Short task title" }, type: { type: "string", enum: ["report", "summary", "analysis", "research", "review", "extract", "draft", "generic"] }, prompt: { type: "string", description: "Fully self-contained worker instructions" }, maxOutputTokens: { type: "number", description: "Upper bound on the worker's output tokens (default 2048; use ~1200 for concise reports, more for long drafts)" }, priority: { type: "number", description: "0-10; lower runs first (default 5)" }, review: { type: "string", enum: ["manager", "none"], description: "manager (default) = you give the final evaluation when it completes; none = the free foreman acceptance is final (use for routine work)" } }, required: ["title", "prompt"] } } },
+  { type: "function" as const, function: { name: "evaluate_worker_task", description: "Give the FINAL evaluation of a completed background worker task that the foreman already accepted. Pending tasks appear under PENDING WORKER REVIEWS in your context (each lists its id). Verdict \"accepted\" closes it; verdict \"rework\" sends it back through the foreman/worker with your feedback.", parameters: { type: "object", properties: { id: { type: "string", description: "The worker task id (the [id] shown in PENDING WORKER REVIEWS)" }, verdict: { type: "string", enum: ["accepted", "rework"] }, note: { type: "string", description: "One short sentence: why you accepted it, or exactly what must change for rework" } }, required: ["id", "verdict", "note"] } } },
 ];
 
 interface ActiveJobState {
@@ -445,6 +455,81 @@ async function executeManagerTool(name: string, args: Record<string, unknown>, a
     appendMemoryEntry(note);
     return "MEMORY_SAVED: data/council-memory.json (will be injected into future queries)";
   }
+  if (name === "queue_worker_task") {
+    const title = String(args.title || "").trim().slice(0, 200);
+    const type = String(args.type || "generic").slice(0, 50);
+    const prompt = String(args.prompt || "").trim();
+    if (!title || !prompt) return "QUEUE_REJECTED: title and prompt are required. The worker has NO file access — the prompt must be fully self-contained.";
+    const queuePath = join(process.cwd(), "data", "worker-tasks.json");
+    const tasks = (() => {
+      try {
+        const raw = JSON.parse(readFileSync(queuePath, "utf8")) as { tasks?: unknown[] };
+        return Array.isArray(raw?.tasks) ? raw.tasks : [];
+      } catch {
+        return [];
+      }
+    })();
+    const task = {
+      id: `wt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      title: title || type,
+      type,
+      prompt,
+      maxOutputTokens: Number(args.maxOutputTokens) > 0 ? Number(args.maxOutputTokens) : undefined,
+      priority: Number(args.priority) >= 0 ? Number(args.priority) : undefined,
+      review: args.review === "none" ? "none" : "manager",
+      status: "queued",
+      createdAt: new Date().toISOString(),
+      assigned: null,
+      resultPath: null,
+      error: null,
+    };
+    tasks.push(task);
+    writeFileSync(queuePath, JSON.stringify({ updatedAt: new Date().toISOString(), tasks }, null, 2), { mode: 0o600 });
+    return `QUEUED_WORKER_TASK ${task.id}: "${title}" (type ${type}, priority ${task.priority ?? 5}). The worker timer picks it up within minutes; the foreman assigns the best model. Result will land in data/worker-results/${task.id}.md.`;
+  }
+  if (name === "evaluate_worker_task") {
+    const id = String(args.id || "").trim();
+    const verdict = String(args.verdict || "");
+    const note = String(args.note || "").trim().slice(0, 300);
+    if (!id || !["accepted", "rework"].includes(verdict)) return "EVALUATE_REJECTED: id and verdict (accepted|rework) are required.";
+    const queuePath = join(process.cwd(), "data", "worker-tasks.json");
+    let tasks: any[] = [];
+    try {
+      const raw = JSON.parse(readFileSync(queuePath, "utf8")) as { tasks?: any[] };
+      tasks = Array.isArray(raw?.tasks) ? raw.tasks : [];
+    } catch {
+      return `EVALUATE_ERROR: could not read ${queuePath}`;
+    }
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return `EVALUATE_ERROR: no worker task with id ${id}.`;
+    task.managerReview = { at: new Date().toISOString(), verdict, note };
+    task.needsManagerReview = false;
+    let logLine = `Manager ${verdict} worker task ${id} "${task.title || task.type}" (${note})`;
+    if (verdict === "rework") {
+      if ((task.retries || 0) < MAX_TASK_RETRIES) {
+        task.attempts = [...(task.attempts || []), { at: new Date().toISOString(), provider: "manager", error: `manager rework: ${note}` }];
+        task.feedback = [...(task.feedback || []), note];
+        task.retries = (task.retries || 0) + 1;
+        task.status = "queued";
+        task.startedAt = null;
+        task.finishedAt = null;
+        task.assigned = null;
+        task.resultPath = null;
+        task.verified = null;
+        task.error = null;
+        logLine += ` — sent back through foreman/worker for rework with actionable feedback (attempt ${task.retries}/${MAX_TASK_RETRIES}).`;
+      } else {
+        logLine += ` — rework requested but retry budget exhausted; keeping result for operator review.`;
+      }
+    }
+    writeFileSync(queuePath, JSON.stringify({ updatedAt: new Date().toISOString(), tasks }, null, 2), { mode: 0o600 });
+    try {
+      const changelog = join(process.cwd(), "data", "changelog.md");
+      const existing = readFileSync(changelog, "utf8");
+      writeFileSync(changelog, `${existing.trimEnd()}\n- ${new Date().toISOString()} — ${logLine}\n`, "utf8");
+    } catch {}
+    return `EVALUATED_WORKER_TASK ${id}: ${logLine}`;
+  }
   return `UNKNOWN_TOOL: ${name}`;
 }
 
@@ -604,6 +689,23 @@ async function buildAppContext(): Promise<string> {
           lines.push(`  [${entry.position}/${entry.role}] ${entry.content.slice(0, 1200)}`);
         }
       }
+      // Completed worker tasks awaiting the manager's FINAL evaluation.
+      try {
+        const raw = JSON.parse(readFileSync(join(process.cwd(), "data", "worker-tasks.json"), "utf8")) as { tasks?: any[] };
+        const pending = (raw?.tasks || []).filter((t) => t.needsManagerReview === true && t.status === "done").slice(-8);
+        if (pending.length > 0) {
+          lines.push("- PENDING WORKER REVIEWS (foreman accepted these; your FINAL evaluation is due — call evaluate_worker_task for each):");
+          for (const t of pending) {
+            let preview = "";
+            if (t.resultPath) {
+              try {
+                preview = readFileSync(t.resultPath, "utf8").replace(/\s*\n\s*/g, " ").slice(0, 600);
+              } catch {}
+            }
+            lines.push(`  [${t.id}] "${t.title}" (type ${t.type}, ran on ${t.assigned?.provider}/${t.assigned?.model}, foreman: ${t.verified?.note || "accepted"}) ${preview.slice(0, 400)}`);
+          }
+        }
+      } catch {}
       lines.push("END SNAPSHOT");
       return `${lines.join("\n")}\n\n${workspace}\n\n${memory}`;
     } catch {

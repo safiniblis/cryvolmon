@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { resolveExchangeKey } from "./exchange-keys";
 
 const BASE_URL = "https://fapi.bitunix.com";
 
@@ -244,14 +245,13 @@ let clientInstance: BitunixClient | null = null;
 export function getBitunixClient(): BitunixClient | null {
   if (clientInstance) return clientInstance;
 
-  const apiKey = process.env.BITUNIX_API_KEY;
-  const secretKey = process.env.BITUNIX_SECRET_KEY;
+  const keys = resolveExchangeKey("bitunix");
 
-  if (!apiKey || !secretKey) {
+  if (!keys.apiKey || !keys.secretKey) {
     return null;
   }
 
-  clientInstance = new BitunixClient(apiKey, secretKey);
+  clientInstance = new BitunixClient(keys.apiKey, keys.secretKey);
   return clientInstance;
 }
 

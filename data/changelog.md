@@ -11,3 +11,16 @@
 - 2026-08-15T19:52:53.527Z — 2026-08-15 — Resumed the interrupted balancing review: confirmed mild 1.05 outer-open growth and 0.95 outer-close decay are implemented for tandem child grids, with missing-order rebuilds on each cycle; TypeScript check and production build passed, and a service restart was queued.
 - 2026-08-15T20:02:33.506Z — Rechecked tandem balancing deployment: strategy remains running in waiting-liquidation with exchange capital tracking active; TypeScript check and production build passed.
 - 2026-08-15T20:31:17.991Z — Investigated the compact trading interface origin: it was created by Manager commits 144e936 and 08a6309; confirmed the current key-button removal is only an uncommitted workspace edit with no recorded author or source.
+
+- 2026-08-15T21:55:36.124Z — Worker wt-msuwzxam-iqnbz "Nightly summary 2026-08-15" done via groq/openai/gpt-oss-20b (fast summarization job, simple extraction, no deep reasoning needed) in 1s.
+- 2026-08-15T22:12:17.118Z — Qwen recovered wt-msux2k7c-m9tju "Nightly summary 2026-08-15" — qwen (fallback): no JSON: (attempt 1/2). Foreman will reassign.
+- 2026-08-15T22:12:20.584Z — Worker wt-msux2k7c-m9tju "Nightly summary 2026-08-15" done via groq/llama-3.3-70b-versatile (fast summarization, simple extraction, no deep reasoning needed) in 2s.
+- 2026-08-15T22:31:30.312Z — Worker wt-msuy9zeh-yjimi "Ollama on this VM" done via groq/llama-3.3-70b-versatile (foreman accepted) in 1s — queued for manager review.
+- 2026-08-15T22:35:59.515Z — Nightly review: worker wt-msuy9zeh-yjimi "Ollama on this VM" needs REWORK — re-queued: Contains extra markdown header and metadata; should be only title line and four numbered points, no other text.
+- 2026-08-15T22:52:01.607Z — Worker wt-msuyg49k-t7w1x "Nightly summary 2026-08-15" failed (run error: fetch failed) — re-queued for foreman reassignment (attempt 1/2).
+- 2026-08-15T22:52:16.269Z — Worker wt-msuyg49k-t7w1x "Nightly summary 2026-08-15" done via opencode/big-pickle (foreman accepted) in 12s — queued for manager review.
+- 2026-08-15T22:55:10.442Z — Worker wt-msuy9zeh-yjimi "Ollama on this VM" done via groq/llama-3.3-70b-versatile (foreman accepted) in 1s — queued for manager review.
+- 2026-08-15T23:05:47.110Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (2x fail) -> groq/openai/gpt-oss-120b (218ms)
+- 2026-08-15T23:50:25.810Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (3x fail) -> groq/openai/gpt-oss-120b (203ms)
+- 2026-08-16T00:10:47.817Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (4x fail) -> groq/openai/gpt-oss-120b (330ms)
+- 2026-08-16T00:22:43.188Z — Modernized the council chat header with a conversation identity, clear-chat control, and preserved existing model and specialist routing; TypeScript check and production build passed.

@@ -2,6 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
+import { resolveExchangeKey, setExchangeKeys } from "./exchange-keys";
 import {
   managerChat,
   managerChatWithTools,
@@ -21,8 +22,8 @@ import { startStrategyEngine, stopStrategyEngine, runStrategyCycle, calculateOpt
 import { priceFeed } from "./ws-price-feed";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
-import { resolve, relative, isAbsolute } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { resolve, relative, isAbsolute, dirname, join } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { getFreeModels, pingModel, FREE_MODEL_REGISTRY } from "./free-models";
 import { getSlot, AGENT_POSITIONS, selectFallbackModel } from "./council";
@@ -229,10 +230,59 @@ export async function registerRoutes(
       return res.json({ connected: false, message: "API keys not configured" });
     }
     try {
-      const result = await client.getTickers("BTCUSDT");
+      // Probe the authenticated account endpoint — public tickers succeed even
+      // with a bad API key and give a false "Connected" readout.
+      const result = await client.getAccount("USDT");
+      // Bitunix returns HTTP 200 with a business error code for bad tokens.
+      if (result && typeof result.code === "number" && result.code !== 0 && result.code !== 200) {
+        return res.json({ connected: false, message: `Bitunix error: ${result.msg || `code ${result.code}`}` });
+      }
       res.json({ connected: true, message: "Connected to Bitunix" });
     } catch (e: any) {
       res.json({ connected: false, message: e.message });
+    }
+  });
+
+  // === Exchange API Keys (Add Keys) ===
+  app.get("/api/keys", async (_req, res) => {
+    const bitunix = resolveExchangeKey("bitunix");
+    const bitrue  = resolveExchangeKey("bitrue");
+    res.json({
+      bitunix: { configured: !!bitunix.apiKey, source: bitunix.source, updatedAt: bitunix.updatedAt },
+      bitrue:  { configured: !!bitrue.apiKey,  source: bitrue.source,  updatedAt: bitrue.updatedAt },
+    });
+  });
+
+  app.post("/api/keys", async (req, res) => {
+    const exchange  = String(req.body?.exchange || "").trim().toLowerCase();
+    const apiKey    = String(req.body?.apiKey || "").trim();
+    const secretKey = String(req.body?.secretKey || "").trim();
+    if (!["bitunix", "bitrue"].includes(exchange)) {
+      return res.status(400).json({ message: "exchange must be 'bitunix' or 'bitrue'" });
+    }
+    if (!apiKey || !secretKey) {
+      return res.status(400).json({ message: "apiKey and secretKey are required" });
+    }
+    try {
+      if (exchange === "bitunix") {
+        const { BitunixClient } = await import("./bitunix");
+        const probe = new BitunixClient(apiKey, secretKey);
+        const r = await probe.getAccount("USDT");
+        if (typeof r?.code === "number" && r.code !== 0 && r.code !== 200) {
+          return res.status(400).json({ message: `Bitunix rejected these keys: ${r.msg || `code ${r.code}`}` });
+        }
+        const { resetBitunixClient } = await import("./bitunix");
+        resetBitunixClient();
+      } else {
+        const { BitrueClient, resetBitrueClient } = await import("./bitrue");
+        const probe = new BitrueClient(apiKey, secretKey);
+        await probe.getAccount();
+        resetBitrueClient();
+      }
+      setExchangeKeys(exchange as "bitunix" | "bitrue", apiKey, secretKey);
+      res.json({ message: `${exchange} keys saved and verified` });
+    } catch (e: any) {
+      res.status(400).json({ message: `Key verification failed: ${e?.message || e}` });
     }
   });
 
@@ -1416,7 +1466,9 @@ export async function registerRoutes(
     });
     const parsed = schema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ message: "Invalid agent config." });
-    setAgentOverrides(parsed.data.slots as { position: AgentPosition; provider?: AgentProvider; baseUrl?: string; model?: string; apiKey?: string }[]);
+    const writeToken = process.env.COUNCIL_WRITE_TOKEN;
+    const operator = !!writeToken && req.get("x-council-write-token") === writeToken;
+    setAgentOverrides(parsed.data.slots as { position: AgentPosition; provider?: AgentProvider; baseUrl?: string; model?: string; apiKey?: string }[], { operator });
     res.json({ slots: getAgentSlots() });
   });
 
@@ -1607,6 +1659,163 @@ export async function registerRoutes(
     try {
       const result = await resetManagedParams(id);
       res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  // === Worker queue: enqueue/list background tasks for the foreman+worker ===
+  const WORKER_QUEUE_PATH = join(PROJECT_ROOT, "data", "worker-tasks.json");
+  const WORKER_RESULTS_DIR = join(PROJECT_ROOT, "data", "worker-results");
+  const readWorkerQueue = (): any[] => {
+    try {
+      if (existsSync(WORKER_QUEUE_PATH)) return JSON.parse(readFileSync(WORKER_QUEUE_PATH, "utf-8")).tasks || [];
+    } catch (e: any) {
+      console.warn(`[WorkerQueue] read failed: ${e.message}`);
+    }
+    return [];
+  };
+  const writeWorkerQueue = (tasks: any[]) => {
+    try {
+      mkdirSync(dirname(WORKER_QUEUE_PATH), { recursive: true });
+      writeFileSync(WORKER_QUEUE_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), tasks }, null, 2), { mode: 0o600 });
+    } catch (e: any) {
+      console.warn(`[WorkerQueue] write failed: ${e.message}`);
+    }
+  };
+
+  app.get("/api/worker/tasks", (_req, res) => {
+    const tasks = readWorkerQueue().map((t) => ({
+      id: t.id,
+      title: t.title ?? null,
+      type: t.type ?? null,
+      status: t.status,
+      createdAt: t.createdAt,
+      startedAt: t.startedAt ?? null,
+      finishedAt: t.finishedAt ?? null,
+      assigned: t.assigned ?? null,
+      foreman: t.foreman ?? null,
+      error: t.error ?? null,
+      resultPath: t.resultPath ?? null,
+      ms: t.ms ?? null,
+      review: t.review ?? null,
+      needsManagerReview: t.needsManagerReview ?? null,
+      verified: t.verified ?? null,
+      managerReview: t.managerReview ?? null,
+      attempts: t.attempts ?? null,
+      retries: t.retries ?? 0,
+    }));
+    res.json({ tasks });
+  });
+
+  // Derived snapshot for the Foreman & Workers panel (single cheap fetch).
+  app.get("/api/worker/status", (_req, res) => {
+    const tasks = readWorkerQueue();
+    const phase = (t: any): string =>
+      t.status === "queued"   ? (t.retries ? "rework" : "queued")
+      : t.status === "running" ? "running"
+      : t.status === "done"    ? (t.needsManagerReview ? "review" : "closed")
+      : "failed";
+    const counts: Record<string, number> = { queued: 0, rework: 0, running: 0, review: 0, closed: 0, failed: 0 };
+    for (const t of tasks) counts[phase(t)] += 1;
+    const runningTask = tasks.find((t: any) => t.status === "running") || null;
+    const lastDone = [...tasks]
+      .filter((t: any) => t.status === "done")
+      .sort((a: any, b: any) => (b.finishedAt || "").localeCompare(a.finishedAt || ""))[0] || null;
+    const foreman =
+      runningTask?.foreman?.provider && runningTask?.foreman?.model
+        ? { provider: runningTask.foreman.provider, model: runningTask.foreman.model }
+        : (lastDone?.verified?.by || "").includes("/")
+          ? (() => {
+              const [provider, model] = lastDone.verified.by.split("/");
+              return provider && model ? { provider, model } : null;
+            })()
+          : null;
+    const recent = [...tasks]
+      .sort((a: any, b: any) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+      .slice(0, 8)
+      .map((t: any) => ({
+        id: t.id,
+        title: t.title ?? t.type ?? "untitled",
+        type: t.type ?? "generic",
+        status: t.status,
+        phase: phase(t),
+        retries: t.retries ?? 0,
+        createdAt: t.createdAt,
+        finishedAt: t.finishedAt ?? null,
+        assigned: t.assigned ?? null,
+        foreman: t.foreman ?? null,
+        verified: t.verified ?? null,
+        needsManagerReview: t.needsManagerReview ?? null,
+        resultPath: t.resultPath ?? null,
+        error: t.error ?? null,
+      }));
+    res.json({
+      updatedAt: new Date().toISOString(),
+      counts,
+      foreman,
+      worker: runningTask?.assigned ?? null,
+      runningTask: runningTask ? { id: runningTask.id, title: runningTask.title ?? runningTask.type ?? "untitled" } : null,
+      recent,
+    });
+  });
+
+  app.post("/api/worker/tasks", async (req, res) => {
+    const configuredToken = process.env.COUNCIL_WRITE_TOKEN;
+    const suppliedToken = req.header("x-council-write-token") || "";
+    if (!configuredToken) {
+      return res.status(503).json({ message: "Worker enqueue is disabled. Set COUNCIL_WRITE_TOKEN first." });
+    }
+    const expected = Buffer.from(configuredToken);
+    const supplied = Buffer.from(suppliedToken);
+    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+      return res.status(403).json({ message: "Invalid Council write approval token." });
+    }
+    const parsed = z
+      .object({
+        title: z.string().min(1).max(200).optional(),
+        type: z.string().min(1).max(50).optional(),
+        prompt: z.string().min(1).max(20000),
+        maxOutputTokens: z.number().int().min(64).max(8000).optional(),
+        priority: z.number().int().min(0).max(10).optional(),
+        review: z.enum(["manager", "none"]).optional(),
+      })
+      .safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const detail = parsed.error.issues[0]?.message || "Invalid request";
+      return res.status(400).json({ message: `Invalid worker task: ${detail}` });
+    }
+    const { title, type, prompt, maxOutputTokens, priority, review } = parsed.data;
+    const tasks = readWorkerQueue();
+    const task = {
+      id: `wt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      title: title ?? type ?? "untitled",
+      type: type ?? "generic",
+      prompt,
+      maxOutputTokens,
+      priority,
+      review: review ?? "manager",
+      status: "queued",
+      createdAt: new Date().toISOString(),
+      assigned: null,
+      resultPath: null,
+      error: null,
+    };
+    tasks.push(task);
+    writeWorkerQueue(tasks);
+    res.status(201).json({ task });
+  });
+
+  app.get("/api/worker/tasks/:id/result", (req, res) => {
+    const id = req.params.id;
+    const task = readWorkerQueue().find((t) => t.id === id);
+    if (!task) return res.status(404).json({ message: "Task not found" });
+    if (!task.resultPath || !existsSync(task.resultPath)) {
+      return res.status(404).json({ message: `Task ${task.status} — no result yet` });
+    }
+    try {
+      const content = readFileSync(task.resultPath, "utf-8");
+      res.type("markdown").send(content);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }

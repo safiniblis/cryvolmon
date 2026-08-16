@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import {
   ArrowLeft, Send, Users, Loader2, RotateCcw, Sparkles, AlertTriangle,
   KeyRound, CheckCircle2, Pencil, X, Bot, ShieldCheck, WifiOff, FileCode, Plus, Copy, Check,
+  Hammer, ListChecks, MessageSquare, Trash2, Paperclip,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +13,7 @@ import { useStrategies } from "@/hooks/use-trading";
 import {
   useCouncilStatus, useBindAgents, useCouncilChat, useStrategyTune,
   useStrategyResetManaged, useReadFile, useWriteFile,
-  useCouncilArchive,
+  useCouncilArchive, useWorkerStatus, useWorkerResult,
   loadLocalAgents, saveLocalAgents, loadLocalPrompts, saveLocalPrompts,
   type AgentPosition, type AgentProvider, type AgentSlotView,
   type CouncilChatResult, type MemberResult, type TuneResult, DEFAULT_SLOTS,
@@ -217,6 +218,110 @@ function SlotCard({
   );
 }
 
+const LANES: Array<{ key: string; label: string; color: string; dot: string; phases: string[] }> = [
+  { key: "handedoff", label: "Handed off", color: "text-sky-300 border-sky-500/30 bg-sky-500/10",        dot: "bg-sky-400",     phases: ["queued"] },
+  { key: "working",   label: "Working",    color: "text-emerald-300 border-emerald-500/30 bg-emerald-500/10", dot: "bg-emerald-400", phases: ["running", "rework"] },
+  { key: "review",    label: "Review",     color: "text-violet-300 border-violet-500/30 bg-violet-500/10",  dot: "bg-violet-400",  phases: ["review"] },
+  { key: "closed",    label: "Closed",     color: "text-muted-foreground border-border/40 bg-muted/20",     dot: "bg-emerald-500/50", phases: ["closed"] },
+];
+
+function age(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h${mins % 60 ? `${mins % 60}m` : ""}`;
+}
+
+function WorkerTaskResult({ id, open }: { id: string; open: boolean }) {
+  const result = useWorkerResult(id, open);
+  if (!open) return null;
+  if (result.isLoading) return <div className="mt-1 h-8 animate-pulse bg-muted/20 rounded" />;
+  if (result.isError) return <p className="mt-1 text-[9px] text-red-300">{(result.error as Error).message}</p>;
+  return (
+    <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap font-mono text-[9px] leading-relaxed text-muted-foreground border-t border-border/30 pt-1">
+      {result.data?.content || ""}
+    </pre>
+  );
+}
+
+function WorkerPanel() {
+  const { data } = useWorkerStatus();
+  const counts = data?.counts || {};
+  const recent = data?.recent || [];
+  const [open, setOpen] = useState<string | null>(null);
+  const openTask = recent.find((t) => t.id === open) || null;
+
+  return (
+    <Card>
+      <CardHeader className="py-2 px-3">
+        <CardTitle className="text-xs flex items-center gap-1.5"><ListChecks className="h-3.5 w-3.5 text-emerald-400" />Foreman & Workers</CardTitle>
+      </CardHeader>
+      <CardContent className="px-3 pb-3 space-y-2">
+        <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1 min-w-0">
+            <Sparkles className="h-3 w-3 shrink-0 text-sky-400" />
+            <span className="truncate">{data?.foreman ? `Foreman: ${data.foreman.provider}/${data.foreman.model}` : "Foreman: idle"}</span>
+          </span>
+          <span className="flex items-center gap-1 shrink-0">
+            <Hammer className="h-3 w-3 text-emerald-400" />
+            {data?.worker ? data.worker.model : "no worker"}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-4 gap-1">
+          {LANES.map((lane) => {
+            const laneCount = lane.phases.reduce((s, p) => s + (counts[p] || 0), 0);
+            const items = recent.filter((t) => lane.phases.includes(t.phase)).slice(0, 3);
+            const hidden = Math.max(0, laneCount - items.length);
+            return (
+              <div key={lane.key} className="flex flex-col gap-1 min-w-0">
+                <div className={cn("flex items-center justify-between rounded border px-1 py-0.5 text-[8px] uppercase tracking-wide", lane.color)}>
+                  <span className="truncate">{lane.label}</span>
+                  <span className="font-bold">{laneCount}</span>
+                </div>
+                {items.map((t) => (
+                  <div key={t.id} className="rounded border border-border/25 bg-card/20 px-1 py-0.5 cursor-pointer hover:border-border/50" onClick={() => setOpen(open === t.id ? null : t.id)}>
+                    <div className="flex items-center gap-0.5 min-w-0">
+                      <span className={cn("inline-block h-1 w-1 rounded-full shrink-0", lane.dot, t.phase === "running" && "animate-pulse")} />
+                      <span className="truncate text-[9px] font-medium leading-tight">{t.title}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-1 text-[8px] text-muted-foreground">
+                      <span className="flex items-center gap-0.5 min-w-0 truncate font-mono">
+                        #{t.id.slice(-6)}
+                        {t.phase === "rework" && <RotateCcw className="h-2 w-2 shrink-0 text-orange-400" />}
+                      </span>
+                      <span className="shrink-0">
+                        {t.phase === "running"
+                          ? <Loader2 className="h-2 w-2 animate-spin text-emerald-400" />
+                          : t.assigned?.model ? t.assigned.model.split("/").pop()?.slice(0, 10) : age(t.createdAt)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                {hidden > 0 && <p className="text-[8px] text-muted-foreground/60 text-center">+{hidden}</p>}
+              </div>
+            );
+          })}
+        </div>
+
+        {counts.failed > 0 && <p className="text-[9px] text-red-300">Failed {counts.failed} — see queue for errors.</p>}
+
+        {openTask && (
+          <div className="rounded border border-border/30 px-2 py-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-[9px] font-medium">{openTask.title}</span>
+              <Button variant="ghost" size="sm" className="h-4 w-4 p-0 shrink-0" onClick={() => setOpen(null)}><X className="h-2.5 w-2.5" /></Button>
+            </div>
+            <WorkerTaskResult id={openTask.id} open />
+          </div>
+        )}
+
+        {recent.length === 0 && <p className="text-[10px] text-muted-foreground">Queue empty — no work delegated.</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CouncilPage() {
   const { data: status, slots, isOffline } = useCouncilStatus();
   const binder = useBindAgents();
@@ -312,6 +417,11 @@ export default function CouncilPage() {
     binder.mutate([{ position: "manager", provider: choice.provider, model: choice.model, baseUrl: choice.baseUrl }]);
   };
 
+  const clearConversation = () => {
+    setMessageChannels(prev => ({ ...prev, [channelKey]: [] }));
+    setInput("");
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!text || busy) return;
@@ -364,7 +474,8 @@ export default function CouncilPage() {
             <Card className="flex flex-col h-[62vh] min-h-[420px]">
               <CardHeader className="py-3 px-4 border-b border-border/40">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <CardTitle className="text-sm">Ask the team</CardTitle>
+                  <div className="flex items-center gap-2"><MessageSquare className="h-4 w-4 text-primary" /><CardTitle className="text-sm">New conversation</CardTitle></div>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={clearConversation} disabled={busy || messages.length === 0} title="Clear conversation"><Trash2 className="h-3.5 w-3.5" /></Button>
                   <select className="h-7 max-w-[240px] rounded-md border border-input bg-background px-2 text-[11px]" value={mode === "council" ? "council" : mode === "agent" ? agentPosition : "manager"} onChange={e => {
                     const target = e.target.value;
                     if (target === "council") setMode("council");
@@ -438,6 +549,8 @@ export default function CouncilPage() {
 
           {/* Sidebar */}
           <div className="space-y-4">
+            <WorkerPanel />
+
             <Card>
               <CardHeader className="py-3 px-4"><CardTitle className="text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-violet-400" />Strategy Tuner</CardTitle>
                 <CardDescription className="text-xs">Council debates managed params now and every 4 hours while the strategy runs. It applies the median; ticker, leverage, and capital stay locked. Tandem L/S weighting may be tuned.</CardDescription></CardHeader>

@@ -1,8 +1,8 @@
 {
   "files": {
     "server/routes.ts": {
-      "hash": "dbc1e6e8d7e55b5a0b9c663bcc42cd17c531aba2",
-      "scannedAt": "2026-08-16T00:59:17.125Z"
+      "hash": "26dfbbd3eedf53291d1d3536bc48bcfe3a3c0b4a",
+      "scannedAt": "2026-08-16T01:56:10.395Z"
     },
     "server/agent-providers.ts": {
       "hash": "430cf9368d06f93b8766f14ade319411520da592",
@@ -19,6 +19,18 @@
     "server/council.ts": {
       "hash": "fc9ced5c64f6b9c58f7bae5abe9462d76e86ad4a",
       "scannedAt": "2026-08-16T00:45:01.333Z"
+    },
+    "client/src/hooks/use-council.ts": {
+      "hash": "c7201892549d5e2d4f98ea514fdaee907e2310e4",
+      "scannedAt": "2026-08-16T01:13:47.241Z"
+    },
+    "script/worker.mjs": {
+      "hash": "cd28ac7b90c1014e0e0c5add5336f7996ae8e892",
+      "scannedAt": "2026-08-16T01:27:47.559Z"
+    },
+    "client/src/pages/dashboard.tsx": {
+      "hash": "ebb6fa907d5f1d32ae6fb68b215f80c2a713d1ed",
+      "scannedAt": "2026-08-16T01:42:10.765Z"
     }
   },
   "recent": []

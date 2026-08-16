@@ -312,6 +312,28 @@ export async function registerRoutes(
   });
 
   // Bitrue account (E-XAUT-USDT gold strategies)
+  // Read-only gold engine health; this endpoint never starts or changes trading.
+  app.get("/api/engine/gold-health", async (_req, res) => {
+    try {
+      const strategies = await storage.getStrategies();
+      const strategy = strategies.find((s) => s.type === "gold_long");
+      if (!strategy) return res.json({ status: "not_configured", contract: "E-XAUT-USDT", mark: null, budget: null, orderCount: 0, lastCycle: null, error: null });
+      const cfg = (strategy.config || {}) as Record<string, any>;
+      const orderCount = [...(Array.isArray(cfg.floorSlots) ? cfg.floorSlots : []).flatMap((s: any) => [s.outerOrderId, s.innerOrderId, s.tpOrderId]), ...(Array.isArray(cfg.seedTpSlots) ? cfg.seedTpSlots : []).flatMap((s: any) => [s.tpOrderId, s.buybackOrderId])].filter(Boolean).length;
+      const client = (await import("./bitrue")).getBitrueClient();
+      if (!client) return res.json({ status: "exchange_not_configured", contract: "E-XAUT-USDT", mark: null, budget: cfg.baseCapital ?? null, orderCount, lastCycle: strategy.lastRunAt ?? null, error: "Bitrue keys are not configured" });
+      const markResponse: any = await client.getMarkPrice("E-XAUT-USDT");
+      const mark = Number(markResponse?.tagPrice || markResponse?.indexPrice || 0);
+      const positionResponse: any = await client.getPositions("E-XAUT-USDT");
+      const { BitrueClient } = await import("./bitrue");
+      const positions = BitrueClient.extractPositions(positionResponse);
+      const position = positions.find((p: any) => Number(p.volume || p.holdVol || p.qty || p.openVol || 0) > 0);
+      return res.json({ status: strategy.status, contract: "E-XAUT-USDT", mark: mark > 0 ? mark : null, budget: Number.isFinite(Number(cfg.baseCapital)) ? Number(cfg.baseCapital) : null, orderCount, lastCycle: strategy.lastRunAt ?? null, position: position ? { quantity: Number(position.volume || position.holdVol || position.qty || position.openVol || 0), entry: Number(position.avgOpenPrice || position.avgPrice || position.openPrice || 0) || null } : null, error: mark > 0 ? (cfg.lastError || null) : "Exchange returned no mark price" });
+    } catch (e: any) {
+      res.json({ status: "error", contract: "E-XAUT-USDT", mark: null, budget: null, orderCount: 0, lastCycle: null, error: e?.message || "Gold health check failed" });
+    }
+  });
+
   app.get("/api/bitrue-account", async (req, res) => {
     try {
       const { getBitrueClient } = await import("./bitrue");

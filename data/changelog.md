@@ -40,3 +40,15 @@
 - 2026-08-16T01:00:01.276Z — Worker wt-msv2wa3m-5x7vu "Trend data model and scoring design" result rejected by foreman (The submission is incomplete and missing several required elements: the duplicate detection section is cut off, there are no explicit definitions for velocity, confidence scores, trend lifecycle state) — re-queued for rework (attempt 1/2).
 - 2026-08-16T01:03:03.400Z — Worker wt-msv2wa3m-5x7vu "Trend data model and scoring design" done via groq/openai/gpt-oss-120b (foreman accepted) in 5s — queued for manager review.
 - 2026-08-16T01:03:20.929Z — Added a small Dashboard Live Data tile for X with a password-style token dialog, server-only storage, protected file permissions, and token exclusion from git; TypeScript check and production build passed.
+- 2026-08-16T01:05:20.553Z — Manager rework worker task wt-msv2wa3k-ircct "X trend listener architecture plan" (The report is truncated and still lacks the required complete acceptance checklist plus concrete X source-attribution and redistribution requirements; return a complete, self-contained plan.) — rework requested but retry budget exhausted; keeping result for operator review.
+- 2026-08-16T01:05:20.555Z — Manager rework worker task wt-msv2wa3p-m4ojm "Worker task breakdown for X trend project" (Complete the truncated TS-01 end-to-end testing ticket and add the missing deployment documentation/runbook task with clear acceptance criteria.) — rework requested but retry budget exhausted; keeping result for operator review.
+- 2026-08-16T01:05:20.559Z — Manager accepted worker task wt-msv2wa3m-5x7vu "Trend data model and scoring design" (Useful scoring and storage design; keep its assumptions clearly marked as unverified until the actual X API tier and fields are tested.)
+
+- 2026-08-16T01:06:13.285Z — Worker wt-msv2wa3n-7ixaq "VM operations plan for real-time trend job" done via groq/openai/gpt-oss-120b (foreman accepted) in 4s — queued for manager review.
+- 2026-08-16T01:30:40.969Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (2x fail) -> groq/openai/gpt-oss-120b (305ms)
+- 2026-08-16T12:06:05.356Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (2x fail) -> groq/openai/gpt-oss-120b (330ms)
+- 2026-08-16T12:30:18.019Z — Executed plan to verify Bitrue gold connectivity and add a gold-engine health tile.
+- 2026-08-16T12:32:05.098Z — Started building and running the project to execute the plan for the gold long bot improvements.
+
+- 2026-08-16T12:35:46.216Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (2x fail) -> groq/openai/gpt-oss-120b (196ms)
+- 2026-08-16T12:36:59.718Z — Added a read-only Gold Engine Health endpoint and dashboard tile for E-XAUT-USDT status, mark, budget, and tracked orders; TypeScript check and production build passed.

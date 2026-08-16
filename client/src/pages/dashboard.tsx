@@ -17,6 +17,23 @@ export default function Dashboard() {
   const [xSaved, setXSaved] = React.useState(false);
   const [xSaving, setXSaving] = React.useState(false);
   const [xError, setXError] = React.useState("");
+  const [goldHealth, setGoldHealth] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const response = await fetch("/api/engine/gold-health");
+        const data = await response.json();
+        if (active) setGoldHealth(data);
+      } catch {
+        if (active) setGoldHealth({ status: "unavailable", error: "Health check unavailable" });
+      }
+    };
+    load();
+    const timer = window.setInterval(load, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
 
   const topMover = stats?.reduce((prev, current) => 
     (prev.hourlySwings || 0) > (current.hourlySwings || 0) ? prev : current
@@ -139,6 +156,19 @@ export default function Dashboard() {
                 }}>{xSaving ? "Saving…" : "Save securely"}</Button></DialogFooter>
               </DialogContent>
             </Dialog>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <div className="w-full max-w-xs rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+            <div className="flex items-center justify-between"><h2 className="font-semibold text-amber-100">Gold Engine Health</h2><span className="text-xs text-muted-foreground">E-XAUT-USDT</span></div>
+            <div className="mt-3 space-y-1 text-sm">
+              <div className="flex justify-between"><span>Status</span><span>{goldHealth?.status || "checking…"}</span></div>
+              <div className="flex justify-between"><span>Mark</span><span>{goldHealth?.mark ?? "unknown"}</span></div>
+              <div className="flex justify-between"><span>Budget</span><span>{goldHealth?.budget == null ? "unknown" : `${goldHealth.budget}`}</span></div>
+              <div className="flex justify-between"><span>Open orders</span><span>{goldHealth?.orderCount ?? "unknown"}</span></div>
+              {goldHealth?.error && <p className="pt-1 text-xs text-amber-300">{goldHealth.error}</p>}
+            </div>
           </div>
         </div>
 

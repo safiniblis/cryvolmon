@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-16T01:03:20.930Z",
+  "updatedAt": "2026-08-16T01:07:47.483Z",
   "entries": [
     {
       "at": "2026-08-15T18:52:00.000Z",
@@ -68,6 +68,10 @@
     {
       "at": "2026-08-16T01:03:20.930Z",
       "text": "Added and verified the Dashboard Live Data X token tile; token is write-only from the UI, stored server-side in data/x-feed-token.json with 0600 permissions and ignored by git. This stores the credential but does not yet start the X polling"
+    },
+    {
+      "at": "2026-08-16T01:07:47.483Z",
+      "text": "X bearer token is saved securely, but the X Recent Search probe returned HTTP 402 Payment Required with credits depleted; no collector/listener was activated."
     }
   ]
 }

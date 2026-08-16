@@ -62,3 +62,4 @@
 - 2026-08-16T16:01:19.190Z — Worker wt-msv2wa3n-7ixaq "VM operations plan for real-time trend job" failed permanently after 2 attempts: run error: HTTP 404 404 page not found
 - 2026-08-16T16:33:40.327Z â€” Proposed gold grid-bot params: grid step 0.5%, order size 0.5% of 41.27 USDT budget (~0.2065 contract units), max 10 orders, liquidation guard at 3,939.39 USDT. Logged for review.
 - 2026-08-16T16:44:04.805Z â€” Separated gold budget handling from Bitunix: gold entry and health now read available USDT from Bitrue only, with configured capital as a ceiling; TypeScript check and production build passed.
+- 2026-08-16T16:54:11.759Z â€” Created the stopped, dry-run Bitrue Gold Grid draft for E-XAUT-USDT with the reviewed budget and guard settings; added the missing trading-page start hook; TypeScript check and production build passed.

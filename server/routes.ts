@@ -1040,6 +1040,40 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/strategies/gold-long-draft", async (req, res) => {
+    try {
+      const schema = z.object({ leverage: z.number().min(1).max(100).default(33) });
+      const { leverage } = schema.parse(req.body || {});
+      const existing = (await storage.getStrategies()).find((s) => s.type === "gold_long" && s.status !== "error");
+      if (existing) return res.json(existing);
+      const strategy = await storage.createStrategy({
+        name: "Gold Grid E-XAUT-USDT",
+        type: "gold_long",
+        symbol: "E-XAUT-USDT",
+        side: "LONG",
+        status: "stopped",
+        config: {
+          mode: "dry-run",
+          exchange: "Bitrue",
+          contract: "E-XAUT-USDT",
+          baseCapital: 41.27,
+          leverage,
+          liquidationGuard: 3939.39,
+          gridStepPercent: 0.5,
+          orderPercent: 0.5,
+          maxQueuedOrders: 10,
+          feeBuffer: 0.10,
+          phase: "draft",
+          lastError: null,
+        },
+      });
+      res.status(201).json(strategy);
+    } catch (e: any) {
+      if (e instanceof z.ZodError) return res.status(400).json({ message: e.errors[0].message });
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   app.post("/api/strategies/gold-long-start", async (req, res) => {
     try {
       const schema = z.object({

@@ -370,6 +370,24 @@ export function useTandemStart() {
   });
 }
 
+export function useGoldLongDraft() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { baseCapital: number; leverage: number }) => {
+      const res = await apiRequest("POST", "/api/strategies/gold-long-draft", data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
+      toast({ title: "Gold Long Started", description: `${data.symbol} long opened at ${data.config?.leverage}x` });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Gold Long Failed", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useGoldLongStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -378,9 +396,9 @@ export function useGoldLongStart() {
       const res = await apiRequest("POST", "/api/strategies/gold-long-start", data);
       return res.json();
     },
-    onSuccess: (data: any) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/strategies"] });
-      toast({ title: "Gold Long Started", description: `${data.symbol} long opened at ${data.config?.leverage}x` });
+      toast({ title: "Gold Long Started", description: "The Bitrue gold strategy is now active." });
     },
     onError: (e: Error) => {
       toast({ title: "Gold Long Failed", description: e.message, variant: "destructive" });

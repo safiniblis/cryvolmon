@@ -30,11 +30,11 @@
     },
     {
       "position": "strategist",
-      "provider": "groq",
-      "baseUrl": "https://api.groq.com/openai/v1",
-      "model": "openai/gpt-oss-120b",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "model": "google/gemma-4-26b-a4b-it:free",
       "apiKey": null
     }
   ],
-  "updatedAt": "2026-08-16T00:10:47.814Z"
+  "updatedAt": "2026-08-16T00:24:54.326Z"
 }

@@ -24,3 +24,4 @@
 - 2026-08-15T23:50:25.810Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (3x fail) -> groq/openai/gpt-oss-120b (203ms)
 - 2026-08-16T00:10:47.817Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (4x fail) -> groq/openai/gpt-oss-120b (330ms)
 - 2026-08-16T00:22:43.188Z — Modernized the council chat header with a conversation identity, clear-chat control, and preserved existing model and specialist routing; TypeScript check and production build passed.
+- 2026-08-16T00:25:49.230Z — Verified the council UI change is built in dist and served by the VM; queued a service restart to ensure the running process reloads the current production bundle.

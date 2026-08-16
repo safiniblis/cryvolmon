@@ -65,3 +65,6 @@
 - 2026-08-16T16:54:11.759Z â€” Created the stopped, dry-run Bitrue Gold Grid draft for E-XAUT-USDT with the reviewed budget and guard settings; added the missing trading-page start hook; TypeScript check and production build passed.
 - 2026-08-16T16:59:02.643Z â€” Gold long strategy configured in dry-run with baseCapital 41.27 USDT, leverage 10, liquidationGuard $3,939.39, 0.5% grid step, 0.5% order size, max 10 queued orders, 10% fee buffer
 - 2026-08-16T17:00:50.495Z â€” 2026-08-16 — Resumed gold strategy review: verified the stopped Bitrue E-XAUT-USDT draft, live health endpoint returned mark 4360.92, available budget 41.27 USDT, zero open orders, and no error; TypeScript check and production build passed.
+
+- 2026-08-16T17:06:06.621Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (8x fail) -> groq/openai/gpt-oss-120b (205ms)
+- 2026-08-16T17:11:16.099Z â€” Fixed the generic Start action for Gold Long: it now checks Bitrue credentials, resets the engine to entry phase, and triggers an immediate cycle; TypeScript check and production build passed.

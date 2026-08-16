@@ -538,13 +538,29 @@ export async function registerRoutes(
 
   app.post("/api/strategies/:id/start", async (req, res) => {
     const id = parseInt(req.params.id);
+    const strategy = await storage.getStrategy(id);
+    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
+
+    // Gold Long uses Bitrue and must not be blocked by Bitunix credentials.
+    if (strategy.type === "gold_long") {
+      const { getBitrueClient } = await import("./bitrue");
+      if (!getBitrueClient()) {
+        return res.status(400).json({ message: "Bitrue API keys are not configured. Add your Bitrue API Key and Secret Key first." });
+      }
+      const config = (strategy.config || {}) as Record<string, any>;
+      const updated = await storage.updateStrategy(id, {
+        status: "running",
+        config: { ...config, phase: "entry", lastError: null },
+      });
+      startStrategyEngine();
+      setTimeout(() => runStrategyCycle(), 2000);
+      return res.json(updated);
+    }
+
     const client = getBitunixClient();
     if (!client) {
       return res.status(400).json({ message: "API keys not configured. Add your Bitunix API Key and Secret Key first." });
     }
-    const strategy = await storage.getStrategy(id);
-    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
-
     const updated = await storage.updateStrategy(id, { status: "running" });
 
     let initialBuy = null;

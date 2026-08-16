@@ -63,3 +63,5 @@
 - 2026-08-16T16:33:40.327Z â€” Proposed gold grid-bot params: grid step 0.5%, order size 0.5% of 41.27 USDT budget (~0.2065 contract units), max 10 orders, liquidation guard at 3,939.39 USDT. Logged for review.
 - 2026-08-16T16:44:04.805Z â€” Separated gold budget handling from Bitunix: gold entry and health now read available USDT from Bitrue only, with configured capital as a ceiling; TypeScript check and production build passed.
 - 2026-08-16T16:54:11.759Z â€” Created the stopped, dry-run Bitrue Gold Grid draft for E-XAUT-USDT with the reviewed budget and guard settings; added the missing trading-page start hook; TypeScript check and production build passed.
+- 2026-08-16T16:59:02.643Z â€” Gold long strategy configured in dry-run with baseCapital 41.27 USDT, leverage 10, liquidationGuard $3,939.39, 0.5% grid step, 0.5% order size, max 10 queued orders, 10% fee buffer
+- 2026-08-16T17:00:50.495Z â€” 2026-08-16 — Resumed gold strategy review: verified the stopped Bitrue E-XAUT-USDT draft, live health endpoint returned mark 4360.92, available budget 41.27 USDT, zero open orders, and no error; TypeScript check and production build passed.

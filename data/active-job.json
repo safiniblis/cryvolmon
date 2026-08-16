@@ -1,7 +1,7 @@
 {
   "status": "in_progress",
-  "summary": "Investigate why the operator cannot see the recent visible change and verify deployed workspace state.",
-  "startedAt": "2026-08-16T00:25:26.038Z",
-  "updatedAt": "2026-08-16T00:25:50.938Z",
+  "summary": "Make the Council conversation control visibly explicit so the deployed change cannot be missed.",
+  "startedAt": "2026-08-16T00:29:18.215Z",
+  "updatedAt": "2026-08-16T00:30:03.099Z",
   "lastTool": "git_commit"
 }

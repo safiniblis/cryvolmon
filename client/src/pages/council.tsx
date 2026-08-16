@@ -474,8 +474,8 @@ export default function CouncilPage() {
             <Card className="flex flex-col h-[62vh] min-h-[420px]">
               <CardHeader className="py-3 px-4 border-b border-border/40">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2"><MessageSquare className="h-4 w-4 text-primary" /><CardTitle className="text-sm">New conversation</CardTitle></div>
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={clearConversation} disabled={busy || messages.length === 0} title="Clear conversation"><Trash2 className="h-3.5 w-3.5" /></Button>
+                  <div className="flex items-center gap-2"><MessageSquare className="h-4 w-4 text-primary" /><CardTitle className="text-sm">Council chat</CardTitle><Badge variant="outline" className="text-[10px]">New conversation</Badge></div>
+                  <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={clearConversation} disabled={busy || messages.length === 0} title="Start a new conversation"><Trash2 className="h-3.5 w-3.5 mr-1" />New chat</Button>
                   <select className="h-7 max-w-[240px] rounded-md border border-input bg-background px-2 text-[11px]" value={mode === "council" ? "council" : mode === "agent" ? agentPosition : "manager"} onChange={e => {
                     const target = e.target.value;
                     if (target === "council") setMode("council");

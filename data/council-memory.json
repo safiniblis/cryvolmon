@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-16T00:22:47.440Z",
+  "updatedAt": "2026-08-16T00:25:52.818Z",
   "entries": [
     {
       "at": "2026-08-15T18:52:00.000Z",
@@ -56,6 +56,10 @@
     {
       "at": "2026-08-16T00:22:47.440Z",
       "text": "Modernized council chat header and added clear-conversation control without changing routing or trading behavior; check/build passed in commit df5fa32."
+    },
+    {
+      "at": "2026-08-16T00:25:52.818Z",
+      "text": "The council header/clear-conversation UI is present in source and production dist, but the running service started before the latest bundle; queued restart and committed verification as d697334."
     }
   ]
 }

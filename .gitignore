@@ -7,3 +7,16 @@ vite.config.ts.*
 
 # Local live-data credentials
 /data/x-feed-token.json
+
+# Runtime state and credentials (never commit)
+/data/active-job.json
+/data/council-conversation.json
+/data/council-free-index.json
+/data/council-memory.json
+/data/council-runtime.json
+/data/exchange-keys.json
+/data/exchange-weights.json
+/data/qwen-scan-state.json
+/data/worker-tasks.json
+/data/worker-results/
+/data/council-work-log.md

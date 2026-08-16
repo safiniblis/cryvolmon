@@ -1,23 +1,23 @@
 {
-  "updatedAt": "2026-08-16T00:25:35.194Z",
+  "updatedAt": "2026-08-16T01:00:56.576Z",
   "models": {
     "opencode:big-pickle": {
       "provider": "opencode",
       "model": "big-pickle",
       "ok": false,
-      "ms": 213,
+      "ms": 245,
       "error": "HTTP 429 {\"type\":\"error\",\"error\":{\"type\":\"FreeUsageLimitError\",\"message\":\"Error from provider (Console): Rate limit exceeded. Ple",
-      "checkedAt": 1786839918211,
-      "consecutiveFails": 1,
+      "checkedAt": 1786842038186,
+      "consecutiveFails": 8,
       "firstFailAt": 1786839918211
     },
     "groq:openai/gpt-oss-120b": {
       "provider": "groq",
       "model": "openai/gpt-oss-120b",
       "ok": true,
-      "ms": 201,
+      "ms": 188,
       "error": null,
-      "checkedAt": 1786839918663,
+      "checkedAt": 1786842038625,
       "consecutiveFails": 0,
       "firstFailAt": null
     },
@@ -25,39 +25,39 @@
       "provider": "nvidia",
       "model": "openai/gpt-oss-120b",
       "ok": false,
-      "ms": 10004,
+      "ms": 10002,
       "error": "timeout 10000ms",
-      "checkedAt": 1786839928918,
-      "consecutiveFails": 8,
-      "firstFailAt": 1786837818907
+      "checkedAt": 1786842048878,
+      "consecutiveFails": 3,
+      "firstFailAt": 1786841419020
     },
     "ovh:gpt-oss-120b": {
       "provider": "ovh",
       "model": "gpt-oss-120b",
       "ok": false,
-      "ms": 487,
-      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"c3a9ec06d9e71444490a95421a547c69\"\n}",
-      "checkedAt": 1786839929656,
-      "consecutiveFails": 2,
-      "firstFailAt": 1786839626043
+      "ms": 478,
+      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"4864405db372b0065ac89c7dbcbd4e58\"\n}",
+      "checkedAt": 1786842049606,
+      "consecutiveFails": 5,
+      "firstFailAt": 1786840839229
     },
     "ovh:Qwen3.5-397B-A17B": {
       "provider": "ovh",
       "model": "Qwen3.5-397B-A17B",
       "ok": false,
-      "ms": 133,
-      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"07422826ffa9277a504eaa23140a3401\"\n}",
-      "checkedAt": 1786839930041,
+      "ms": 129,
+      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"913160629de5f95b6549f87f8d0dff1a\"\n}",
+      "checkedAt": 1786842049986,
       "consecutiveFails": 1,
-      "firstFailAt": 1786839930041
+      "firstFailAt": 1786842049986
     },
     "nvidia:nvidia/nemotron-3-ultra-550b-a55b": {
       "provider": "nvidia",
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "ok": true,
-      "ms": 480,
+      "ms": 577,
       "error": null,
-      "checkedAt": 1786839930773,
+      "checkedAt": 1786842050812,
       "consecutiveFails": 0,
       "firstFailAt": null
     },
@@ -65,9 +65,9 @@
       "provider": "groq",
       "model": "llama-3.3-70b-versatile",
       "ok": true,
-      "ms": 252,
+      "ms": 108,
       "error": null,
-      "checkedAt": 1786839931275,
+      "checkedAt": 1786842051170,
       "consecutiveFails": 0,
       "firstFailAt": null
     },
@@ -75,19 +75,19 @@
       "provider": "ovh",
       "model": "Meta-Llama-3_3-70B-Instruct",
       "ok": false,
-      "ms": 139,
-      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"d5399e29a13894750a009272e9671901\"\n}",
-      "checkedAt": 1786839931665,
-      "consecutiveFails": 24,
+      "ms": 147,
+      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"33b9d941d695f2153cd50e2b5d38891a\"\n}",
+      "checkedAt": 1786842051568,
+      "consecutiveFails": 31,
       "firstFailAt": 1786833614645
     },
     "nvidia:nvidia/nemotron-3-super-120b-a12b": {
       "provider": "nvidia",
       "model": "nvidia/nemotron-3-super-120b-a12b",
       "ok": true,
-      "ms": 422,
+      "ms": 2237,
       "error": null,
-      "checkedAt": 1786839932341,
+      "checkedAt": 1786842054056,
       "consecutiveFails": 0,
       "firstFailAt": null
     },
@@ -95,9 +95,9 @@
       "provider": "groq",
       "model": "openai/gpt-oss-20b",
       "ok": true,
-      "ms": 68,
+      "ms": 171,
       "error": null,
-      "checkedAt": 1786839932660,
+      "checkedAt": 1786842054478,
       "consecutiveFails": 0,
       "firstFailAt": null
     },
@@ -105,9 +105,9 @@
       "provider": "nvidia",
       "model": "openai/gpt-oss-20b",
       "ok": true,
-      "ms": 264,
+      "ms": 316,
       "error": null,
-      "checkedAt": 1786839933174,
+      "checkedAt": 1786842055043,
       "consecutiveFails": 0,
       "firstFailAt": null
     },
@@ -115,29 +115,29 @@
       "provider": "ovh",
       "model": "gpt-oss-20b",
       "ok": false,
-      "ms": 132,
-      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"75c4b076ed3fed1b9d0c32469d8cc82c\"\n}",
-      "checkedAt": 1786839933558,
-      "consecutiveFails": 2,
-      "firstFailAt": 1786839632251
+      "ms": 130,
+      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"e1a7bb3572d92b5fa8fe7427d1b6e17c\"\n}",
+      "checkedAt": 1786842055425,
+      "consecutiveFails": 5,
+      "firstFailAt": 1786840844507
     },
     "ovh:Qwen3-32B": {
       "provider": "ovh",
       "model": "Qwen3-32B",
       "ok": false,
-      "ms": 127,
-      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"f33cf8268d22167a4805861a86a8cb05\"\n}",
-      "checkedAt": 1786839933936,
-      "consecutiveFails": 1,
-      "firstFailAt": 1786839933936
+      "ms": 163,
+      "error": "HTTP 429 {\n  \"message\":\"API rate limit exceeded\",\n  \"request_id\":\"a5892d71e0dd2230806d18681e657226\"\n}",
+      "checkedAt": 1786842055840,
+      "consecutiveFails": 2,
+      "firstFailAt": 1786841726871
     },
     "ovh:Mistral-Small-3.2-24B-Instruct-2506": {
       "provider": "ovh",
       "model": "Mistral-Small-3.2-24B-Instruct-2506",
       "ok": true,
-      "ms": 223,
+      "ms": 235,
       "error": null,
-      "checkedAt": 1786839934410,
+      "checkedAt": 1786842056325,
       "consecutiveFails": 0,
       "firstFailAt": null
     },
@@ -145,11 +145,11 @@
       "provider": "openrouter",
       "model": "google/gemma-4-26b-a4b-it:free",
       "ok": false,
-      "ms": 281,
+      "ms": 319,
       "error": "HTTP 429 {\"error\":{\"message\":\"Provider returned error\",\"code\":429,\"metadata\":{\"raw\":\"google/gemma-4-26b-a4b-it:free is temporaril",
-      "checkedAt": 1786839934943,
-      "consecutiveFails": 5,
-      "firstFailAt": 1786834845362
+      "checkedAt": 1786841425467,
+      "consecutiveFails": 2,
+      "firstFailAt": 1786841126204
     }
   },
   "seats": {
@@ -173,12 +173,12 @@
     },
     "strategist": {
       "position": "strategist",
-      "currentProvider": "openrouter",
-      "currentModel": "google/gemma-4-26b-a4b-it:free",
-      "consecutiveFails": 5,
-      "lastSwitchAt": 1786839047817,
-      "lastSwitch": "groq/openai/gpt-oss-120b (330ms)"
+      "currentProvider": "groq",
+      "currentModel": "openai/gpt-oss-120b",
+      "consecutiveFails": 0,
+      "lastSwitchAt": 1786841425729,
+      "lastSwitch": "groq/openai/gpt-oss-120b (199ms)"
     }
   },
-  "sweepMs": 17296
+  "sweepMs": 18706
 }

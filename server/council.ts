@@ -321,6 +321,49 @@ function memoryContext(): string {
   return `COUNCIL MEMORY (past decisions — do not re-derive; question only if clearly stale):\n${lines.join("\n")}\nEND COUNCIL MEMORY`;
 }
 
+// ---------------------------------------------------------------------------
+// Persistent manager conversation log. File-based (no DB dependency) so the
+// manager always gets its recent exchanges with the operator — across browser
+// refreshes and sessions — and does not re-derive what was already discussed.
+// ---------------------------------------------------------------------------
+
+const CONVERSATION_FILE = () => join(process.cwd(), "data", "council-conversation.json");
+const CONVERSATION_LIMIT = 80;
+const CONVERSATION_INJECT = 12;
+
+interface ConversationEntry {
+  role: "user" | "assistant";
+  content: string;
+  at: string;
+  meta?: { provider?: string; model?: string; position?: string };
+}
+
+export function appendCouncilConversation(entry: Omit<ConversationEntry, "at">): void {
+  try {
+    let existing: ConversationEntry[] = [];
+    try {
+      const raw = JSON.parse(readFileSync(CONVERSATION_FILE(), "utf8")) as { entries?: ConversationEntry[] };
+      existing = Array.isArray(raw?.entries) ? raw.entries : [];
+    } catch { /* first write */ }
+    const entries = [...existing, { ...entry, at: new Date().toISOString() }];
+    writeFileSync(CONVERSATION_FILE(), JSON.stringify({ updatedAt: new Date().toISOString(), entries: entries.slice(-CONVERSATION_LIMIT) }, null, 2), "utf8");
+  } catch (e: any) {
+    console.warn(`[Council] Could not write conversation: ${e.message}`);
+  }
+}
+
+function conversationContext(): string {
+  try {
+    const raw = JSON.parse(readFileSync(CONVERSATION_FILE(), "utf8")) as { entries?: ConversationEntry[] };
+    const entries = (Array.isArray(raw?.entries) ? raw.entries : []).slice(-CONVERSATION_INJECT);
+    if (entries.length === 0) return "";
+    const lines = entries.map((e) => `[${e.role}] ${e.content.replace(/\s*\n\s*/g, " ").slice(0, 600)}`);
+    return `RECENT CONVERSATION WITH THE OPERATOR (past exchanges across sessions — use this as your working memory instead of re-deriving what the operator already told you):\n${lines.join("\n")}\nEND RECENT CONVERSATION`;
+  } catch {
+    return "";
+  }
+}
+
 /** Read-only external directories the council may inspect but never patch. */
 const READONLY_EXTERNAL_ROOTS: string[] = [
   "/home/safin/gridbot", // legacy manager/builder codebase (Claude-authored)
@@ -649,7 +692,8 @@ async function getExchangeHistoryContext(strategies: Array<{ symbol: string }>):
 async function buildAppContext(): Promise<string> {
   const workspace = buildWorkspaceContext();
   const memory = memoryContext();
-  const fallback = `CURRENT OPERATION SNAPSHOT:\n(database unavailable)\n\n${workspace}\n\n${memory}`;
+  const conversation = conversationContext();
+  const fallback = `CURRENT OPERATION SNAPSHOT:\n(database unavailable)\n\n${workspace}\n\n${memory}\n\n${conversation}`;
   const inner = (async () => {
     try {
       const [strategies, positions, balances] = await Promise.all([
@@ -686,7 +730,7 @@ async function buildAppContext(): Promise<string> {
       if (archived.length > 0) {
         lines.push("- Recent Council archive (review and challenge prior proposals):");
         for (const entry of archived.slice(0, 20)) {
-          lines.push(`  [${entry.position}/${entry.role}] ${entry.content.slice(0, 1200)}`);
+          lines.push(`  [${entry.position}/${entry.role}] ${entry.content.slice(0, 700)}`);
         }
       }
       // Completed worker tasks awaiting the manager's FINAL evaluation.
@@ -707,7 +751,7 @@ async function buildAppContext(): Promise<string> {
         }
       } catch {}
       lines.push("END SNAPSHOT");
-      return `${lines.join("\n")}\n\n${workspace}\n\n${memory}`;
+      return `${lines.join("\n")}\n\n${workspace}\n\n${memory}\n\n${conversation}`;
     } catch {
       return fallback;
     }

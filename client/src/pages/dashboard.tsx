@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useCryptoStats, useRefreshStats } from "@/hooks/use-crypto-stats";
 import { VolatilityTable } from "@/components/dashboard/volatility-table";
 import { StatCard } from "@/components/ui/stat-card";
@@ -6,10 +7,16 @@ import { RefreshCw, TrendingUp, AlertTriangle, Zap, Activity, Bot, Users } from 
 import { formatCurrency } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { Link } from "wouter";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 export default function Dashboard() {
   const { data: stats, isLoading, isError } = useCryptoStats();
   const { mutate: refresh, isPending: isRefreshing } = useRefreshStats();
+  const [xToken, setXToken] = React.useState("");
+  const [xSaved, setXSaved] = React.useState(false);
+  const [xSaving, setXSaving] = React.useState(false);
+  const [xError, setXError] = React.useState("");
 
   const topMover = stats?.reduce((prev, current) => 
     (prev.hourlySwings || 0) > (current.hourlySwings || 0) ? prev : current
@@ -104,6 +111,36 @@ export default function Dashboard() {
             </Button>
           </div>
         </header>
+
+        {/* Small isolated live-data tile. Token is sent only to the server and never displayed. */}
+        <div className="flex justify-end">
+          <div className="w-full max-w-xs rounded-lg border border-sky-500/20 bg-sky-500/5 p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sky-100">Live Data</h2>
+              <span className="text-xs text-muted-foreground">1 source</span>
+            </div>
+            <div className="mt-3 flex items-center justify-between rounded border border-white/10 px-3 py-2 text-sm">
+              <span>𝕏 X</span><span className={xSaved ? "text-emerald-400" : "text-muted-foreground"}>{xSaved ? "saved" : "not connected"}</span>
+            </div>
+            <Dialog>
+              <DialogTrigger asChild><Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => setXError("")}>Add X token</Button></DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Connect X live data</DialogTitle><DialogDescription>Paste the bearer token here. It is sent only to this server, stored in a local protected file, and never shown back.</DialogDescription></DialogHeader>
+                <Input type="password" value={xToken} onChange={(e) => { setXToken(e.target.value); setXError(""); }} placeholder="X bearer token" autoComplete="off" spellCheck={false} />
+                {xError && <p className="text-sm text-red-400">{xError}</p>}
+                <DialogFooter><Button disabled={!xToken.trim() || xSaving} onClick={async () => {
+                  setXSaving(true); setXError("");
+                  try {
+                    const response = await fetch("/api/live-data/x", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: xToken.trim() }) });
+                    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message || "Could not save token"); }
+                    setXSaved(true); setXToken("");
+                  } catch (error) { setXError(error instanceof Error ? error.message : "Could not save token"); }
+                  finally { setXSaving(false); }
+                }}>{xSaving ? "Saving…" : "Save securely"}</Button></DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

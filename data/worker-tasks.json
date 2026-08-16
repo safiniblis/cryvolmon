@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-16T00:28:39.357Z",
+  "updatedAt": "2026-08-16T01:03:03.399Z",
   "tasks": [
     {
       "id": "wt-msuwzxam-iqnbz",
@@ -121,6 +121,155 @@
       },
       "needsManagerReview": false,
       "ms": 12325
+    },
+    {
+      "id": "wt-msv2wa3k-ircct",
+      "title": "X trend listener architecture plan",
+      "type": "research",
+      "prompt": "Create a practical architecture plan for Cryvolmon, a crypto trading bot and multi-agent council running on a VM, to collect public X/Twitter crypto trend data approximately every 20 seconds. Assume API credentials, access tier, rate limits, and allowed endpoints are currently unknown and must be verified before implementation. Cover ingestion flow, polling versus streaming, deduplication, retries, rate-limit handling, source attribution, raw event retention, and a safe separation between trend analytics and trading decisions. Deliver: (1) recommended architecture, (2) implementation phases, (3) risks and blockers, (4) acceptance checklist. Do not invent API limits or claim access exists.",
+      "maxOutputTokens": 1800,
+      "priority": 3,
+      "review": "manager",
+      "status": "done",
+      "createdAt": "2026-08-16T00:40:32.288Z",
+      "assigned": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "reason": "Reasoning‑heavy, multi‑section architecture plan requires a capable model"
+      },
+      "resultPath": "/opt/cryvolmon/data/worker-results/wt-msv2wa3k-ircct.md",
+      "error": null,
+      "startedAt": "2026-08-16T00:56:50.457Z",
+      "foreman": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b"
+      },
+      "attempts": [
+        {
+          "at": "2026-08-16T00:50:47.728Z",
+          "provider": "groq",
+          "model": "openai/gpt-oss-120b",
+          "error": "foreman rejected result: Missing sections: risks and blockers, and acceptance checklist are not provided. The result is incomplete per the job requirements."
+        },
+        {
+          "at": "2026-08-16T00:53:44.340Z",
+          "provider": "nvidia",
+          "model": "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
+          "error": "run error: HTTP 404 404 page not found\n"
+        }
+      ],
+      "retries": 2,
+      "finishedAt": "2026-08-16T00:56:54.815Z",
+      "verified": {
+        "at": "2026-08-16T00:56:54.815Z",
+        "by": "groq/openai/gpt-oss-120b",
+        "accept": false,
+        "note": "The response is missing a complete acceptance checklist (it’s truncated) and does not explicitly address source attribution. Add the full checklist and include source attribution details to meet the j"
+      },
+      "needsManagerReview": true,
+      "ms": 1989
+    },
+    {
+      "id": "wt-msv2wa3m-5x7vu",
+      "title": "Trend data model and scoring design",
+      "type": "analysis",
+      "prompt": "Design a self-contained data and analytics specification for collecting crypto-related X/Twitter posts and compiling trends on a 20-second cadence for Cryvolmon. API access and exact fields are unknown, so clearly label assumptions and required fields. Define raw event fields, normalized post fields, time buckets, symbol/entity extraction, author/source weighting, spam/bot handling, duplicate detection, velocity, engagement, sentiment/topic signals, confidence scores, and trend lifecycle states. Include simple formulas, examples with symbolic variables rather than invented market data, and safeguards against mistaking social trends for trade signals. Deliver a concise specification plus validation tests.",
+      "maxOutputTokens": 2200,
+      "priority": 3,
+      "review": "manager",
+      "status": "done",
+      "createdAt": "2026-08-16T00:40:32.290Z",
+      "assigned": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b",
+        "reason": "reasoning‑heavy analysis with multi‑step design, requires strong capabilities"
+      },
+      "resultPath": "/opt/cryvolmon/data/worker-results/wt-msv2wa3m-5x7vu.md",
+      "error": null,
+      "startedAt": "2026-08-16T01:02:56.841Z",
+      "foreman": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b"
+      },
+      "attempts": [
+        {
+          "at": "2026-08-16T01:00:01.276Z",
+          "provider": "groq",
+          "model": "openai/gpt-oss-120b",
+          "error": "foreman rejected result: The submission is incomplete and missing several required elements: the duplicate detection section is cut off, there are no explicit definitions for velocity, confidence scores, trend lifecycle state"
+        }
+      ],
+      "retries": 1,
+      "finishedAt": "2026-08-16T01:03:03.399Z",
+      "verified": {
+        "at": "2026-08-16T01:03:03.399Z",
+        "by": "groq/openai/gpt-oss-120b",
+        "accept": true,
+        "note": "verification unavailable (verifier reply was not JSON: )"
+      },
+      "needsManagerReview": true,
+      "ms": 4864
+    },
+    {
+      "id": "wt-msv2wa3n-7ixaq",
+      "title": "VM operations plan for real-time trend job",
+      "type": "analysis",
+      "prompt": "Prepare an operations plan for adding a real-time X/Twitter trend collector to Cryvolmon on a VM. The job should attempt a roughly 20-second collection cycle, log every cycle, persist health and rate-limit state, and expose useful monitoring information. Do not assume a specific X API tier, token, database, or deployment mechanism. Cover systemd scheduling/service design, resource limits, secrets handling, log rotation, backoff, outage behavior, stale-data indicators, dashboards/alerts, and deployment/rollback steps. Deliver: recommended service layout, observability checklist, and failure runbook. Keep the collector isolated from live trading execution.",
+      "maxOutputTokens": 1800,
+      "priority": 4,
+      "review": "manager",
+      "status": "queued",
+      "createdAt": "2026-08-16T00:40:32.291Z",
+      "assigned": null,
+      "resultPath": null,
+      "error": null
+    },
+    {
+      "id": "wt-msv2wa3p-m4ojm",
+      "title": "Worker task breakdown for X trend project",
+      "type": "draft",
+      "prompt": "Turn this project request into an actionable delegation plan for Cryvolmon's background workers: build a near-real-time crypto trend listener for public X/Twitter feeds, targeting approximately one collection cycle every 20 seconds, with raw logging, normalized storage, trend measurement, and monitoring. No API credentials, access tier, endpoint choice, or legal/terms approval is known. Break the work into small independent worker tasks suitable for a foreman, with title, objective, inputs needed, deliverable, dependencies, and acceptance criteria. Include research, schema, analytics, testing, privacy/compliance, and deployment documentation tasks. Do not delegate direct changes to live trading behavior.",
+      "maxOutputTokens": 2000,
+      "priority": 2,
+      "review": "manager",
+      "status": "done",
+      "createdAt": "2026-08-16T00:40:32.293Z",
+      "assigned": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b",
+        "reason": "requires detailed, structured planning and thorough reasoning, best handled by the high‑capacity free model"
+      },
+      "resultPath": "/opt/cryvolmon/data/worker-results/wt-msv2wa3p-m4ojm.md",
+      "error": null,
+      "startedAt": "2026-08-16T00:47:32.717Z",
+      "foreman": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-120b"
+      },
+      "attempts": [
+        {
+          "at": "2026-08-16T00:40:49.382Z",
+          "provider": "groq",
+          "model": "openai/gpt-oss-120b",
+          "error": "foreman rejected result: The plan is missing explicit privacy/compliance and deployment documentation tasks, and the testing task is incomplete (truncated acceptance criteria)."
+        },
+        {
+          "at": "2026-08-16T00:44:10.399Z",
+          "provider": "nvidia",
+          "model": "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
+          "error": "run error: HTTP 404 404 page not found\n"
+        }
+      ],
+      "retries": 2,
+      "finishedAt": "2026-08-16T00:47:38.616Z",
+      "verified": {
+        "at": "2026-08-16T00:47:38.616Z",
+        "by": "groq/openai/gpt-oss-120b",
+        "accept": false,
+        "note": "The plan is mostly complete but missing a dedicated deployment documentation task and the TS-01 testing task is truncated/incomplete. Add a deployment docs ticket and finish the end‑to‑end integration"
+      },
+      "needsManagerReview": true,
+      "ms": 4295
     }
   ]
 }

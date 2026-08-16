@@ -6,6 +6,7 @@ import { resolveExchangeKey, setExchangeKeys } from "./exchange-keys";
 import {
   managerChat,
   managerChatWithTools,
+  appendCouncilConversation,
   agentChat,
   runCouncil,
   tuneStrategy,
@@ -23,7 +24,7 @@ import { priceFeed } from "./ws-price-feed";
 import { insertStrategySchema } from "@shared/schema";
 import { z } from "zod";
 import { resolve, relative, isAbsolute, dirname, join } from "node:path";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { getFreeModels, pingModel, FREE_MODEL_REGISTRY } from "./free-models";
 import { getSlot, AGENT_POSITIONS, selectFallbackModel } from "./council";
@@ -221,6 +222,17 @@ export async function registerRoutes(
     } catch (error) {
       res.status(500).json({ message: "Failed to refresh data" });
     }
+  });
+
+  // === X live-data token: write-only from the UI, never returned ===
+  app.post("/api/live-data/x", (req, res) => {
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    if (!token) return res.status(400).json({ message: "Token required" });
+    const path = join(PROJECT_ROOT, "data", "x-feed-token.json");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ token, updatedAt: new Date().toISOString() }), { encoding: "utf8", mode: 0o600 });
+    chmodSync(path, 0o600);
+    res.json({ saved: true });
   });
 
   // === API Connection Status ===
@@ -1496,8 +1508,12 @@ export async function registerRoutes(
     await archiveCouncilMessage({ sessionId, mode, position: position || "manager", role: "user", content: message });
     try {
       if (mode === "manager") {
+        appendCouncilConversation({ role: "user", content: message });
         const reply = await managerChatWithTools(turns, toolsToken);
-        if (reply.content) await archiveCouncilMessage({ sessionId, mode, position: "manager", role: "assistant", provider: reply.provider, model: reply.model, content: reply.content });
+        if (reply.content) {
+          appendCouncilConversation({ role: "assistant", content: reply.content, meta: { provider: reply.provider, model: reply.model } });
+          await archiveCouncilMessage({ sessionId, mode, position: "manager", role: "assistant", provider: reply.provider, model: reply.model, content: reply.content });
+        }
         res.json({ mode: "manager", configured: isAnyAgentConfigured(), slots: getAgentSlots(), reply });
       } else if (mode === "agent") {
         if (!position) return res.status(400).json({ message: "An agent position is required." });

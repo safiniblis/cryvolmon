@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-16T00:25:52.818Z",
+  "updatedAt": "2026-08-16T01:03:20.930Z",
   "entries": [
     {
       "at": "2026-08-15T18:52:00.000Z",
@@ -60,6 +60,14 @@
     {
       "at": "2026-08-16T00:25:52.818Z",
       "text": "The council header/clear-conversation UI is present in source and production dist, but the running service started before the latest bundle; queued restart and committed verification as d697334."
+    },
+    {
+      "at": "2026-08-16T00:30:05.200Z",
+      "text": "The deployed Council bundle had the prior header, but the control was only a small trash icon; made it visibly labeled 'New chat' with a 'New conversation' badge in commit 05a0e34."
+    },
+    {
+      "at": "2026-08-16T01:03:20.930Z",
+      "text": "Added and verified the Dashboard Live Data X token tile; token is write-only from the UI, stored server-side in data/x-feed-token.json with 0600 permissions and ignored by git. This stores the credential but does not yet start the X polling"
     }
   ]
 }

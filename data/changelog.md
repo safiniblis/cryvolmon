@@ -27,3 +27,16 @@
 - 2026-08-16T00:25:49.230Z — Verified the council UI change is built in dist and served by the VM; queued a service restart to ensure the running process reloads the current production bundle.
 - 2026-08-16T00:28:39.358Z — Manager accepted worker task wt-msuy9zeh-yjimi "Ollama on this VM" (The four-line operational tip is complete, accurate, and matches the requested Ollama caveats.)
 - 2026-08-16T00:30:01.285Z — Made the Council chat controls visibly explicit with a labeled New chat button and New conversation badge; type-check and production build passed.
+
+- 2026-08-16T00:40:49.383Z — Worker wt-msv2wa3p-m4ojm "Worker task breakdown for X trend project" result rejected by foreman (The plan is missing explicit privacy/compliance and deployment documentation tasks, and the testing task is incomplete (truncated acceptance criteria).) — re-queued for rework (attempt 1/2).
+- 2026-08-16T00:44:10.400Z — Worker wt-msv2wa3p-m4ojm "Worker task breakdown for X trend project" failed (run error: HTTP 404 404 page not found
+) — re-queued for foreman reassignment (attempt 2/2).
+- 2026-08-16T00:47:38.617Z — Worker wt-msv2wa3p-m4ojm "Worker task breakdown for X trend project" done via groq/openai/gpt-oss-120b (foreman accepted-with-reservations) in 4s — queued for manager review.
+- 2026-08-16T00:50:25.729Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (2x fail) -> groq/openai/gpt-oss-120b (199ms)
+- 2026-08-16T00:50:47.729Z — Worker wt-msv2wa3k-ircct "X trend listener architecture plan" result rejected by foreman (Missing sections: risks and blockers, and acceptance checklist are not provided. The result is incomplete per the job requirements.) — re-queued for rework (attempt 1/2).
+- 2026-08-16T00:53:44.341Z — Worker wt-msv2wa3k-ircct "X trend listener architecture plan" failed (run error: HTTP 404 404 page not found
+) — re-queued for foreman reassignment (attempt 2/2).
+- 2026-08-16T00:56:54.816Z — Worker wt-msv2wa3k-ircct "X trend listener architecture plan" done via groq/openai/gpt-oss-20b (foreman accepted-with-reservations) in 2s — queued for manager review.
+- 2026-08-16T01:00:01.276Z — Worker wt-msv2wa3m-5x7vu "Trend data model and scoring design" result rejected by foreman (The submission is incomplete and missing several required elements: the duplicate detection section is cut off, there are no explicit definitions for velocity, confidence scores, trend lifecycle state) — re-queued for rework (attempt 1/2).
+- 2026-08-16T01:03:03.400Z — Worker wt-msv2wa3m-5x7vu "Trend data model and scoring design" done via groq/openai/gpt-oss-120b (foreman accepted) in 5s — queued for manager review.
+- 2026-08-16T01:03:20.929Z — Added a small Dashboard Live Data tile for X with a password-style token dialog, server-only storage, protected file permissions, and token exclusion from git; TypeScript check and production build passed.

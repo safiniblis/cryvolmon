@@ -324,11 +324,13 @@ export async function registerRoutes(
       if (!client) return res.json({ status: "exchange_not_configured", contract: "E-XAUT-USDT", mark: null, budget: cfg.baseCapital ?? null, orderCount, lastCycle: strategy.lastRunAt ?? null, error: "Bitrue keys are not configured" });
       const markResponse: any = await client.getMarkPrice("E-XAUT-USDT");
       const mark = Number(markResponse?.tagPrice || markResponse?.indexPrice || 0);
+      const availableBudget = await client.getAvailableUsdt();
       const positionResponse: any = await client.getPositions("E-XAUT-USDT");
       const { BitrueClient } = await import("./bitrue");
       const positions = BitrueClient.extractPositions(positionResponse);
       const position = positions.find((p: any) => Number(p.volume || p.holdVol || p.qty || p.openVol || 0) > 0);
-      return res.json({ status: strategy.status, contract: "E-XAUT-USDT", mark: mark > 0 ? mark : null, budget: Number.isFinite(Number(cfg.baseCapital)) ? Number(cfg.baseCapital) : null, orderCount, lastCycle: strategy.lastRunAt ?? null, position: position ? { quantity: Number(position.volume || position.holdVol || position.qty || position.openVol || 0), entry: Number(position.avgOpenPrice || position.avgPrice || position.openPrice || 0) || null } : null, error: mark > 0 ? (cfg.lastError || null) : "Exchange returned no mark price" });
+      const budget = Number.isFinite(availableBudget) && availableBudget > 0 ? availableBudget : null;
+      return res.json({ status: strategy.status, contract: "E-XAUT-USDT", exchange: "Bitrue", mark: mark > 0 ? mark : null, budget, configuredBudget: Number.isFinite(Number(cfg.baseCapital)) ? Number(cfg.baseCapital) : null, budgetSource: "bitrue", orderCount, lastCycle: strategy.lastRunAt ?? null, position: position ? { quantity: Number(position.volume || position.holdVol || position.qty || position.openVol || 0), entry: Number(position.avgOpenPrice || position.avgPrice || position.openPrice || 0) || null } : null, error: mark > 0 ? (cfg.lastError || null) : "Exchange returned no mark price" });
     } catch (e: any) {
       res.json({ status: "error", contract: "E-XAUT-USDT", mark: null, budget: null, orderCount: 0, lastCycle: null, error: e?.message || "Gold health check failed" });
     }

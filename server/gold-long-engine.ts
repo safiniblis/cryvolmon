@@ -364,7 +364,17 @@ async function activateSlot(
 async function handleEntry(strategy: Strategy): Promise<void> {
   const client = getBitrueClient()!;
   const cfg    = strategy.config as any;
-  const { baseCapital } = cfg;
+  const configuredCapital = Number(cfg.baseCapital || 0);
+  const availableBudget = await client.getAvailableUsdt();
+  if (!Number.isFinite(availableBudget) || availableBudget <= 0) {
+    const msg = "Bitrue returned no usable USDT futures balance; gold entry is blocked";
+    console.error(`[Gold Long #${strategy.id}] ${msg}`);
+    await saveConfig(strategy, { lastActionAt: Date.now(), lastError: msg, budgetSource: "bitrue" });
+    return;
+  }
+  // Gold budget is Bitrue-only; configured capital is a ceiling, never an override.
+  const baseCapital = configuredCapital > 0 ? Math.min(configuredCapital, availableBudget) : availableBudget;
+  await saveConfig(strategy, { baseCapital, availableBudget, budgetSource: "bitrue" });
   const now = Date.now();
   const id  = strategy.id;
 

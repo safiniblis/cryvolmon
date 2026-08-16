@@ -54,3 +54,11 @@
 - 2026-08-16T12:36:59.718Z — Added a read-only Gold Engine Health endpoint and dashboard tile for E-XAUT-USDT status, mark, budget, and tracked orders; TypeScript check and production build passed.
 
 - 2026-08-16T12:55:25.380Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (5x fail) -> groq/openai/gpt-oss-120b (199ms)
+- 2026-08-16T14:45:25.608Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (6x fail) -> groq/openai/gpt-oss-120b (266ms)
+- 2026-08-16T15:57:46.742Z â€” Manager rework worker task wt-msv2wa3n-7ixaq "VM operations plan for real-time trend job" (The response is incomplete and lacks a health-check endpoint for the live gold mark price) â€” sent back through foreman/worker for rework with actionable feedback (attempt 1/2).
+
+- 2026-08-16T15:58:13.333Z — Worker wt-msv2wa3n-7ixaq "VM operations plan for real-time trend job" result rejected by foreman (The response is incomplete: missing sections on log rotation, full observability checklist, dashboards/alerts, deployment/rollback steps, and a detailed failure runbook. It stops mid‑sentence and does) — re-queued for rework (attempt 2/2).
+- 2026-08-16T16:01:06.548Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (7x fail) -> groq/openai/gpt-oss-120b (259ms)
+- 2026-08-16T16:01:19.190Z — Worker wt-msv2wa3n-7ixaq "VM operations plan for real-time trend job" failed permanently after 2 attempts: run error: HTTP 404 404 page not found
+- 2026-08-16T16:33:40.327Z â€” Proposed gold grid-bot params: grid step 0.5%, order size 0.5% of 41.27 USDT budget (~0.2065 contract units), max 10 orders, liquidation guard at 3,939.39 USDT. Logged for review.
+- 2026-08-16T16:44:04.805Z â€” Separated gold budget handling from Bitunix: gold entry and health now read available USDT from Bitrue only, with configured capital as a ceiling; TypeScript check and production build passed.

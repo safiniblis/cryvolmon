@@ -2,7 +2,11 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { resumeInterruptedJob } from "./council";
+
+const execFileAsync = promisify(execFile);
 
 const app = express();
 const httpServer = createServer(app);
@@ -91,12 +95,56 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+
+  // Bind exclusively. reusePort is intentionally NOT set: it let a duplicate
+  // `node dist/index.cjs` silently co-listen on :5000 (e.g. a manager-started
+  // verification run) and load-balance stale vs new bundles, causing 404s and lag.
+  // With an exclusive bind, a duplicate listener instead fails loudly with
+  // EADDRINUSE and is caught by the error handler below.
+  const listenOptions = {
+    port,
+    host: "0.0.0.0",
+  };
+
+  // Before binding, kill any stale duplicate listeners (other node processes
+  // running dist/index.cjs) so the systemd-managed process always owns the port.
+  // This is what makes `systemctl restart` reliable: the old bundle's process is
+  // gone before the new one binds, instead of both fighting over :5000.
+  async function clearStaleListeners(): Promise<void> {
+    if (process.platform === "win32") return;
+    try {
+      const { stdout } = await execFileAsync("pgrep", ["-f", "dist/index.cjs"], { timeout: 10_000 });
+      const mine = String(process.pid);
+      for (const pid of stdout.split("\n").map((s) => s.trim()).filter(Boolean)) {
+        if (pid === mine) continue;
+        log(`killing stale duplicate listener (pid ${pid})`, "startup");
+        try {
+          process.kill(Number(pid), "SIGTERM");
+        } catch {
+          // Already gone; ignore.
+        }
+      }
+    } catch {
+      // pgrep not available or no matches â€” nothing to clean up.
+    }
+  }
+
+  await clearStaleListeners();
+
+  httpServer.on("error", (err: any) => {
+    if (err?.code === "EADDRINUSE") {
+      console.error(
+        `FATAL: another process is already listening on port ${port} ` +
+          `(and it did not match dist/index.cjs, so it was not auto-cleaned). ` +
+          `Refusing to co-bind. Find and stop it, then restart the service.`,
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
+
   httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: process.platform !== "win32",
-    },
+    listenOptions,
     () => {
       log(`serving on port ${port}`);
       // Fire-and-forget: if the manager left an in-progress job, wake it to continue.

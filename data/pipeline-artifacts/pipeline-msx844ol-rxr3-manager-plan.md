@@ -1,1 +1,1 @@
-REVISE_PLAN: First inspect and name the actual current pipeline/provider files and test runner; define migration/rollback without clearing council-conversation.json, consistent memory filenames/schema, per-role access rules, and an integration test using the real pipeline entry point.
+REVISE_PLAN: Name the real target files and existing interfaces; do not create fake session state or placeholder trackers, include all authorized roles consistently, and specify restart-safe validation plus tests before Builder proceeds.

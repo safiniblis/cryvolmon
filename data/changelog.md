@@ -75,3 +75,4 @@
 - 2026-08-16T22:19:37.832Z — Worker wt-mswbjx1w-2ftkp "Nightly summary 2026-08-16" failed permanently after 2 attempts: run error: fetch failed
 - 2026-08-17T13:00:27.530Z — Seat watchdog: SWITCH architect: opencode/claude-sonnet-4 (2x fail) -> groq/openai/gpt-oss-120b (378ms)
 - 2026-08-17T13:19:19.715Z — Added a Remove control for stopped pipeline loops; it clears the saved loop state and its saved artifacts after confirmation, while running jobs still require cancellation first. TypeScript check and production build passed.
+- 2026-08-17T13:26:31.666Z — Recovered the Architect seat from an exhausted Abacus model to healthy Groq GPT-OSS 120B, stopped startup logic from silently replacing that valid seat, and capped pipeline context at 3,500 characters to leave room below the provider’s 8k request limit; TypeScript check, production build, and live Architect probe passed.

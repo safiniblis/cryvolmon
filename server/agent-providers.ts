@@ -33,11 +33,6 @@ function loadPersistedOverrides(): void {
         slot.baseUrl = PROVIDER_DEFAULTS.groq.baseUrl;
         slot.model = "openai/gpt-oss-120b";
       }
-      if (slot.position === "architect" && slot.provider === "groq" && /^openai\/gpt-oss/.test(slot.model || "")) {
-        slot.provider = "openrouter";
-        slot.baseUrl = PROVIDER_DEFAULTS.openrouter.baseUrl;
-        slot.model = "openrouter/free";
-      }
       overrides.set(slot.position, {
         provider: slot.provider,
         baseUrl: slot.baseUrl,

@@ -16,8 +16,8 @@ import {
   probeAllSeats,
   startPipeline,
   cancelPipeline,
-  resumePipeline,
   removePipeline,
+  resumePipeline,
   getPipelineState,
   startStrategyById,
   type ChatTurn,
@@ -1588,15 +1588,6 @@ export async function registerRoutes(
     res.json({ ok: true, resumed: getPipelineState()?.status === "running" });
   });
 
-  app.delete("/api/pipeline", (_req, res) => {
-    try {
-      const removed = removePipeline();
-      res.json({ ok: true, removed });
-    } catch (e: any) {
-      res.status(409).json({ message: e.message });
-    }
-  });
-
   // === Strategy launch (used by the trader seat) ===
   app.post("/api/strategies/:id/agent-start", async (req, res) => {
     const id = parseInt(req.params.id);
@@ -1718,6 +1709,11 @@ export async function registerRoutes(
       return res.status(503).json({ message: "No working fallback model found — every free model is down or rate-limited.", slots: getAgentSlots() });
     }
     res.json({ healed: true, from: current.model, to: pick.model, slots: getAgentSlots() });
+  });
+
+  app.delete("/api/pipeline", (_req, res) => {
+    removePipeline();
+    res.json({ ok: true });
   });
 
   app.post("/api/strategies/:id/council-tune", async (req, res) => {

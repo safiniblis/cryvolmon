@@ -348,25 +348,23 @@ export function usePipelineCancel() {
   });
 }
 
+export function usePipelineRemove() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", "/api/pipeline");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/pipeline/status"] }),
+  });
+}
+
 export function usePipelineResume() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/pipeline/resume", {});
       return (await res.json()) as { ok: boolean; resumed: boolean };
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pipeline/status"] });
-    },
-  });
-}
-
-export function usePipelineRemove() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("DELETE", "/api/pipeline", undefined);
-      return (await res.json()) as { ok: boolean; removed: boolean };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/pipeline/status"] });

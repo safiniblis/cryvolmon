@@ -1,1 +1,1 @@
-BUILD_PLAN_ERROR: HTTP 400 {"type":"error","error":{"type":"api_error","message":"Error from provider (Console): Upstream request failed: Model is unavailable."}}
+BUILD_PLAN_ERROR: HTTP 429 {"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1787011200000"},"limit_source":"openrouter_free_tier_daily","remedy_hi

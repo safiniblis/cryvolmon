@@ -346,7 +346,8 @@ function PipelinePanel() {
               <Badge variant="outline">loop {state.loop}/{state.maxLoop}</Badge>
               <Badge variant="outline" className="font-mono">{state.id}</Badge>
               {running && <Button size="sm" variant="destructive" className="h-6 text-[10px] ml-auto" disabled={cancel.isPending} onClick={() => cancel.mutate()}><Square className="h-3 w-3 mr-1" />Cancel</Button>}
-              {!running && state.stage !== "done" && state.status !== "approved" && <div className="ml-auto flex gap-1"><Button size="sm" className="h-6 text-[10px]" disabled={resume.isPending} onClick={() => resume.mutate()}><RefreshCcw className="h-3 w-3 mr-1" />Resume</Button><Button size="sm" variant="outline" className="h-6 text-[10px]" disabled={remove.isPending} onClick={() => { if (window.confirm("Remove this stopped pipeline and its saved artifacts? This cannot be undone.")) remove.mutate(); }}><X className="h-3 w-3 mr-1" />Remove</Button></div>}
+              {!running && state.stage !== "done" && state.status !== "approved" && <Button size="sm" className="h-6 text-[10px] ml-auto" disabled={resume.isPending} onClick={() => resume.mutate()}><RefreshCcw className="h-3 w-3 mr-1" />Resume</Button>}
+              {!running && <Button size="sm" variant="outline" className="h-6 text-[10px]" disabled={remove.isPending} onClick={() => { if (confirm("Remove this pipeline run? Code, strategies, and exchange state will not be changed.")) remove.mutate(); }}>Remove</Button>}
             </div>
 
             <div className="text-xs">

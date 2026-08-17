@@ -76,3 +76,7 @@
 - 2026-08-17T13:00:27.530Z — Seat watchdog: SWITCH architect: opencode/claude-sonnet-4 (2x fail) -> groq/openai/gpt-oss-120b (378ms)
 - 2026-08-17T13:19:19.715Z — Added a Remove control for stopped pipeline loops; it clears the saved loop state and its saved artifacts after confirmation, while running jobs still require cancellation first. TypeScript check and production build passed.
 - 2026-08-17T13:26:31.666Z — Recovered the Architect seat from an exhausted Abacus model to healthy Groq GPT-OSS 120B, stopped startup logic from silently replacing that valid seat, and capped pipeline context at 3,500 characters to leave room below the provider’s 8k request limit; TypeScript check, production build, and live Architect probe passed.
+- 2026-08-17T13:28:01.767Z — Further hardened Architect recovery: reduced the shared pipeline snapshot to 1,800 characters so its instructions, tool definitions, plan request, and completion reserve remain below Groq's 8k request limit; TypeScript check and production build passed.
+
+- 2026-08-17T13:36:10.200Z — Seat watchdog: SWITCH architect: openrouter/openrouter/free (2x fail) -> groq/openai/gpt-oss-120b (196ms)
+- 2026-08-17T13:42:01.019Z — Recovered the Architect seat from an unauthorized mixed endpoint to Groq GPT-OSS 120B and capped pipeline handoff context at 3,500 characters; Architect probe, TypeScript check, and production build passed without trading changes.

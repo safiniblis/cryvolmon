@@ -33,6 +33,14 @@ function loadPersistedOverrides(): void {
         slot.baseUrl = PROVIDER_DEFAULTS.groq.baseUrl;
         slot.model = "openai/gpt-oss-120b";
       }
+      if (slot.position === "architect" && slot.provider === "groq" && /^openai\/gpt-oss/.test(slot.model || "")) {
+        slot.provider = "openrouter";
+        slot.baseUrl = PROVIDER_DEFAULTS.openrouter.baseUrl;
+        slot.model = "openrouter/free";
+      }
+      if (slot.provider && PROVIDER_BASE_URLS[slot.provider]) {
+        slot.baseUrl = PROVIDER_BASE_URLS[slot.provider];
+      }
       overrides.set(slot.position, {
         provider: slot.provider,
         baseUrl: slot.baseUrl,
@@ -377,13 +385,14 @@ export function setAgentOverrides(
   for (const p of positions) {
     if (!AGENT_ROLES.some((r) => r.position === p.position)) continue;
     const cur = { ...(overrides.get(p.position) ?? {}) };
+    const providerChanged = !!p.provider && p.provider !== cur.provider;
     if (p.provider && PROVIDER_DEFAULTS[p.provider]) {
       cur.provider = p.provider;
-      // Switching provider resets to its defaults unless explicitly overridden.
-      if (!p.baseUrl) cur.baseUrl = PROVIDER_DEFAULTS[p.provider].baseUrl;
+      // Provider changes always reset the endpoint; never carry another provider's URL.
+      if (providerChanged || !p.baseUrl) cur.baseUrl = PROVIDER_DEFAULTS[p.provider].baseUrl;
       if (!p.model) cur.model = PROVIDER_DEFAULTS[p.provider].model;
     }
-    if (p.baseUrl) cur.baseUrl = p.baseUrl;
+    if (p.baseUrl && !providerChanged) cur.baseUrl = p.baseUrl;
     if (p.model) cur.model = p.model;
     // Do NOT silently rewrite manager model. Operator choice is final.
     if (p.apiKey !== undefined) cur.apiKey = p.apiKey === "" ? null : p.apiKey;

@@ -40,7 +40,7 @@ import {
   clampManaged,
   type ManagedParamKey,
 } from "./managed-params";
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, unlinkSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -1207,8 +1207,8 @@ export async function runPipeline(jobId: string): Promise<void> {
   pipelineInFlight = true;
   pipelineCancelled = false;
   try {
-    // Keep the full request below the Architect provider's 8k TPM limit; the
-    // role instructions, order, and requested plan also consume that budget.
+    // Keep pipeline handoffs below the Architect provider's 8k request limit;
+    // role instructions, the job order, and expected output consume the rest.
     const context = (await buildAppContext()).slice(0, 3500);
     const approved = process.env.COUNCIL_AGENT_TOOLS_ENABLED !== "false";
     const exec = (allowRestart: boolean) => (name: string, args: Record<string, unknown>) =>
@@ -1490,25 +1490,10 @@ export function cancelPipeline(): PipelineState | null {
   return getPipelineState();
 }
 
-/** Remove a stopped pipeline's saved state and its private artifacts. Running jobs must be cancelled first. */
-export function removePipeline(): boolean {
-  const state = getPipelineState();
-  if (!state) return false;
-  if (state.status === "running") throw new Error("Cancel the running pipeline before removing it.");
-
+export function removePipeline(): void {
   pipelineCancelled = true;
-  try {
-    if (existsSync(PIPELINE_ARTIFACT_DIR())) {
-      for (const file of readdirSync(PIPELINE_ARTIFACT_DIR())) {
-        if (file.startsWith(`${state.id}-`)) rmSync(join(PIPELINE_ARTIFACT_DIR(), file), { force: true });
-      }
-    }
-    if (existsSync(PIPELINE_STATE_FILE())) unlinkSync(PIPELINE_STATE_FILE());
-    pipelineState = null;
-    return true;
-  } catch (e: any) {
-    throw new Error(`Could not remove pipeline: ${e.message}`);
-  }
+  pipelineState = null;
+  try { unlinkSync(PIPELINE_STATE_FILE()); } catch {}
 }
 
 /**

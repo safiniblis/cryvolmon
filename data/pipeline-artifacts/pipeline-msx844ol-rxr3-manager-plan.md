@@ -1,1 +1,1 @@
-REVISE_PLAN: Name the real target files and existing interfaces; do not create fake session state or placeholder trackers, include all authorized roles consistently, and specify restart-safe validation plus tests before Builder proceeds.
+REVISE_PLAN: No build plan was produced because the Architect hit its daily rate limit; restore provider capacity or wait for reset, then regenerate the plan before Builder work.

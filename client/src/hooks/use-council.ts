@@ -306,6 +306,7 @@ export interface PipelineState {
   maxLoop: number;
   status: "running" | "approved" | "blocked" | "failed";
   summary: string;
+  errorAnalysis?: string;
   managerOrder?: string;
   buildPlan?: string;
   planFeedback?: string;

@@ -1,0 +1,1 @@
+REVISE_PLAN: Remove the circular requirement that all four handoffs succeed before Builder begins; require only Architect provider recovery first, then run Builder, Auditor approval, final Manager review, and only then restart.

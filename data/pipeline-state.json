@@ -1,44 +1,36 @@
 {
-  "id": "pipeline-msxaq6dq-z65v",
-  "goal": "test the pipeline your on top of",
-  "createdAt": "2026-08-17T13:55:16.814Z",
-  "updatedAt": "2026-08-17T13:59:00.539Z",
-  "stage": "manager-plan",
+  "id": "pipeline-msxbcsw3-bjup",
+  "goal": "Run the complete Manager → Architect → Manager review → Builder → Auditor → Manager final-gate pipeline as a live smoke test. This is documentation-only. Do not create new pipeline artifact files in the repository; the server records pipeline artifacts automatically. Builder may append one concise note to existing data/changelog.md and run the existing type-check and production-build commands. Do not modify trading logic, exchange settings, credentials, strategies, orders, positions, balances, leverage, capital, tickers, risk behavior, or service configuration.",
+  "createdAt": "2026-08-17T14:12:52.419Z",
+  "updatedAt": "2026-08-17T14:13:14.577Z",
+  "stage": "builder",
   "loop": 0,
   "maxLoop": 5,
   "status": "running",
-  "summary": "test the pipeline your on top of",
+  "summary": "Run the complete Manager → Architect → Manager review → Builder → Auditor → Manager final-gate pipeline as a live smoke test. This is documentation-only. Do not create new pipeline artifact files in the repository; the server records pipeline artifacts automatically. Builder may append one concise note to existing data/changelog.md and run the existing type-check and production-build commands. Do not modify trading logic, exchange settings, credentials, strategies, orders, positions, balances, leverage, capital, tickers, risk behavior, or service configuration.",
   "history": [
     {
       "stage": "order",
       "position": "manager",
-      "at": "2026-08-17T13:55:21.048Z",
-      "summary": "## GOAL Run a safe end-to-end pipeline smoke test using a harmless documentation-only job. ## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed) No trading logic, strategy settings, exchange credentials, orders, or service behavior may change. ## ACCEPTANC",
-      "artifact": "data/pipeline-artifacts/pipeline-msxaq6dq-z65v-order.md"
+      "at": "2026-08-17T14:12:56.129Z",
+      "summary": "## GOAL Run the full live smoke-test pipeline for a documentation-only job, with no product or trading changes. ## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed) No source, trading, exchange, credential, service, strategy, order, position, balance, or ",
+      "artifact": "data/pipeline-artifacts/pipeline-msxbcsw3-bjup-order.md"
     },
     {
       "stage": "architect",
       "position": "architect",
-      "at": "2026-08-17T13:55:21.170Z",
-      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
-      "artifact": "data/pipeline-artifacts/pipeline-msxaq6dq-z65v-architect.md"
+      "at": "2026-08-17T14:13:09.269Z",
+      "summary": "## Recommendation Proceed with a documentation-only smoke test. The only permitted file change is one concise appended entry in `data/changelog.md`. ## Build Plan (ordered steps: file → exact change → why) 1. **No file → confirm clean scope →** Verify the job requires no source, trading, exchange, c",
+      "artifact": "data/pipeline-artifacts/pipeline-msxbcsw3-bjup-architect.md"
     },
     {
       "stage": "manager-plan",
       "position": "manager",
-      "at": "2026-08-17T13:58:59.956Z",
-      "summary": "The Architect seat had a mismatched provider/endpoint setup, causing the 403—not a prompt-size issue. I switched it to authenticated Groq GPT-OSS 120B and verified a live Architect reply. No trading or exchange settings changed. RECOVERY_FIXED: Architect provider is healthy.",
-      "artifact": "data/pipeline-artifacts/pipeline-msxaq6dq-z65v-manager-plan.md"
-    },
-    {
-      "stage": "architect",
-      "position": "architect",
-      "at": "2026-08-17T13:59:00.539Z",
-      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10481, please reduce your message size and try again. Need more tokens? Upgrad",
-      "artifact": "data/pipeline-artifacts/pipeline-msxaq6dq-z65v-architect.md"
+      "at": "2026-08-17T14:13:14.577Z",
+      "summary": "APPROVE_PLAN",
+      "artifact": "data/pipeline-artifacts/pipeline-msxbcsw3-bjup-manager-plan.md"
     }
   ],
-  "managerOrder": "## GOAL\nRun a safe end-to-end pipeline smoke test using a harmless documentation-only job.\n\n## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed)\nNo trading logic, strategy settings, exchange credentials, orders, or service behavior may change.\n\n## ACCEPTANCE CRITERIA (how we know the job is done AND running)\nPipeline completes Architect → Builder → Auditor without retries or blockage; a dated smoke-test note is recorded; checks and production build pass; service remains running.\n\n## FILES-TO-TOUCH (your best guess of the files involved)\ndata/changelog.md",
-  "buildPlan": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10481, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at http",
-  "recoveryCount": 1
+  "managerOrder": "## GOAL\nRun the full live smoke-test pipeline for a documentation-only job, with no product or trading changes.\n\n## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed)\nNo source, trading, exchange, credential, service, strategy, order, position, balance, or risk-setting changes. Do not create pipeline artifact files. Builder may only append one concise note to `data/changelog.md`.\n\n## ACCEPTANCE CRITERIA (how we know the job is done AND running)\nManager plan approved; Architect plan reviewed by Manager; Builder completes the permitted changelog note and passes existing type-check and production build; Auditor approves; Manager final gate confirms all constraints held. No service restart is needed.\n\n## FILES-TO-TOUCH (your best guess of the files involved)\n`data/changelog.md` only (optional single concise appended note).",
+  "buildPlan": "## Recommendation\n\nProceed with a documentation-only smoke test. The only permitted file change is one concise appended entry in `data/changelog.md`.\n\n## Build Plan (ordered steps: file → exact change → why)\n\n1. **No file → confirm clean scope →** Verify the job requires no source, trading, exchange, credential, service, strategy, order, position, balance, or risk changes.\n2. **`data/changelog.md` → append one concise note only after successful completion →** Record that the live smoke-test pipeline completed, type-check and production build passed, all constraints held, and no restart was needed.\n3. **No artifact files → create nothing →** Preserve the documentation-only constraint.\n\n## Verification\n\n- **run_check:** `npm run check`\n- **run_build:** `npm run build`\n- **What to look at:** Manager approval, Architect review, Builder success, Auditor approval, and final Manager gate.\n- Confirm the only modified file is `data/changelog.md`.\n- Confirm no service restart or live trading activity occurred.\n\n## Risks\n\n- A failed check or build must stop the pipeline and must not be logged as successful.\n- Any detected change outside `data/changelog.md` is a scope violation.\n- Do not create pipeline artifacts or infer trading results.\n\n## What We Keep As-Is\n\nAll source code, configuration, credentials, services, strategies, exchange behavior, orders, positions, balances, leverage, capital, tickers, and risk settings remain unchanged."
 }

@@ -388,6 +388,7 @@ function PipelinePanel() {
 
             <ArtifactBlock title="Job order (manager)" content={state.managerOrder} />
             <ArtifactBlock title="Build plan (architect)" content={state.buildPlan} />
+            <ArtifactBlock title="Error analysis and proposed patch (not applied)" content={state.errorAnalysis} />
             <ArtifactBlock title="Audit report (auditor)" content={state.auditReport} />
             <ArtifactBlock title="Final review (manager)" content={state.finalReport} />
 

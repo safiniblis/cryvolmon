@@ -825,31 +825,6 @@ function toAgentMessages(messages: ChatTurn[], system: string, context?: string)
   return out;
 }
 
-/**
- * Pipeline member seats often have smaller input limits than the Manager.
- * They can inspect files with tools, so a compact operational brief is safer
- * than injecting the full archive, workspace excerpts, and conversation into
- * every hand-off.
- */
-async function buildPipelineContext(): Promise<string> {
-  try {
-    const strategies = await storage.getStrategies();
-    const strategyRows = strategies.slice(0, 10).map((s) =>
-      `#${s.id} ${s.name} | ${s.type} | ${s.symbol} | ${s.status}`,
-    );
-    const files = workspaceFiles(process.cwd()).sort().slice(0, 160).join(", ");
-    return [
-      "PIPELINE COMPACT CONTEXT",
-      `Strategies: ${strategyRows.length ? strategyRows.join("; ") : "none"}`,
-      `Workspace files: ${files}`,
-      "Use read_file for any source details needed for your stage. Do not assume omitted context is unavailable.",
-      "END PIPELINE COMPACT CONTEXT",
-    ].join("\n").slice(0, 3500);
-  } catch {
-    return "PIPELINE COMPACT CONTEXT\nUse read_file for source details needed for your stage.\nEND PIPELINE COMPACT CONTEXT";
-  }
-}
-
 function memberFromReply(reply: { ok: boolean; content: string | null; error?: string; position: AgentPosition; provider: string; model: string; ms: number }): CouncilMemberResult {
   const def = AGENT_ROLES.find((r) => r.position === reply.position)!;
   return {
@@ -1144,6 +1119,7 @@ export interface PipelineState {
   status: "running" | "approved" | "blocked" | "failed";
   summary: string;
   recoveryCount?: number;
+  errorAnalysis?: string;
   managerOrder?: string;
   buildPlan?: string;
   planFeedback?: string;
@@ -1232,10 +1208,7 @@ export async function runPipeline(jobId: string): Promise<void> {
   pipelineInFlight = true;
   pipelineCancelled = false;
   try {
-    // Do not send the full dashboard/archive context to member seats. Groq's
-    // configured Architect tier has an 8,000-token request limit; the previous
-    // 12,000-character context plus tool schemas exceeded it before planning.
-    const context = await buildPipelineContext();
+    const context = (await buildAppContext()).slice(0, 12000);
     const approved = process.env.COUNCIL_AGENT_TOOLS_ENABLED !== "false";
     const exec = (allowRestart: boolean) => (name: string, args: Record<string, unknown>) =>
       executeManagerTool(name, args, approved, allowRestart);
@@ -1312,23 +1285,25 @@ export async function runPipeline(jobId: string): Promise<void> {
           break;
         }
         case "manager-plan": {
-          if (state.buildPlan?.startsWith("BUILD_PLAN_ERROR") && (state.recoveryCount || 0) < 2) {
-            const recovery = await managerCall([{
-              role: "user",
-              content: `The Architect stage failed before producing a plan:\n\n${state.buildPlan}\n\nDo not ask the Architect to retry blindly. Inspect the live provider/seat configuration and service logs with your tools, identify the failure, repair the provider or prompt-size/configuration issue yourself, and verify the repair. Do not change trading risk, exchange semantics, or strategy parameters. End with RECOVERY_FIXED or RECOVERY_BLOCKED: <reason>.`,
-            }], false);
-            const recoveryContent = recovery.ok && recovery.content ? recovery.content.trim() : `RECOVERY_BLOCKED: ${recovery.error || "no response"}`;
+          if (state.buildPlan?.startsWith("BUILD_PLAN_ERROR")) {
+            const recovery = await chatSlot("manager", toAgentMessages([{
+                role: "user",
+                content: `The ${STAGE_POSITION[state.stage]} stage failed before producing a plan:\n\n${state.buildPlan}\n\nAnalyze why it failed. Inspect the live provider/seat configuration, relevant source, and service logs with read-only tools. Propose a concrete patch with exact files and changes, but do not apply it. Do not retry the failed agent. Do not change trading risk, exchange semantics, or strategy parameters. Reply with exactly these headings:\n## Diagnosis\n## Proposed Patch (not applied)\n## Verification After Approval\n## Approval Required`,
+              },
+            ], `${MANAGER_SYSTEM}\n\nThis is a read-only incident analysis. Do not edit files, restart services, change provider assignments, retry the failed agent, or call any write-capable tool.`, context), {
+              tools: PIPELINE_READ_TOOLS,
+              executeTool: exec(false),
+              timeoutMs: 150_000,
+              maxTokens: 1600,
+            });
+            const recoveryContent = recovery.ok && recovery.content ? recovery.content.trim() : `ANALYSIS_ERROR: ${recovery.error || "no response"}`;
             state.recoveryCount = (state.recoveryCount || 0) + 1;
+            state.errorAnalysis = recoveryContent;
             step.summary = recoveryContent.replace(/\s*\n\s*/g, " ").slice(0, 300);
             step.artifact = writeArtifact(state, "manager-plan", "manager-recovery", recoveryContent);
-            if (/^RECOVERY_BLOCKED\s*:/i.test(recoveryContent)) {
-              state.status = "blocked";
-              state.stage = "blocked";
-              state.summary = recoveryContent.replace(/^RECOVERY_BLOCKED\s*:\s*/i, "").trim();
-            } else {
-              state.stage = "architect";
-              state.planFeedback = undefined;
-            }
+            state.status = "blocked";
+            state.stage = "blocked";
+            state.summary = "Agent error analyzed. Proposed patch is waiting for operator approval; no changes were applied and no retry was started.";
             pushStep();
             break;
           }

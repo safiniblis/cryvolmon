@@ -67,6 +67,7 @@ export type AgentPosition = "manager" | "architect" | "builder" | "auditor" | "t
 export type AgentProvider = "opencode" | "abacus" | "deepseek" | "groq" | "cerebras" | "openrouter" | "hyperbolic" | "nemotron" | "nvidia" | "sambanova" | "mistral" | "hf" | "gemini" | "ovh" | "local";
 
 export const AGENT_POSITIONS: AgentPosition[] = ["manager", "architect", "builder", "auditor", "trader"];
+export const OPERATOR_LOCKED_POSITIONS: ReadonlySet<AgentPosition> = new Set(["manager", "architect", "builder", "auditor"]);
 
 export interface AgentRoleDef {
   position: AgentPosition;
@@ -470,6 +471,7 @@ function managerCandidates(exclude: string): { provider: string; model: string }
  * null when every candidate is down.
  */
 export async function selectFallbackModel(position: AgentPosition, exclude: string): Promise<{ model: string; provider: string } | null> {
+  if (OPERATOR_LOCKED_POSITIONS.has(position)) return null;
   const isManager = position === "manager";
   const candidates = (isManager ? managerCandidates(exclude) : fallbackCandidates(position, exclude)).slice(0, 8);
   for (const c of candidates) {
@@ -544,7 +546,7 @@ export async function chatSlot(
     if ((opts.fallbackDepth ?? 0) >= 1) return null;
     // Never auto-heal manager — operator chose it on purpose.
     // Persisted or runtime slot selections are also operator-locked.
-    if (position === "manager" || overrides.has(position)) return null;
+    if (OPERATOR_LOCKED_POSITIONS.has(position) || overrides.has(position)) return null;
     const hasKeyed = ["openrouter", "groq", "nvidia", "nemotron"].some((p) => resolveSlotKey(p as AgentProvider, null));
     if (!hasKeyed && !KEYLESS_PROVIDERS.has("ovh")) return null;
     const pick = await selectFallbackModel(position, model);

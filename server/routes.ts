@@ -33,6 +33,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "n
 import { timingSafeEqual } from "node:crypto";
 import { getFreeModels, pingModel, FREE_MODEL_REGISTRY } from "./free-models";
 import { getSlot, AGENT_POSITIONS, selectFallbackModel } from "./council";
+import { OPERATOR_LOCKED_POSITIONS } from "./agent-providers";
 const PROJECT_ROOT = resolve(process.cwd());
 let latestCryptoStats: any[] = [];
 const COUNCIL_TUNE_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -1700,7 +1701,7 @@ export async function registerRoutes(
     const parsed = z.object({ position: positionEnum }).safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ message: "A valid position is required." });
     const position = parsed.data.position;
-    if (position === "manager") {
+    if (OPERATOR_LOCKED_POSITIONS.has(position)) {
       return res.status(403).json({ message: `Refusing to auto-heal ${position} — operator lock.`, slots: getAgentSlots() });
     }
     const current = getSlot(position);

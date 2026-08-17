@@ -4,7 +4,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { resumeInterruptedJob } from "./council";
+import { resumeInterruptedJob, resumePipeline } from "./council";
 
 const execFileAsync = promisify(execFile);
 
@@ -125,7 +125,7 @@ app.use((req, res, next) => {
         }
       }
     } catch {
-      // pgrep not available or no matches â€” nothing to clean up.
+      // pgrep not available or no matches — nothing to clean up.
     }
   }
 
@@ -149,6 +149,8 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
       // Fire-and-forget: if the manager left an in-progress job, wake it to continue.
       resumeInterruptedJob();
+      // If a build pipeline was mid-run, resume it from its persisted stage.
+      resumePipeline();
     },
   );
 })();

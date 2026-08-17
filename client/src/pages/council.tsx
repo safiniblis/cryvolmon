@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   ArrowLeft, Send, Users, Loader2, RotateCcw, Sparkles, AlertTriangle,
-  KeyRound, CheckCircle2, Pencil, X, Bot, ShieldCheck, WifiOff, FileCode, Plus, Copy, Check,
-  Hammer, ListChecks,
+  KeyRound, CheckCircle2, Pencil, X, ShieldCheck, WifiOff, FileCode, Plus, Copy, Check,
+  Hammer, ListChecks, Workflow, Play, Square, RefreshCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,9 +14,11 @@ import {
   useCouncilStatus, useBindAgents, useCouncilChat, useStrategyTune,
   useStrategyResetManaged, useReadFile, useWriteFile,
   useCouncilArchive, useWorkerStatus, useWorkerResult,
+  usePipelineStatus, usePipelineRun, usePipelineCancel, usePipelineResume, usePipelineRemove,
   loadLocalAgents, saveLocalAgents, loadLocalPrompts, saveLocalPrompts,
   type AgentPosition, type AgentProvider, type AgentSlotView,
-  type CouncilChatResult, type MemberResult, type TuneResult, DEFAULT_SLOTS,
+  type CouncilChatResult, type TuneResult, type PipelineState, type PipelineStage,
+  DEFAULT_SLOTS,
 } from "@/hooks/use-council";
 import { cn } from "@/lib/utils";
 import { MANAGER_BASE_URL, MANAGER_MODEL } from "@shared/council-config";
@@ -24,9 +26,9 @@ import { MANAGER_BASE_URL, MANAGER_MODEL } from "@shared/council-config";
 interface ChatEntry { role: "user" | "assistant"; content: string; result?: CouncilChatResult; }
 
 const POSITION_COLORS: Record<string, string> = {
-  manager: "border-violet-500/40 bg-violet-500/5", critic: "border-rose-500/40 bg-rose-500/5",
-  architect: "border-blue-500/40 bg-blue-500/5", auditor: "border-amber-500/40 bg-amber-500/5",
-  strategist: "border-emerald-500/40 bg-emerald-500/5",
+  manager: "border-violet-500/40 bg-violet-500/5", architect: "border-blue-500/40 bg-blue-500/5",
+  builder: "border-orange-500/40 bg-orange-500/5", auditor: "border-amber-500/40 bg-amber-500/5",
+  trader: "border-emerald-500/40 bg-emerald-500/5",
 };
 
 const PROVIDER_OPTIONS: { value: AgentProvider; label: string; defaultModel: string; defaultBaseUrl: string }[] = [
@@ -48,7 +50,7 @@ const PROVIDER_OPTIONS: { value: AgentProvider; label: string; defaultModel: str
 ];
 
 const MODEL_OPTIONS: Record<AgentProvider, string[]> = {
-  opencode: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "big-pickle"],
+  opencode: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "claude-sonnet-4", "big-pickle"],
   abacus: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "claude-opus-5", "claude-sonnet-5", "deepseek-ai/DeepSeek-V4-Pro", "grok-4.5"],
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
   groq: ["llama-3.3-70b-versatile", "openai/gpt-oss-20b", "openai/gpt-oss-120b"],
@@ -82,56 +84,30 @@ const MANAGER_CHOICES = [
 ];
 
 const POSITION_COPY: Record<AgentPosition, string> = {
-  manager: "Manager / Builder", critic: "Critic", architect: "Architect", auditor: "Auditor", strategist: "Strategist",
+  manager: "Manager", architect: "Architect", builder: "Builder", auditor: "Auditor", trader: "Trader",
 };
 
 interface EditState { provider: AgentProvider; baseUrl: string; model: string; apiKey: string; prompt: string; }
 
-function MemberCard({ member, busy }: { member: MemberResult; busy?: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    if (!member.content) return;
-    await navigator.clipboard.writeText(member.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <Card className={cn("p-4 border min-h-[90px]", POSITION_COLORS[member.position] || "border-border/40")}>
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="uppercase text-[10px] tracking-wider">{member.title}</Badge>
-          {busy && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-        </div>
-        <div className="flex items-center gap-1">
-          {member.content && <Button variant="ghost" size="icon" className="h-6 w-6" onClick={copy} title="Copy full response">{copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}</Button>}
-          <span className="text-[10px] font-mono text-muted-foreground">{member.provider}/{member.model}</span>
-        </div>
-      </div>
-      {busy ? <p className="text-xs text-muted-foreground italic">deliberating…</p>
-       : member.ok && member.content
-         ? <>
-             <pre className={`whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90 overflow-y-auto ${expanded ? "max-h-[70vh]" : "max-h-[300px]"}`}>{member.content}</pre>
-             <Button variant="ghost" size="sm" className="h-6 px-1 text-[10px]" onClick={() => setExpanded(!expanded)}>{expanded ? "Collapse" : "Expand full response"}</Button>
-           </>
-        : <p className="text-xs text-destructive">Failed: {member.error || "no response"}</p>}
-    </Card>
-  );
-}
+const PIPELINE_STAGES: Array<{ key: PipelineStage; label: string; position: AgentPosition }> = [
+  { key: "order", label: "Job order", position: "manager" },
+  { key: "architect", label: "Build plan", position: "architect" },
+  { key: "manager-plan", label: "Plan review", position: "manager" },
+  { key: "builder", label: "Implementation", position: "builder" },
+  { key: "auditor", label: "Audit", position: "auditor" },
+  { key: "manager-final", label: "Final gate + reboot", position: "manager" },
+];
 
-function CouncilReply({ result }: { result: CouncilChatResult }) {
-  const members = result.members || [];
-  return (<div className="space-y-2 mt-2">
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">{members.map(m => <MemberCard key={m.position} member={m} />)}</div>
-    {result.synthesis && (
-      <Card className="p-4 border-primary/50 bg-primary/5">
-        <div className="flex items-center gap-2 mb-2"><Sparkles className="h-3.5 w-3.5 text-primary" /><span className="text-xs font-semibold uppercase tracking-wider">Manager — Decision ({result.synthesis.model})</span></div>
-        {result.synthesis.ok && result.synthesis.content
-          ? <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/95">{result.synthesis.content}</pre>
-          : <p className="text-xs text-destructive">Synthesis failed: {result.synthesis.error}</p>}
-      </Card>)}
-  </div>);
-}
+const STAGE_LABEL: Record<PipelineStage, string> = {
+  order: "Manager — job order",
+  architect: "Architect — build plan",
+  "manager-plan": "Manager — plan review",
+  builder: "Builder — implementation",
+  auditor: "Auditor — review",
+  "manager-final": "Manager — final gate",
+  done: "Done",
+  blocked: "Blocked",
+};
 
 function TuneResultView({ result }: { result: TuneResult }) {
   return (<div className="space-y-3 mt-4">
@@ -322,6 +298,137 @@ function WorkerPanel() {
   );
 }
 
+function ArtifactBlock({ title, content }: { title: string; content?: string }) {
+  const [open, setOpen] = useState(false);
+  if (!content) return null;
+  const preview = content.replace(/\s*\n\s*/g, " ").slice(0, 200);
+  return (
+    <div className="rounded border border-border/30 bg-card/20">
+      <button className="w-full flex items-center justify-between gap-2 px-2 py-1.5 text-left" onClick={() => setOpen(!open)}>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-300">{title}</span>
+        <span className="text-[9px] text-muted-foreground">{open ? "Collapse" : "Expand"}</span>
+      </button>
+      <pre className={cn("whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-foreground/85 px-2 pb-2 overflow-y-auto", open ? "max-h-[340px]" : "max-h-[42px]")}>{open ? content : preview}</pre>
+    </div>
+  );
+}
+
+function PipelinePanel() {
+  const { data: state, isLoading } = usePipelineStatus();
+  const run = usePipelineRun();
+  const cancel = usePipelineCancel();
+  const resume = usePipelineResume();
+  const remove = usePipelineRemove();
+  const [goal, setGoal] = useState("");
+  const [maxLoop, setMaxLoop] = useState(5);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const running = state?.status === "running";
+
+  const stageIndex = (s: PipelineStage) => PIPELINE_STAGES.findIndex((x) => x.key === s);
+  const currentIndex = state ? stageIndex(state.stage) : -1;
+
+  return (
+    <Card>
+      <CardHeader className="py-3 px-4 border-b border-border/40">
+        <CardTitle className="text-sm flex items-center gap-2"><Workflow className="h-4 w-4 text-violet-400" />Build Pipeline</CardTitle>
+        <CardDescription className="text-xs">Manager → Architect (plan) → Manager (review) → Builder (implement) → Auditor (approve/reject) → Manager (final gate + reboot). Rejections loop back to the Architect until the loop budget is spent.</CardDescription>
+      </CardHeader>
+      <CardContent className="px-4 py-3 space-y-3">
+        {isLoading ? <p className="text-xs text-muted-foreground">Loading pipeline…</p> : !state ? (
+          <p className="text-xs text-muted-foreground">No pipeline has run yet. Describe a build goal below to start one.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={state.status === "approved" ? "default" : state.status === "running" ? "secondary" : state.status === "blocked" ? "destructive" : "outline"}>
+                {state.status === "approved" ? <CheckCircle2 className="h-3 w-3 mr-1 text-emerald-400" /> : state.status === "running" ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <AlertTriangle className="h-3 w-3 mr-1" />}
+                {state.status}
+              </Badge>
+              <Badge variant="outline">loop {state.loop}/{state.maxLoop}</Badge>
+              <Badge variant="outline" className="font-mono">{state.id}</Badge>
+              {running && <Button size="sm" variant="destructive" className="h-6 text-[10px] ml-auto" disabled={cancel.isPending} onClick={() => cancel.mutate()}><Square className="h-3 w-3 mr-1" />Cancel</Button>}
+              {!running && state.stage !== "done" && state.status !== "approved" && <div className="ml-auto flex gap-1"><Button size="sm" className="h-6 text-[10px]" disabled={resume.isPending} onClick={() => resume.mutate()}><RefreshCcw className="h-3 w-3 mr-1" />Resume</Button><Button size="sm" variant="outline" className="h-6 text-[10px]" disabled={remove.isPending} onClick={() => { if (window.confirm("Remove this stopped pipeline and its saved artifacts? This cannot be undone.")) remove.mutate(); }}><X className="h-3 w-3 mr-1" />Remove</Button></div>}
+            </div>
+
+            <div className="text-xs">
+              <span className="text-muted-foreground">Goal: </span>
+              <span className="text-foreground/90">{state.goal}</span>
+            </div>
+
+            {/* Stage timeline */}
+            <div className="flex flex-wrap items-center gap-1">
+              {PIPELINE_STAGES.map((stage, i) => {
+                const isDone = currentIndex > i || state.stage === "done";
+                const isCurrent = currentIndex === i;
+                const isBlocked = state.stage === "blocked" && i === currentIndex;
+                return (
+                  <Fragment key={stage.key}>
+                    {i > 0 && <span className={cn("h-px flex-1 min-w-[10px]", isDone || isCurrent ? "bg-violet-500/50" : "bg-border/40")} />}
+                    <div className={cn(
+                      "rounded border px-2 py-1 text-[9px] uppercase tracking-wide",
+                      isBlocked ? "border-red-500/50 text-red-300 bg-red-500/10"
+                      : isCurrent ? "border-violet-500/60 text-violet-200 bg-violet-500/10 animate-pulse"
+                      : isDone ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
+                      : "border-border/40 text-muted-foreground bg-muted/10",
+                    )}>
+                      <span className="flex items-center gap-1">
+                        {isCurrent && running ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : isDone ? <Check className="h-2.5 w-2.5" /> : null}
+                        {stage.label}
+                      </span>
+                    </div>
+                  </Fragment>
+                );
+              })}
+            </div>
+            {state.stage !== "done" && state.stage !== "blocked" && <p className="text-[11px] text-violet-300">Current stage: {STAGE_LABEL[state.stage]}</p>}
+
+            {state.summary && <p className="text-[11px] text-muted-foreground border-l-2 border-violet-500/40 pl-2">{state.summary}</p>}
+            {state.planFeedback && <div className="rounded border border-orange-500/30 bg-orange-500/5 px-2 py-1.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-orange-300 mb-1">Loop feedback</p><pre className="whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-orange-100/80 max-h-32 overflow-y-auto">{state.planFeedback}</pre></div>}
+
+            <ArtifactBlock title="Job order (manager)" content={state.managerOrder} />
+            <ArtifactBlock title="Build plan (architect)" content={state.buildPlan} />
+            <ArtifactBlock title="Audit report (auditor)" content={state.auditReport} />
+            <ArtifactBlock title="Final review (manager)" content={state.finalReport} />
+
+            {state.history.length > 0 && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Run history</p>
+                <div className="space-y-1">
+                  {(showAllHistory ? state.history : state.history.slice(-7)).map((step, i) => (
+                    <div key={i} className="flex items-start gap-2 text-[10px]">
+                      <span className="font-mono text-violet-400 shrink-0 mt-0.5">{step.at.slice(11, 19)}</span>
+                      <span className="font-mono text-muted-foreground shrink-0 mt-0.5">{step.position}</span>
+                      <span className="text-foreground/75 truncate">{step.summary}</span>
+                    </div>
+                  ))}
+                </div>
+                {state.history.length > 7 && <Button variant="ghost" size="sm" className="h-6 px-1 text-[10px]" onClick={() => setShowAllHistory(!showAllHistory)}>{showAllHistory ? "Show last 7" : `View all ${state.history.length} steps`}</Button>}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="border-t border-border/40 pt-3 space-y-2">
+          <textarea
+            className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
+            placeholder="Describe a build goal — e.g. Add a liquidation-price warning to the dashboard; fix the volatile table column ordering."
+            value={goal}
+            disabled={running}
+            onChange={e => setGoal(e.target.value)}
+          />
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] text-muted-foreground shrink-0">Max loops</label>
+            <Input type="number" min={1} max={10} value={maxLoop} disabled={running} onChange={e => setMaxLoop(Math.max(1, Math.min(10, Number(e.target.value) || 5)))} className="h-7 w-20 text-xs" />
+            <Button size="sm" className="ml-auto" disabled={running || run.isPending || goal.trim().length < 10} onClick={() => run.mutate({ goal: goal.trim(), maxLoop })}>
+              {run.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Play className="h-3.5 w-3.5 mr-1" />}Run Pipeline
+            </Button>
+          </div>
+          {run.isError && <p className="text-[11px] text-destructive">{(run.error as Error).message}</p>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CouncilPage() {
   const { data: status, slots, isOffline } = useCouncilStatus();
   const binder = useBindAgents();
@@ -333,7 +440,7 @@ export default function CouncilPage() {
   const writeFile = useWriteFile();
   const archive = useCouncilArchive();
 
-  const [mode, setMode] = useState<"manager" | "council" | "agent">("manager");
+  const [mode, setMode] = useState<"manager" | "agent">("manager");
   const [agentPosition, setAgentPosition] = useState<AgentPosition>("architect");
   const [managerChoice, setManagerChoice] = useState("opencode:gpt-5.6-luna");
   const [messageChannels, setMessageChannels] = useState<Record<string, ChatEntry[]>>({});
@@ -365,16 +472,8 @@ export default function CouncilPage() {
     if (match) setManagerChoice(match.id);
   }, [slots]);
 
-  useEffect(() => {
-    if (boundLocalRef.current) return;
-    const local = loadLocalAgents().filter(slot => slot.position !== "manager");
-    if (local.length > 0) { boundLocalRef.current = true; binder.mutate(local); }
-    else boundLocalRef.current = true;
-  }, []);
-
   const saveSlot = (position: AgentPosition, edit: EditState) => {
     const next = { position, provider: edit.provider, baseUrl: edit.baseUrl, model: edit.model, apiKey: edit.apiKey };
-    saveLocalAgents([...loadLocalAgents().filter(l => l.position !== position), next]);
     const nextPrompts = { ...loadLocalPrompts(), [position]: edit.prompt };
     saveLocalPrompts(nextPrompts);
     setLocalPrompts(nextPrompts);
@@ -427,7 +526,7 @@ export default function CouncilPage() {
     setInput("");
     try {
       const result = await chat.mutateAsync({ message: text, mode, position: mode === "agent" ? agentPosition : undefined, toolsToken: mode === "manager" ? writeToken : undefined, history });
-      const main = result.mode === "council" ? result.synthesis : result.reply;
+      const main = result.reply;
       const content = (main?.ok && main.content) || "No response." + (main?.error ? ` (${main.error})` : "");
       appendMessage({ role: "assistant", content, result });
     } catch (e: any) { appendMessage({ role: "assistant", content: `Request failed: ${e.message}` }); }
@@ -451,6 +550,9 @@ export default function CouncilPage() {
           </div>
         </header>
 
+        {/* Pipeline */}
+        <PipelinePanel />
+
         {/* 5-slot roster */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
           {slots.map(slot => (
@@ -470,25 +572,23 @@ export default function CouncilPage() {
               <CardHeader className="py-3 px-4 border-b border-border/40">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <CardTitle className="text-sm">Ask the team</CardTitle>
-                  <select className="h-7 max-w-[240px] rounded-md border border-input bg-background px-2 text-[11px]" value={mode === "council" ? "council" : mode === "agent" ? agentPosition : "manager"} onChange={e => {
+                  <select className="h-7 max-w-[240px] rounded-md border border-input bg-background px-2 text-[11px]" value={mode === "agent" ? agentPosition : "manager"} onChange={e => {
                     const target = e.target.value;
-                    if (target === "council") setMode("council");
-                    else if (target === "manager") setMode("manager");
+                    if (target === "manager") setMode("manager");
                     else { setMode("agent"); setAgentPosition(target as AgentPosition); }
                   }} disabled={busy} title="Choose who to ask">
                     <option value="manager">Manager</option>
-                    <option value="critic">Critic</option>
                     <option value="architect">Architect</option>
+                    <option value="builder">Builder</option>
                     <option value="auditor">Auditor</option>
-                    <option value="strategist">Strategist</option>
-                    <option value="council">Council</option>
+                    <option value="trader">Trader</option>
                   </select>
                   <select className="h-7 max-w-[220px] rounded-md border border-input bg-background px-2 text-[11px]" value={managerChoice} onChange={e => changeManager(e.target.value)} disabled={busy} title="Change Manager provider/model">
                     {MANAGER_CHOICES.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
                   </select>
                 </div>
                 <CardDescription className="text-xs">
-                   {mode === "manager" ? `Manager (${MANAGER_CHOICES.find(choice => choice.id === managerChoice)?.label || MANAGER_MODEL}) with live operation snapshot.` : mode === "agent" ? "Ask one specialist directly with live operation and workspace context." : "Critic · Architect · Auditor · Strategist debate → Manager decides."}
+                   {mode === "manager" ? `Manager (${MANAGER_CHOICES.find(choice => choice.id === managerChoice)?.label || MANAGER_MODEL}) with live operation snapshot.` : `Ask the ${POSITION_COPY[agentPosition]} directly with live operation and workspace context.`}
                   {isOffline && " (chat needs the server running)"}
                 </CardDescription>
               </CardHeader>
@@ -497,29 +597,21 @@ export default function CouncilPage() {
                 {messages.length === 0 && (
                   <div className="h-full flex flex-col items-center justify-center text-center gap-2 text-muted-foreground">
                     <Users className="h-10 w-10 opacity-30" />
-                    <p className="text-sm">Query the manager · builder · council.</p>
-                    <p className="text-xs opacity-70">Use <code className="text-violet-300">@file path</code> to inject source files as context. Attach files with the 📎 button.</p>
+                    <p className="text-sm">Query the manager or a pipeline seat directly.</p>
+                    <p className="text-xs opacity-70">Use the Build Pipeline above for full implement → audit → reboot runs. Use <code className="text-violet-300">@file path</code> to inject source files as context.</p>
                   </div>
                 )}
                 {messages.map((m, i) => (
                   <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                     <div className={cn("max-w-[92%] rounded-xl px-3 py-2 border", m.role === "user" ? "border-primary/40 bg-primary/10" : "border-border/40 bg-muted/20")}>
-                      {m.role === "assistant" && <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{m.result?.mode === "council" ? `Council → ${m.result.synthesis?.model || "manager"}` : m.result?.mode === "agent" ? `${m.result.position || "agent"} → ${m.result.reply?.model || "agent"}` : "Manager"}</div>}
+                      {m.role === "assistant" && <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{m.result?.mode === "agent" ? `${m.result.position || "agent"} → ${m.result.reply?.model || "agent"}` : "Manager"}</div>}
                       <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">{m.content}</pre>
-                      {m.result?.mode === "council" && <CouncilReply result={m.result} />}
                     </div>
                   </div>
                 ))}
                 {chat.isPending && (
                   <div className="flex justify-start"><div className="max-w-[92%] rounded-xl px-4 py-3 border border-border/40 bg-muted/20 space-y-2">
-                    {mode === "council" ? (<>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {(["critic","architect","auditor","strategist"] as const).map(p => (
-                          <MemberCard key={p} busy member={{ position: p, role: p, title: POSITION_COPY[p], provider: slots.find(s => s.position === p)?.provider || "?", model: slots.find(s => s.position === p)?.model || "…", ok: false, content: null, ms: 0 }} />
-                        ))}
-                      </div>
-                      <p className="text-xs text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Manager synthesizing decision…</p>
-                    </>) : (<p className="text-xs text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />{mode === "agent" ? `${agentPosition} thinking…` : "Manager thinking…"}</p>)}
+                    <p className="text-xs text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />{mode === "agent" ? `${agentPosition} thinking…` : "Manager thinking…"}</p>
                   </div></div>
                 )}
               </CardContent>
@@ -534,7 +626,7 @@ export default function CouncilPage() {
                 )}
                 <div className="flex items-center gap-2 w-full">
                   <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => setShowFileAttach(true)} title="Attach file context"><Plus className="h-4 w-4" /></Button>
-                  <Input value={input} placeholder={readyCount === 0 ? "Configure an agent slot first" : mode === "manager" ? "Message the manager… use @file path for code context" : "Ask the council… use @file path for code context"} disabled={busy || readyCount === 0} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) send(); }} />
+                  <Input value={input} placeholder={readyCount === 0 ? "Configure an agent slot first" : mode === "manager" ? "Message the manager… use @file path for code context" : `Message the ${POSITION_COPY[agentPosition]}… use @file path for code context`} disabled={busy || readyCount === 0} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) send(); }} />
                   <Button size="icon" onClick={send} disabled={busy || readyCount === 0 || !input.trim()}><Send className="h-4 w-4" /></Button>
                 </div>
               </CardFooter>
@@ -547,7 +639,7 @@ export default function CouncilPage() {
 
             <Card>
               <CardHeader className="py-3 px-4"><CardTitle className="text-sm flex items-center gap-2"><Sparkles className="h-4 w-4 text-violet-400" />Strategy Tuner</CardTitle>
-                <CardDescription className="text-xs">Council debates managed params now and every 4 hours while the strategy runs. It applies the median; ticker, leverage, and capital stay locked. Tandem L/S weighting may be tuned.</CardDescription></CardHeader>
+                <CardDescription className="text-xs">The pipeline members debate managed params now and every 4 hours while the strategy runs. It applies the median; ticker, leverage, and capital stay locked. Tandem L/S weighting may be tuned.</CardDescription></CardHeader>
               <CardContent className="px-4 pb-4 space-y-3">
                 <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={targetId} disabled={busy} onChange={e => setTargetId(e.target.value ? Number(e.target.value) : "")}>
                   <option value="">Select a strategy…</option>
@@ -555,10 +647,10 @@ export default function CouncilPage() {
                 </select>
                 <div className="flex gap-2">
                   <Button size="sm" className="flex-1" disabled={targetId === "" || tune.isPending} onClick={() => tune.mutate(Number(targetId))}>
-                     {tune.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Sparkles className="h-3.5 w-3.5 mr-1" />}Run Debate + Enable 4h</Button>
+                     {tune.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Sparkles className="h-3.5 w-3.5 mr-1" />}Run Tune + Enable 4h</Button>
                   <Button size="sm" variant="outline" disabled={targetId === "" || reset.isPending} onClick={() => reset.mutate(Number(targetId))}><RotateCcw className="h-3.5 w-3.5" /></Button>
                 </div>
-                {tune.isPending && <p className="text-xs text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Council debating parameters…</p>}
+                {tune.isPending && <p className="text-xs text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Agents debating parameters…</p>}
                 {tune.data && <TuneResultView result={tune.data} />}
                 {reset.data && <p className="text-xs text-emerald-400">Managed params reset to presets.</p>}
               </CardContent>
@@ -567,7 +659,7 @@ export default function CouncilPage() {
             <Card>
               <CardHeader className="py-3 px-4">
                 <CardTitle className="text-sm">Council Archive</CardTitle>
-                <CardDescription className="text-xs">Persisted Manager and specialist messages from the VM. The archive survives browser refreshes and mobile sessions.</CardDescription>
+                <CardDescription className="text-xs">Persisted Manager and agent messages from the VM. The archive survives browser refreshes and mobile sessions.</CardDescription>
               </CardHeader>
               <CardContent className="px-4 pb-4 space-y-2 max-h-[420px] overflow-y-auto">
                 {(archive.data || []).map(entry => (
@@ -595,7 +687,7 @@ export default function CouncilPage() {
             <Card>
               <CardHeader className="py-3 px-4">
                 <CardTitle className="text-sm">Approved File Edit</CardTitle>
-                <CardDescription className="text-xs">Paste a reviewed Council change here. Nothing is written without the approval token.</CardDescription>
+                <CardDescription className="text-xs">Paste a reviewed change here. Nothing is written without the approval token.</CardDescription>
               </CardHeader>
               <CardContent className="px-4 pb-4 space-y-2">
                 <Input value={editPath} onChange={e => setEditPath(e.target.value)} placeholder="Path, e.g. server/routes.ts" className="h-8 text-xs" />

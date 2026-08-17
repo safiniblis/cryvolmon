@@ -1,0 +1,317 @@
+{
+  "id": "pipeline-msx844ol-rxr3",
+  "goal": "you are manager of a neurosymbolic ai system where pything logic and llm power combine into a self-improving trading machine. Please check the app youre on and see whats the current set up and purpose. We need to test the current pipeline. Write me a memory system where each agentic role has its own recent memory file so the models dont need to load the whole picture every time",
+  "createdAt": "2026-08-17T12:42:08.949Z",
+  "updatedAt": "2026-08-17T13:17:13.100Z",
+  "stage": "blocked",
+  "loop": 1,
+  "maxLoop": 5,
+  "status": "blocked",
+  "summary": "Cancelled by the operator at 2026-08-17T13:17:13.100Z.",
+  "history": [
+    {
+      "stage": "order",
+      "position": "manager",
+      "at": "2026-08-17T12:42:15.419Z",
+      "summary": "## GOAL Document the current neurosymbolic trading app and test its council pipeline. Implement role-specific recent memory files for manager, architect, builder, auditor, critic, strategist, and trader so each agent receives concise relevant context without loading the full history. ## CONSTRAINTS ",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-order.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:42:15.511Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 11144, please reduce your message size and try again. Need more tokens? Upgrad",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:42:19.473Z",
+      "summary": "REVISE_PLAN: Resubmit a complete build plan within the 8,000-token TPM limit; summarize requirements, files, implementation steps, tests, rollback, and acceptance checks without exceeding the limit.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:42:19.562Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 9691, please reduce your message size and try again. Need more tokens? Upgrade",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:42:24.392Z",
+      "summary": "REVISE_PLAN: Resubmit the complete build plan with the prompt reduced below the 8,000-token TPM limit; preserve the required scope, acceptance checks, and rollback steps.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:42:24.503Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 11192, please reduce your message size and try again. Need more tokens? Upgrad",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:42:28.632Z",
+      "summary": "REVISE_PLAN: Regenerate the build plan within the 8,000-token TPM limit; include the complete actionable plan and acceptance checks, not the HTTP 413 error.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:42:28.749Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 9686, please reduce your message size and try again. Need more tokens? Upgrade",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:42:31.812Z",
+      "summary": "REVISE_PLAN: Resubmit a concise build plan under the 8,000-token TPM limit, preserving the required scope, acceptance checks, and rollback steps.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:42:31.899Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 11188, please reduce your message size and try again. Need more tokens? Upgrad",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:42:36.156Z",
+      "summary": "REVISE_PLAN: Regenerate the build plan in under 8,000 tokens by removing redundant context while retaining the required changes, files, risks, and acceptance checks.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:29.780Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:57:31.857Z",
+      "summary": "REVISE_PLAN: The architect plan was not retrieved because authorization failed; restore the plan-service permission and provide the actual build plan for review before any builder work.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:31.945Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:57:33.903Z",
+      "summary": "REVISE_PLAN: The architect plan was not retrieved due to authorization failure; restore access and provide the actual build plan for review before any builder work.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:33.994Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:57:35.648Z",
+      "summary": "REVISE_PLAN: Authorization failure means no build plan was retrieved; restore the Architect request permission, then provide the complete plan for review.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:35.736Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:57:37.667Z",
+      "summary": "REVISE_PLAN: Resolve the HTTP 403 authorization failure and provide the actual build plan, including scope, files affected, validation steps, and rollback plan.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:37.756Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:57:39.601Z",
+      "summary": "REVISE_PLAN: Resolve the HTTP 403 authorization failure and provide the actual build plan before requesting approval.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:53.526Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:57:55.120Z",
+      "summary": "REVISE_PLAN: Resolve the HTTP 403 authorization failure and provide the actual build plan before requesting approval.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:55.196Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:57:56.970Z",
+      "summary": "REVISE_PLAN: The build plan is unavailable due to authorization failure; restore authorized plan access and provide the complete proposed changes, validation steps, and rollback plan for review.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:57.047Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:57:59.110Z",
+      "summary": "REVISE_PLAN: The architect plan was not retrieved due to HTTP 403; restore authorization and provide the actual build plan for review before any builder work begins.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:57:59.186Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:58:01.094Z",
+      "summary": "REVISE_PLAN: The architect plan was not retrieved due to authorization failure; restore access and provide the actual build plan for review before any builder work begins.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T12:58:01.170Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T12:58:02.500Z",
+      "summary": "REVISE_PLAN: The architect plan was not retrieved because of an authorization error; restore access and provide the actual build plan for review.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T13:03:56.845Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 400 {\"error\":{\"message\":\"Provider returned error\",\"code\":400,\"metadata\":{\"raw\":\"{\\\"error\\\":{\\\"code\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"tool_calls[].function.arguments must be a JSON object\\\",\\\"param\\\":\\\"messages\\\",\\\"type\\\":\\\"invalid_request_error\\\"}}\\n\",\"provider_name\":\"",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T13:03:58.991Z",
+      "summary": "REVISE_PLAN: No usable build plan was produced; fix the Architect provider request so tool-call arguments are sent as a JSON object, then regenerate a concrete plan with scope, steps, validation, and rollback.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T13:07:20.346Z",
+      "summary": "## Recommendation The council memory system requires structured addition of role-specific memory files with strict retention policies, while maintaining current safety mechanisms. All additions must preserve existing security constraints around seat configuration. ## Build Plan (ordered steps: file ",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T13:07:25.464Z",
+      "summary": "REVISE_PLAN: Specify the runtime retention/pruning implementation, exact JSON schema and migration behavior, initialization and corrupt-file recovery, and the precise existing routes/access model to change; do not add vague “schema validation” or role restrictions without identifying the code paths ",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T13:08:15.387Z",
+      "summary": "## Recommendation Implement a lightweight, role‑scoped “recent‑memory” system that stores a short, bounded list of notes after each pipeline stage. Each agent (manager, architect, builder, auditor, critic, strategist, trader) gets its own JSON file under `data/agent-memory/`. The files are **append‑",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T13:08:19.272Z",
+      "summary": "REVISE_PLAN: Provide the complete plan and add strict role allowlisting, atomic writes, secret redaction, and clarify that “append-only” means bounded retention with pruning.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T13:09:19.496Z",
+      "summary": "## Recommendation Implement role-scoped recent memory files with bounded retention, strict allowlisting, and secure write practices while preserving existing council architecture. ## Build Plan 1. **Add role-specific memory directories** - File: `data/agent-memory/` - Change: Create empty JSON files",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T13:09:23.269Z",
+      "summary": "REVISE_PLAN: Define a versioned JSON schema, enforce path-safe role allowlisting and atomic temp-file+rename writes with concurrency protection, clarify exactly which pipeline event lets the manager write each role’s memory, and document retention in durable project documentation rather than the ope",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T13:12:13.952Z",
+      "summary": "## Recommendation The current system has a `data/council-memory.json` that tracks pipeline events but lacks dedicated, role‑scoped recent‑memory files for each agent (manager, architect, builder, auditor, critic, strategist, trader). The gold strategy (`E‑XAUT‑USDT`) is currently in a **stopped/dry‑",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T13:12:17.205Z",
+      "summary": "REVISE_PLAN: Specify the retention count/pruning trigger, the single memory-write interface that performs validation and atomic writes, and whether this job includes the stated Bitrue start-flow fix; do not assign the manager to write other roles’ records—each role (or its pipeline handler) must own",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T13:16:28.520Z",
+      "summary": "## Recommendation Implement a decoupled, role-specific memory architecture to prevent \"context bloat\" in the council pipeline. Instead of passing the entire conversation history to every agent, we will move to a scoped-context model where each agent reads only its relevant `role_memory.json` and wri",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T13:16:34.547Z",
+      "summary": "REVISE_PLAN: First inspect and name the actual current pipeline/provider files and test runner; define migration/rollback without clearing council-conversation.json, consistent memory filenames/schema, per-role access rules, and an integration test using the real pipeline entry point.",
+      "artifact": "data/pipeline-artifacts/pipeline-msx844ol-rxr3-manager-plan.md"
+    }
+  ],
+  "managerOrder": "## GOAL\nDocument the current neurosymbolic trading app and test its council pipeline. Implement role-specific recent memory files for manager, architect, builder, auditor, critic, strategist, and trader so each agent receives concise relevant context without loading the full history.\n\n## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed)\n- Do not change leverage, capital, ticker, side, or exchange routing.\n- Gold remains E-XAUT-USDT on Bitrue; non-gold strategies remain on Bitunix.\n- Do not start live trading or alter orders, positions, or strategy parameters.\n- Preserve existing council roles, seat policy, authentication, and fallback behavior.\n- Memory writes must be bounded, role-scoped, append-safe, and exclude secrets.\n\n## ACCEPTANCE CRITERIA (how we know the job is done AND running)\n- Current app purpose and pipeline flow are documented.\n- Each role has its own recent-memory file with a defined size/retention limit.\n- Pipeline reads only the relevant role memory and writes a concise result after each stage.\n- Missing, corrupt, or unwritable memory safely falls back without blocking the pipeline.\n- A full dry-run pipeline test completes through manager, architect, builder, auditor, and final manager review.\n- TypeScript check and production build pass.\n- Service restarts successfully and logs confirm the memory system and test pipeline are active.\n- No live orders, risk settings, credentials, or exchange semantics change.\n\n## FILES-TO-TOUCH\n- `server/council.ts`\n- `server/agent-providers.ts`\n- `server/routes.ts`\n- `data/council-memory.json`\n- `data/council-conversation.json`\n- `data/pipeline-state.json`\n- `data/agent-memory/` (new role-specific files)\n- `.gitignore`\n- `data/changelog.md`\n- `server/council-memory.test.ts` (new)\n- `server/pipeline.test.ts` (new)",
+  "buildPlan": "## Recommendation\n\nImplement a decoupled, role-specific memory architecture to prevent \"context bloat\" in the council pipeline. Instead of passing the entire conversation history to every agent, we will move to a scoped-context model where each agent reads only its relevant `role_memory.json` and writes its conclusions there. This replaces the heavy `council-conversation.json` with a lightweight, high-performance switching mechanism.\n\nThe implementation includes:\n1.  **Scoped Memory Files**: New files in `data/agent_memory/` for `manager`, `architect`, `builder`, `auditor`, `critic`, `strategist`, and `trader`.\n2.  **Memory Controller**: A centralized, atomic write interface to manage pruning (keep last $N$ entries) and validation.\n3.  **Pipeline Test Suite**: Targeted tests for memory integrity and pipeline flow.\n4.  **Exclusion**: This plan does **not** include the Bitrue start-flow fix; that is a separate operational task for the Builder.\n\n## Build Plan\n\n### 1. Documentation & Schema Design\n- `data/changelog.md` → Add entry documenting the shift from monolithic conversation history to role-scoped memory.\n- `data/agent_memory/schema.json` (conceptual) → Define the structure: `{ timestamp: string, role: string, content: string, metadata: object }`.\n\n### 2. Memory Infrastructure (The \"Memory Controller\")\n- `server/council.ts` → Implement `writeRoleMemory(role, content)` and `readRoleMemory(role)`.\n    - **Pruning Logic**: Automatically keep only the last 10 entries per role to prevent token overflow.\n    - **Atomicity**: Use temporary file writes + rename to prevent corruption during concurrent writes.\n    - **Validation**: Reject any write containing sensitive patterns (secrets/keys).\n- `server/agent-providers.ts` → Update agent initialization logic. Each agent must now receive its specific `role_memory.json` path during instantiation.\n\n### 3. Pipeline & Route Updates\n- `server/routes.ts` → Update the pipeline execution endpoint to handle the new memory-loading sequence (Load Role Memory $\\rightarrow$ Process $\\rightarrow$ Write Role Memory).\n- `data/pipeline-state.json` → Update schema to track which memory files were touched during the last run.\n\n### 4. Testing & Validation\n- `server/council-memory.test.ts` (New) → Tests: Atomic write/read, pruning (ensuring 11th entry deletes 1st), and validation (rejecting bad data).\n- `server/pipeline.test.ts` (New) → Dry-run end-to-end test: Manager $\\rightarrow$ Architect $\\rightarrow$ Builder $\\rightarrow$ Auditor $\\rightarrow$ Critic $\\rightarrow$ Manager.\n\n### 5. Cleanup\n- `.gitignore` → Add `data/agent_memory/*.log` (if logging is enabled) and ensure local dev memory doesn't commit to production.\n\n## Verification\n- **Unit Test**: `npm test server/council-memory.test.ts` (must pass 100%).\n- **Integration Test**: `npm test server/pipeline.test.ts` (must complete a full cycle without \"context too large\" errors).\n- **Build Check**: `npm run build` (must pass TypeScript check).\n- **Manual Check**: Verify `data/agent_memory/architect.json` is updated after a pipeline run.\n\n## Risks\n- **Memory Fragmentation**: If pruning logic is poorly tuned, critical context might be lost. (Mitigation: Keep last 10 entries, not 5).\n- **Race Conditions**: Two agents writing to the same memory file. (Mitigation: Use atomic file swaps).\n- **Orphaned Data**: Old `council-conversation.json` data might confuse agents if not properly phased out. (Mitigation: Clear the old file once the new system is verified).\n\n## What We Keep As-Is\n- **All Trading Parameters**: Leverage, Capital, Ticker, and Exchange (Bitrue/Bitunix) remain untouched.\n- **Live Trading Status**: No bots will be started or stopped.\n- **Core Trading Logic**: The actual math/execution engines are not part of this structural refactor.",
+  "planFeedback": "First inspect and name the actual current pipeline/provider files and test runner; define migration/rollback without clearing council-conversation.json, consistent memory filenames/schema, per-role access rules, and an integration test using the real pipeline entry point."
+}

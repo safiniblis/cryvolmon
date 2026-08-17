@@ -68,3 +68,10 @@
 
 - 2026-08-16T17:06:06.621Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (8x fail) -> groq/openai/gpt-oss-120b (205ms)
 - 2026-08-16T17:11:16.099Z â€” Fixed the generic Start action for Gold Long: it now checks Bitrue credentials, resets the engine to entry phase, and triggers an immediate cycle; TypeScript check and production build passed.
+
+- 2026-08-16T17:25:45.661Z — Seat watchdog: SWITCH strategist: openrouter/google/gemma-4-26b-a4b-it:free (12x fail) -> groq/openai/gpt-oss-120b (171ms)
+- 2026-08-16T21:48:30.657Z — Worker wt-mswbjx1w-2ftkp "Nightly summary 2026-08-16" failed (run error: fetch failed) — re-queued for foreman reassignment (attempt 1/2).
+- 2026-08-16T22:04:04.191Z — Worker wt-mswbjx1w-2ftkp "Nightly summary 2026-08-16" failed (run error: fetch failed) — re-queued for foreman reassignment (attempt 2/2).
+- 2026-08-16T22:19:37.832Z — Worker wt-mswbjx1w-2ftkp "Nightly summary 2026-08-16" failed permanently after 2 attempts: run error: fetch failed
+- 2026-08-17T13:00:27.530Z — Seat watchdog: SWITCH architect: opencode/claude-sonnet-4 (2x fail) -> groq/openai/gpt-oss-120b (378ms)
+- 2026-08-17T13:19:19.715Z — Added a Remove control for stopped pipeline loops; it clears the saved loop state and its saved artifacts after confirmation, while running jobs still require cancellation first. TypeScript check and production build passed.

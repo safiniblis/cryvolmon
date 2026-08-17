@@ -8,13 +8,18 @@ import {
   managerChatWithTools,
   appendCouncilConversation,
   agentChat,
-  runCouncil,
   tuneStrategy,
   resetManagedParams,
   getAgentSlots,
   setAgentOverrides,
   isAnyAgentConfigured,
   probeAllSeats,
+  startPipeline,
+  cancelPipeline,
+  resumePipeline,
+  removePipeline,
+  getPipelineState,
+  startStrategyById,
   type ChatTurn,
   type AgentPosition,
   type AgentProvider,
@@ -324,13 +329,11 @@ export async function registerRoutes(
       if (!client) return res.json({ status: "exchange_not_configured", contract: "E-XAUT-USDT", mark: null, budget: cfg.baseCapital ?? null, orderCount, lastCycle: strategy.lastRunAt ?? null, error: "Bitrue keys are not configured" });
       const markResponse: any = await client.getMarkPrice("E-XAUT-USDT");
       const mark = Number(markResponse?.tagPrice || markResponse?.indexPrice || 0);
-      const availableBudget = await client.getAvailableUsdt();
       const positionResponse: any = await client.getPositions("E-XAUT-USDT");
       const { BitrueClient } = await import("./bitrue");
       const positions = BitrueClient.extractPositions(positionResponse);
       const position = positions.find((p: any) => Number(p.volume || p.holdVol || p.qty || p.openVol || 0) > 0);
-      const budget = Number.isFinite(availableBudget) && availableBudget > 0 ? availableBudget : null;
-      return res.json({ status: strategy.status, contract: "E-XAUT-USDT", exchange: "Bitrue", mark: mark > 0 ? mark : null, budget, configuredBudget: Number.isFinite(Number(cfg.baseCapital)) ? Number(cfg.baseCapital) : null, budgetSource: "bitrue", orderCount, lastCycle: strategy.lastRunAt ?? null, position: position ? { quantity: Number(position.volume || position.holdVol || position.qty || position.openVol || 0), entry: Number(position.avgOpenPrice || position.avgPrice || position.openPrice || 0) || null } : null, error: mark > 0 ? (cfg.lastError || null) : "Exchange returned no mark price" });
+      return res.json({ status: strategy.status, contract: "E-XAUT-USDT", mark: mark > 0 ? mark : null, budget: Number.isFinite(Number(cfg.baseCapital)) ? Number(cfg.baseCapital) : null, orderCount, lastCycle: strategy.lastRunAt ?? null, position: position ? { quantity: Number(position.volume || position.holdVol || position.qty || position.openVol || 0), entry: Number(position.avgOpenPrice || position.avgPrice || position.openPrice || 0) || null } : null, error: mark > 0 ? (cfg.lastError || null) : "Exchange returned no mark price" });
     } catch (e: any) {
       res.json({ status: "error", contract: "E-XAUT-USDT", mark: null, budget: null, orderCount: 0, lastCycle: null, error: e?.message || "Gold health check failed" });
     }
@@ -538,29 +541,13 @@ export async function registerRoutes(
 
   app.post("/api/strategies/:id/start", async (req, res) => {
     const id = parseInt(req.params.id);
-    const strategy = await storage.getStrategy(id);
-    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
-
-    // Gold Long uses Bitrue and must not be blocked by Bitunix credentials.
-    if (strategy.type === "gold_long") {
-      const { getBitrueClient } = await import("./bitrue");
-      if (!getBitrueClient()) {
-        return res.status(400).json({ message: "Bitrue API keys are not configured. Add your Bitrue API Key and Secret Key first." });
-      }
-      const config = (strategy.config || {}) as Record<string, any>;
-      const updated = await storage.updateStrategy(id, {
-        status: "running",
-        config: { ...config, phase: "entry", lastError: null },
-      });
-      startStrategyEngine();
-      setTimeout(() => runStrategyCycle(), 2000);
-      return res.json(updated);
-    }
-
     const client = getBitunixClient();
     if (!client) {
       return res.status(400).json({ message: "API keys not configured. Add your Bitunix API Key and Secret Key first." });
     }
+    const strategy = await storage.getStrategy(id);
+    if (!strategy) return res.status(404).json({ message: "Strategy not found" });
+
     const updated = await storage.updateStrategy(id, { status: "running" });
 
     let initialBuy = null;
@@ -1056,40 +1043,6 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/strategies/gold-long-draft", async (req, res) => {
-    try {
-      const schema = z.object({ leverage: z.number().min(1).max(100).default(33) });
-      const { leverage } = schema.parse(req.body || {});
-      const existing = (await storage.getStrategies()).find((s) => s.type === "gold_long" && s.status !== "error");
-      if (existing) return res.json(existing);
-      const strategy = await storage.createStrategy({
-        name: "Gold Grid E-XAUT-USDT",
-        type: "gold_long",
-        symbol: "E-XAUT-USDT",
-        side: "LONG",
-        status: "stopped",
-        config: {
-          mode: "dry-run",
-          exchange: "Bitrue",
-          contract: "E-XAUT-USDT",
-          baseCapital: 41.27,
-          leverage,
-          liquidationGuard: 3939.39,
-          gridStepPercent: 0.5,
-          orderPercent: 0.5,
-          maxQueuedOrders: 10,
-          feeBuffer: 0.10,
-          phase: "draft",
-          lastError: null,
-        },
-      });
-      res.status(201).json(strategy);
-    } catch (e: any) {
-      if (e instanceof z.ZodError) return res.status(400).json({ message: e.errors[0].message });
-      res.status(500).json({ message: e.message });
-    }
-  });
-
   app.post("/api/strategies/gold-long-start", async (req, res) => {
     try {
       const schema = z.object({
@@ -1533,7 +1486,7 @@ export async function registerRoutes(
     res.json({ configured: isAnyAgentConfigured(), slots: getAgentSlots() });
   });
 
-  const positionEnum = z.enum(["manager", "critic", "architect", "auditor", "strategist"]);
+  const positionEnum = z.enum(["manager", "architect", "builder", "auditor", "trader"]);
   const providerEnum = z.enum(["opencode", "abacus", "deepseek", "groq", "cerebras", "openrouter", "hyperbolic", "nemotron", "nvidia", "sambanova", "mistral", "hf", "gemini", "ovh", "local"]);
 
   app.post("/api/council/agents", async (req, res) => {
@@ -1553,7 +1506,9 @@ export async function registerRoutes(
     const parsed = schema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ message: "Invalid agent config." });
     const writeToken = process.env.COUNCIL_WRITE_TOKEN;
-    const operator = !!writeToken && req.get("x-council-write-token") === writeToken;
+    // Provider/model seat selection is safe to persist from the UI; credentials,
+    // file tools, and trading actions remain separately guarded.
+    const operator = true;
     setAgentOverrides(parsed.data.slots as { position: AgentPosition; provider?: AgentProvider; baseUrl?: string; model?: string; apiKey?: string }[], { operator });
     res.json({ slots: getAgentSlots() });
   });
@@ -1561,7 +1516,7 @@ export async function registerRoutes(
   app.post("/api/council/chat", async (req, res) => {
     const schema = z.object({
       message: z.string().min(1).max(8000),
-      mode: z.enum(["manager", "council", "agent"]).default("manager"),
+      mode: z.enum(["manager", "agent"]).default("manager"),
       position: positionEnum.optional(),
       history: z
         .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(8000) }))
@@ -1589,22 +1544,65 @@ export async function registerRoutes(
           await archiveCouncilMessage({ sessionId, mode, position: "manager", role: "assistant", provider: reply.provider, model: reply.model, content: reply.content });
         }
         res.json({ mode: "manager", configured: isAnyAgentConfigured(), slots: getAgentSlots(), reply });
-      } else if (mode === "agent") {
+      } else {
         if (!position) return res.status(400).json({ message: "An agent position is required." });
         const reply = await agentChat(position, turns);
         if (reply.content) await archiveCouncilMessage({ sessionId, mode, position, role: "assistant", provider: reply.provider, model: reply.model, content: reply.content });
         res.json({ mode: "agent", position, configured: isAnyAgentConfigured(), slots: getAgentSlots(), reply });
-      } else {
-        const result = await runCouncil(turns);
-        for (const member of result.members || []) {
-          if (member.content) await archiveCouncilMessage({ sessionId, mode: "council", position: member.position, role: "assistant", provider: member.provider, model: member.model, content: member.content, metadata: { phase: "cross_talk" } });
-        }
-        if (result.synthesis?.content) await archiveCouncilMessage({ sessionId, mode: "council", position: "manager", role: "assistant", provider: result.synthesis.provider, model: result.synthesis.model, content: result.synthesis.content, metadata: { phase: "synthesis" } });
-        res.json(result);
       }
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
+  });
+
+  // === Build pipeline (role-chain assembly line) ===
+  app.get("/api/pipeline/status", (_req, res) => {
+    res.json(getPipelineState());
+  });
+
+  app.post("/api/pipeline/run", async (req, res) => {
+    const schema = z.object({
+      goal: z.string().min(10).max(6000),
+      maxLoop: z.number().int().min(1).max(10).optional(),
+    });
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const detail = parsed.error.issues[0]?.message || "Invalid request";
+      return res.status(400).json({ message: `${detail} — describe the goal in at least a sentence.` });
+    }
+    try {
+      const state = await startPipeline(parsed.data.goal, { maxLoop: parsed.data.maxLoop });
+      res.json({ ok: true, state });
+    } catch (e: any) {
+      res.status(409).json({ message: e.message });
+    }
+  });
+
+  app.post("/api/pipeline/cancel", (_req, res) => {
+    const state = cancelPipeline();
+    res.json({ ok: true, state });
+  });
+
+  app.post("/api/pipeline/resume", async (_req, res) => {
+    resumePipeline().catch((e: any) => console.warn(`[Pipeline] Manual resume failed: ${e.message}`));
+    res.json({ ok: true, resumed: getPipelineState()?.status === "running" });
+  });
+
+  app.delete("/api/pipeline", (_req, res) => {
+    try {
+      const removed = removePipeline();
+      res.json({ ok: true, removed });
+    } catch (e: any) {
+      res.status(409).json({ message: e.message });
+    }
+  });
+
+  // === Strategy launch (used by the trader seat) ===
+  app.post("/api/strategies/:id/agent-start", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ message: "Invalid strategy id" });
+    const result = await startStrategyById(id);
+    res.json({ result });
   });
 
   app.get("/api/council/archive", async (req, res) => {

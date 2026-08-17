@@ -1,11 +1,12 @@
 /**
- * Agent registry — the 5-slot system: one MANAGER + four BUILD/COUNCIL members.
- * Each slot is provider-agnostic (OpenAI-compatible chat completions) and can be
- * wired to: big-pickle (opencode), DeepSeek, Groq, NVIDIA NIM (nemotron/nvidia),
- * OpenRouter, Hyperbolic (hy3), SambaNova, Mistral, HuggingFace router (hf),
- * Gemini, or the keyless OVHcloud anonymous tier (ovh). Credentials come from
- * env vars, the opencode auth.json fallback for DeepSeek, or from per-slot
- * overrides set at runtime via POST /api/council/agents.
+ * Agent registry — the pipeline: one MANAGER + architect → builder → auditor
+ * (with trader for strategy launch). Each slot is provider-agnostic
+ * (OpenAI-compatible chat completions) and can be wired to: big-pickle
+ * (opencode), DeepSeek, Groq, NVIDIA NIM (nemotron/nvidia), OpenRouter,
+ * Hyperbolic (hy3), SambaNova, Mistral, HuggingFace router (hf), Gemini, or the
+ * keyless OVHcloud anonymous tier (ovh). Credentials come from env vars, the
+ * opencode auth.json fallback for DeepSeek, or from per-slot overrides set at
+ * runtime via POST /api/council/agents.
  */
 
 import { getApiKey as getDeepSeekKey } from "./deepseek";
@@ -27,12 +28,21 @@ function loadPersistedOverrides(): void {
     };
     for (const slot of raw.slots || []) {
       if (!slot?.position || !AGENT_ROLES.some((r) => r.position === slot.position)) continue;
+      if (slot.position === "builder" && slot.provider === "hyperbolic" && !slot.apiKey) {
+        slot.provider = "groq";
+        slot.baseUrl = PROVIDER_DEFAULTS.groq.baseUrl;
+        slot.model = "openai/gpt-oss-120b";
+      }
+      if (slot.position === "architect" && slot.provider === "groq" && /^openai\/gpt-oss/.test(slot.model || "")) {
+        slot.provider = "openrouter";
+        slot.baseUrl = PROVIDER_DEFAULTS.openrouter.baseUrl;
+        slot.model = "openrouter/free";
+      }
       overrides.set(slot.position, {
         provider: slot.provider,
         baseUrl: slot.baseUrl,
         model: slot.model,
         apiKey: slot.apiKey ?? null,
-        lastError: null,
       });
     }
     console.log(`[Council] Loaded ${overrides.size} persisted slot override(s) from ${COUNCIL_STATE_PATH}`);
@@ -60,10 +70,10 @@ function persistOverrides(): void {
   }
 }
 
-export type AgentPosition = "manager" | "critic" | "architect" | "auditor" | "strategist";
+export type AgentPosition = "manager" | "architect" | "builder" | "auditor" | "trader";
 export type AgentProvider = "opencode" | "abacus" | "deepseek" | "groq" | "cerebras" | "openrouter" | "hyperbolic" | "nemotron" | "nvidia" | "sambanova" | "mistral" | "hf" | "gemini" | "ovh" | "local";
 
-export const AGENT_POSITIONS: AgentPosition[] = ["manager", "critic", "architect", "auditor", "strategist"];
+export const AGENT_POSITIONS: AgentPosition[] = ["manager", "architect", "builder", "auditor", "trader"];
 
 export interface AgentRoleDef {
   position: AgentPosition;
@@ -108,52 +118,52 @@ function memberFreePolicy(): { provider: AgentProvider; model: string }[] {
 }
 
 export const MEMBER_SEAT_POLICY: Record<Exclude<AgentPosition, "manager">, { provider: AgentProvider; model: string }[]> = {
-  critic: memberFreePolicy(),
   architect: memberFreePolicy(),
+  builder: memberFreePolicy(),
   auditor: memberFreePolicy(),
-  strategist: memberFreePolicy(),
+  trader: memberFreePolicy(),
 };
 
 export const AGENT_ROLES: AgentRoleDef[] = [
   {
     position: "manager",
-    role: "Decision & orchestration",
-    title: "Manager / Builder",
-    description: "GPT-5.6 Luna (OpenCode, paid). Lead agent: clear decisions for a non-coder operator, coordinates council, holds write/patch approval. The only paid seat.",
+    role: "Orchestration & final gate",
+    title: "Manager",
+    description: "GPT-5.6 Luna (OpenCode, paid). Lead agent: writes the job order, approves the architect's build plan, runs the final review, and triggers the reboot after the auditor approves. The only paid seat.",
     defaultProvider: "opencode",
     defaultModel: "gpt-5.6-luna",
   },
   {
-    position: "critic",
-    role: "Adversarial risk review",
-    title: "Critic",
-    description: "GPT-OSS 120B (Groq, free). Adversarial risk review in plain English — money risk first.",
-    defaultProvider: "groq",
-    defaultModel: "openai/gpt-oss-120b",
+    position: "architect",
+    role: "Build-plan design",
+    title: "Architect",
+    description: "DeepSeek Chat (free/cheap). Devises the build plan — files, interfaces, tests, risks — before any code is written.",
+    defaultProvider: "deepseek",
+    defaultModel: "deepseek-chat",
   },
   {
-    position: "architect",
-    role: "Structure & parameter design",
-    title: "Architect",
-    description: "GPT-OSS 120B (Groq, free). Structure, workflows, and parameter design when asked.",
+    position: "builder",
+    role: "Implementation & verification",
+    title: "Builder",
+    description: "Groq GPT OSS 120B. Implements the approved build plan with patches, then verifies via run_check/run_build and commits.",
     defaultProvider: "groq",
     defaultModel: "openai/gpt-oss-120b",
   },
   {
     position: "auditor",
-    role: "Health & rot scan",
+    role: "Quality & risk audit",
     title: "Auditor",
-    description: "GPT-OSS 120B (Groq, free). Health, missing scoreboards, config drift, silent failures.",
-    defaultProvider: "groq",
-    defaultModel: "openai/gpt-oss-120b",
+    description: "NVIDIA Nemotron. Audits the implementation against the plan and the build result. APPROVE or REJECT with findings.",
+    defaultProvider: "nvidia",
+    defaultModel: "nvidia/nemotron-3-super-120b-a12b",
   },
   {
-    position: "strategist",
-    role: "Market read & proposals",
-    title: "Strategist",
-    description: "GPT-OSS 120B (Groq, free). Fast market and account read in English + math.",
+    position: "trader",
+    role: "Strategy launch & market read",
+    title: "Trader",
+    description: "Groq (free). Starts completed strategies when they are ready to run, and reads the market/account state. (Roadmap: autonomous open/close.)",
     defaultProvider: "groq",
-    defaultModel: "openai/gpt-oss-120b",
+    defaultModel: "llama-3.3-70b-versatile",
   },
 ];
 

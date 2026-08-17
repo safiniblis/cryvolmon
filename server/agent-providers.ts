@@ -13,7 +13,7 @@ import { getApiKey as getDeepSeekKey } from "./deepseek";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { MANAGER_BASE_URL, MANAGER_MODEL } from "@shared/council-config";
+import { MANAGER_BASE_URL, MANAGER_MODEL, MANAGER_PROVIDER } from "@shared/council-config";
 import { OPENROUTER_BASE_URL, FREE_MODEL_REGISTRY, getHealthyFreeModels, pingEndpoint, MODEL_DUPLICATES, EXTRA_FREE_ENDPOINTS, MANAGER_TRUSTED_MODELS, PROVIDER_BASE_URLS, KEYLESS_PROVIDERS, recordPingResult } from "./free-models";
 
 const COUNCIL_STATE_PATH =
@@ -28,16 +28,6 @@ function loadPersistedOverrides(): void {
     };
     for (const slot of raw.slots || []) {
       if (!slot?.position || !AGENT_ROLES.some((r) => r.position === slot.position)) continue;
-      if (slot.position === "builder" && slot.provider === "hyperbolic" && !slot.apiKey) {
-        slot.provider = "groq";
-        slot.baseUrl = PROVIDER_DEFAULTS.groq.baseUrl;
-        slot.model = "openai/gpt-oss-120b";
-      }
-      if (slot.position === "architect" && slot.provider === "groq" && /^openai\/gpt-oss/.test(slot.model || "")) {
-        slot.provider = "openrouter";
-        slot.baseUrl = PROVIDER_DEFAULTS.openrouter.baseUrl;
-        slot.model = "openrouter/free";
-      }
       if (slot.provider && PROVIDER_BASE_URLS[slot.provider]) {
         slot.baseUrl = PROVIDER_BASE_URLS[slot.provider];
       }
@@ -132,9 +122,9 @@ export const AGENT_ROLES: AgentRoleDef[] = [
     position: "manager",
     role: "Orchestration & final gate",
     title: "Manager",
-    description: "GPT-5.6 Luna (OpenCode, paid). Lead agent: writes the job order, approves the architect's build plan, runs the final review, and triggers the reboot after the auditor approves. The only paid seat.",
-    defaultProvider: "opencode",
-    defaultModel: "gpt-5.6-luna",
+    description: `${MANAGER_MODEL} (${MANAGER_PROVIDER}, paid). Lead agent: writes the job order, approves the architect's build plan, runs the final review, and triggers the reboot after the auditor approves. The only paid seat.`,
+    defaultProvider: MANAGER_PROVIDER,
+    defaultModel: MANAGER_MODEL,
   },
   {
     position: "architect",
@@ -177,7 +167,7 @@ interface ProviderDefaults {
 
 const PROVIDER_DEFAULTS: Record<AgentProvider, ProviderDefaults> = {
   opencode: {
-    baseUrl: process.env.OPENCODE_BASE_URL || MANAGER_BASE_URL,
+    baseUrl: process.env.OPENCODE_BASE_URL || "https://opencode.ai/zen/v1",
     model: process.env.OPENCODE_MODEL || MANAGER_MODEL,
   },
   abacus: {
@@ -539,7 +529,7 @@ export async function chatSlot(
   const key = resolveSlotKey(provider, opts.providerOverride ? null : slot.apiKey);
   const timeoutMs = opts.timeoutMs ?? 60_000;
   const fallbackToBigPickle = () =>
-    position !== "manager" && provider === "opencode" && model !== "big-pickle"
+    !overrides.has(position) && position !== "manager" && provider === "opencode" && model !== "big-pickle"
       ? chatSlot(position, messages, { ...opts, modelOverride: "big-pickle", timeoutMs: 45_000 })
       : null;
 
@@ -553,7 +543,8 @@ export async function chatSlot(
     if (process.env.COUNCIL_AUTO_HEAL !== "1") return null;
     if ((opts.fallbackDepth ?? 0) >= 1) return null;
     // Never auto-heal manager — operator chose it on purpose.
-    if (position === "manager") return null;
+    // Persisted or runtime slot selections are also operator-locked.
+    if (position === "manager" || overrides.has(position)) return null;
     const hasKeyed = ["openrouter", "groq", "nvidia", "nemotron"].some((p) => resolveSlotKey(p as AgentProvider, null));
     if (!hasKeyed && !KEYLESS_PROVIDERS.has("ovh")) return null;
     const pick = await selectFallbackModel(position, model);

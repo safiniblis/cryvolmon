@@ -21,7 +21,7 @@ import {
   DEFAULT_SLOTS,
 } from "@/hooks/use-council";
 import { cn } from "@/lib/utils";
-import { MANAGER_BASE_URL, MANAGER_MODEL } from "@shared/council-config";
+import { MANAGER_BASE_URL, MANAGER_MODEL, MANAGER_PROVIDER } from "@shared/council-config";
 
 interface ChatEntry { role: "user" | "assistant"; content: string; result?: CouncilChatResult; }
 
@@ -32,7 +32,7 @@ const POSITION_COLORS: Record<string, string> = {
 };
 
 const PROVIDER_OPTIONS: { value: AgentProvider; label: string; defaultModel: string; defaultBaseUrl: string }[] = [
-  { value: "opencode", label: `OpenCode Go (${MANAGER_MODEL})`, defaultModel: MANAGER_MODEL, defaultBaseUrl: MANAGER_BASE_URL },
+  { value: "opencode", label: `OpenCode Go (${MANAGER_MODEL})`, defaultModel: MANAGER_MODEL, defaultBaseUrl: "https://opencode.ai/zen/v1" },
   { value: "abacus", label: "Abacus RouteLLM", defaultModel: "gpt-5.6-luna", defaultBaseUrl: "https://routellm.abacus.ai/v1" },
   { value: "deepseek", label: "DeepSeek", defaultModel: "deepseek-chat", defaultBaseUrl: "https://api.deepseek.com" },
   { value: "groq", label: "Groq", defaultModel: "llama-3.3-70b-versatile", defaultBaseUrl: "https://api.groq.com/openai/v1" },
@@ -68,7 +68,8 @@ const MODEL_OPTIONS: Record<AgentProvider, string[]> = {
 };
 
 const MANAGER_CHOICES = [
-  { id: "opencode:gpt-5.6-luna", label: "OpenCode Go · GPT 5.6 Luna", provider: "opencode" as AgentProvider, model: "gpt-5.6-luna", baseUrl: MANAGER_BASE_URL },
+  { id: `${MANAGER_PROVIDER}:${MANAGER_MODEL}`, label: `${MANAGER_PROVIDER} · ${MANAGER_MODEL}`, provider: MANAGER_PROVIDER as AgentProvider, model: MANAGER_MODEL, baseUrl: MANAGER_BASE_URL },
+  { id: "opencode:gpt-5.6-luna", label: "OpenCode Go · GPT 5.6 Luna", provider: "opencode" as AgentProvider, model: "gpt-5.6-luna", baseUrl: "https://opencode.ai/zen/v1" },
   { id: "abacus:gpt-5.6-luna", label: "Abacus · GPT 5.6 Luna", provider: "abacus" as AgentProvider, model: "gpt-5.6-luna", baseUrl: "https://routellm.abacus.ai/v1" },
   { id: "abacus:claude-opus-5", label: "Abacus · Claude Opus 5", provider: "abacus" as AgentProvider, model: "claude-opus-5", baseUrl: "https://routellm.abacus.ai/v1" },
   { id: "abacus:claude-sonnet-5", label: "Abacus · Claude Sonnet 5", provider: "abacus" as AgentProvider, model: "claude-sonnet-5", baseUrl: "https://routellm.abacus.ai/v1" },
@@ -443,7 +444,7 @@ export default function CouncilPage() {
 
   const [mode, setMode] = useState<"manager" | "agent">("manager");
   const [agentPosition, setAgentPosition] = useState<AgentPosition>("architect");
-  const [managerChoice, setManagerChoice] = useState("opencode:gpt-5.6-luna");
+  const [managerChoice, setManagerChoice] = useState(`${MANAGER_PROVIDER}:${MANAGER_MODEL}`);
   const [messageChannels, setMessageChannels] = useState<Record<string, ChatEntry[]>>({});
   const [input, setInput] = useState("");
   const [targetId, setTargetId] = useState<number | "">("");
@@ -460,6 +461,10 @@ export default function CouncilPage() {
   const readyCount = slots.filter(s => s.configured).length;
   const channelKey = mode === "agent" ? `agent:${agentPosition}` : mode;
   const messages = messageChannels[channelKey] || [];
+  const liveManager = slots.find(slot => slot.position === "manager");
+  const managerChoices = useMemo(() => liveManager && !MANAGER_CHOICES.some(choice => choice.provider === liveManager.provider && choice.model === liveManager.model)
+    ? [...MANAGER_CHOICES, { id: `${liveManager.provider}:${liveManager.model}`, label: `${liveManager.provider} · ${liveManager.model}`, provider: liveManager.provider, model: liveManager.model, baseUrl: liveManager.baseUrl }]
+    : MANAGER_CHOICES, [liveManager]);
   const appendMessage = (entry: ChatEntry) => {
     setMessageChannels(prev => ({ ...prev, [channelKey]: [...(prev[channelKey] || []), entry] }));
   };
@@ -469,9 +474,9 @@ export default function CouncilPage() {
   useEffect(() => {
     if (!status) return;
     const manager = slots.find(slot => slot.position === "manager");
-    const match = manager && MANAGER_CHOICES.find(choice => choice.provider === manager.provider && choice.model === manager.model);
+    const match = manager && managerChoices.find(choice => choice.provider === manager.provider && choice.model === manager.model);
     if (match) setManagerChoice(match.id);
-  }, [slots]);
+  }, [slots, managerChoices]);
 
   const saveSlot = (position: AgentPosition, edit: EditState) => {
     const next = { position, provider: edit.provider, baseUrl: edit.baseUrl, model: edit.model, apiKey: edit.apiKey };
@@ -509,7 +514,7 @@ export default function CouncilPage() {
   };
 
   const changeManager = (id: string) => {
-    const choice = MANAGER_CHOICES.find(item => item.id === id);
+     const choice = managerChoices.find(item => item.id === id);
     if (!choice) return;
     setManagerChoice(id);
     const local = loadLocalAgents().filter(slot => slot.position !== "manager");
@@ -585,7 +590,7 @@ export default function CouncilPage() {
                     <option value="trader">Trader</option>
                   </select>
                   <select className="h-7 max-w-[220px] rounded-md border border-input bg-background px-2 text-[11px]" value={managerChoice} onChange={e => changeManager(e.target.value)} disabled={busy} title="Change Manager provider/model">
-                    {MANAGER_CHOICES.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+                    {managerChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
                   </select>
                 </div>
                 <CardDescription className="text-xs">

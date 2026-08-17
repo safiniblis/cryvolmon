@@ -71,7 +71,7 @@ export interface TuneResult {
 export const DEFAULT_SLOTS: AgentSlotView[] = [
   {
     position: "manager", role: "Orchestration & final gate", title: "Manager",
-    description: "OpenCode Go. GPT 5.6 Luna lead agent: writes the job order, gates each hand-off, and reboots after the audit.",
+    description: `${MANAGER_PROVIDER} · ${MANAGER_MODEL} lead agent: writes the job order, gates each hand-off, and reboots after the audit.`,
     provider: MANAGER_PROVIDER, baseUrl: MANAGER_BASE_URL, model: MANAGER_MODEL,
     hasKey: false, keyName: "OPENCODE_API_KEY", configured: false, lastError: null,
   },

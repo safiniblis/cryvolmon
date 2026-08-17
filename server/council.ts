@@ -825,6 +825,31 @@ function toAgentMessages(messages: ChatTurn[], system: string, context?: string)
   return out;
 }
 
+/**
+ * Pipeline member seats often have smaller input limits than the Manager.
+ * They can inspect files with tools, so a compact operational brief is safer
+ * than injecting the full archive, workspace excerpts, and conversation into
+ * every hand-off.
+ */
+async function buildPipelineContext(): Promise<string> {
+  try {
+    const strategies = await storage.getStrategies();
+    const strategyRows = strategies.slice(0, 10).map((s) =>
+      `#${s.id} ${s.name} | ${s.type} | ${s.symbol} | ${s.status}`,
+    );
+    const files = workspaceFiles(process.cwd()).sort().slice(0, 160).join(", ");
+    return [
+      "PIPELINE COMPACT CONTEXT",
+      `Strategies: ${strategyRows.length ? strategyRows.join("; ") : "none"}`,
+      `Workspace files: ${files}`,
+      "Use read_file for any source details needed for your stage. Do not assume omitted context is unavailable.",
+      "END PIPELINE COMPACT CONTEXT",
+    ].join("\n").slice(0, 3500);
+  } catch {
+    return "PIPELINE COMPACT CONTEXT\nUse read_file for source details needed for your stage.\nEND PIPELINE COMPACT CONTEXT";
+  }
+}
+
 function memberFromReply(reply: { ok: boolean; content: string | null; error?: string; position: AgentPosition; provider: string; model: string; ms: number }): CouncilMemberResult {
   const def = AGENT_ROLES.find((r) => r.position === reply.position)!;
   return {
@@ -1207,9 +1232,10 @@ export async function runPipeline(jobId: string): Promise<void> {
   pipelineInFlight = true;
   pipelineCancelled = false;
   try {
-    // Keep pipeline handoffs below the Architect provider's 8k request limit;
-    // role instructions, the job order, and expected output consume the rest.
-    const context = (await buildAppContext()).slice(0, 3500);
+    // Do not send the full dashboard/archive context to member seats. Groq's
+    // configured Architect tier has an 8,000-token request limit; the previous
+    // 12,000-character context plus tool schemas exceeded it before planning.
+    const context = await buildPipelineContext();
     const approved = process.env.COUNCIL_AGENT_TOOLS_ENABLED !== "false";
     const exec = (allowRestart: boolean) => (name: string, args: Record<string, unknown>) =>
       executeManagerTool(name, args, approved, allowRestart);

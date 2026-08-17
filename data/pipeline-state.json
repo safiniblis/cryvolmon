@@ -1,12 +1,44 @@
 {
-  "id": "pipeline-msxa5ytl-g8og",
-  "goal": "Goal: you are manager of a neurosymbolic ai system where pything logic and llm power combine into a self-improving trading machine. Please check the app youre on and see whats the current set up and purpose. We need to test the current pipeline. Write me a memory system where each agentic role has its own recent memory file so the models dont need to load the whole picture every time",
-  "createdAt": "2026-08-17T13:39:33.897Z",
-  "updatedAt": "2026-08-17T13:39:33.897Z",
-  "stage": "order",
+  "id": "pipeline-msxaq6dq-z65v",
+  "goal": "test the pipeline your on top of",
+  "createdAt": "2026-08-17T13:55:16.814Z",
+  "updatedAt": "2026-08-17T13:59:00.539Z",
+  "stage": "manager-plan",
   "loop": 0,
   "maxLoop": 5,
   "status": "running",
-  "summary": "",
-  "history": []
+  "summary": "test the pipeline your on top of",
+  "history": [
+    {
+      "stage": "order",
+      "position": "manager",
+      "at": "2026-08-17T13:55:21.048Z",
+      "summary": "## GOAL Run a safe end-to-end pipeline smoke test using a harmless documentation-only job. ## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed) No trading logic, strategy settings, exchange credentials, orders, or service behavior may change. ## ACCEPTANC",
+      "artifact": "data/pipeline-artifacts/pipeline-msxaq6dq-z65v-order.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T13:55:21.170Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 403 {\"success\": false, \"error\": \"You are not authorized to make the request\"}",
+      "artifact": "data/pipeline-artifacts/pipeline-msxaq6dq-z65v-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-17T13:58:59.956Z",
+      "summary": "The Architect seat had a mismatched provider/endpoint setup, causing the 403—not a prompt-size issue. I switched it to authenticated Groq GPT-OSS 120B and verified a live Architect reply. No trading or exchange settings changed. RECOVERY_FIXED: Architect provider is healthy.",
+      "artifact": "data/pipeline-artifacts/pipeline-msxaq6dq-z65v-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-17T13:59:00.539Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10481, please reduce your message size and try again. Need more tokens? Upgrad",
+      "artifact": "data/pipeline-artifacts/pipeline-msxaq6dq-z65v-architect.md"
+    }
+  ],
+  "managerOrder": "## GOAL\nRun a safe end-to-end pipeline smoke test using a harmless documentation-only job.\n\n## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed)\nNo trading logic, strategy settings, exchange credentials, orders, or service behavior may change.\n\n## ACCEPTANCE CRITERIA (how we know the job is done AND running)\nPipeline completes Architect → Builder → Auditor without retries or blockage; a dated smoke-test note is recorded; checks and production build pass; service remains running.\n\n## FILES-TO-TOUCH (your best guess of the files involved)\ndata/changelog.md",
+  "buildPlan": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10481, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at http",
+  "recoveryCount": 1
 }

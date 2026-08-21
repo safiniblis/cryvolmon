@@ -1,40 +1,42 @@
 ## Diagnosis
 
-The failure was a **pipeline message-size problem**, not a trading or service problem.
+The failure was a **pipeline request-size problem**, not a trading or service problem.
 
-- The Architect request asked for **8,445 tokens**, but the provider allows **8,000 tokens per minute**.
-- It exceeded the limit by **445 tokens**, so the provider rejected it with HTTP 413 before producing a plan.
-- The request became too large because the pipeline combined role instructions, the job order, retained pipeline history, and project context.
-- The live Architect seat is configured for NVIDIA, while the error names Groq’s `openai/gpt-oss-120b`, indicating fallback/recovery routing was inconsistent.
-- The service remained active; no trading parameters or exchange behavior were changed.
+- Groq’s Architect seat allows **8,000 tokens per minute**.
+- The failed request asked for **8,586 tokens**, exceeding the limit by **586**.
+- The request included too much retained pipeline history, role instructions, job context, and source context.
+- The failure happened before the Architect produced a plan.
+- Logs show repeated oversized retries; the service and trading state remained unchanged.
+- Live seats show Architect on Groq GPT-OSS-120B. Builder also has a stale unsupported `nebius` override in `data/council-runtime.json`, while `server/agent-providers.ts` does not support that provider.
 
 ## Proposed Patch (not applied)
 
 1. **`server/council.ts`**
-   - Add a strict Architect prompt-size budget below 8,000 tokens.
-   - Send only the current job order and essential file excerpts, not the full pipeline history.
-   - Truncate oversized artifacts before handoff.
-   - Treat HTTP 413 as a request-size failure and stop without retrying the same agent.
-   - Record a clear blocked status instead of repeatedly recovering into another oversized request.
+   - Create a compact Architect handoff containing only the current job order and essential file excerpts.
+   - Exclude previous pipeline history, conversation archive, and duplicate instructions.
+   - Enforce a request budget safely below 8,000 tokens, preferably about 6,500.
+   - Treat HTTP 413 as permanently blocked for that attempt; do not retry the same oversized request.
+   - Record the blocked reason once in pipeline state.
 
 2. **`server/agent-providers.ts`**
-   - Validate persisted seat providers against the supported provider list.
-   - Ignore invalid runtime overrides and use the role’s approved default.
-   - Ensure fallback selection and displayed seat configuration use the same provider/model.
-   - Do not retain or expose runtime credentials in persisted seat state.
+   - Validate persisted provider overrides against the supported provider list.
+   - Reject or ignore unknown providers such as `nebius`.
+   - Keep the displayed seat and actual routing provider consistent.
+   - Avoid exposing or retaining credential values in seat-state summaries.
 
 3. **`data/council-runtime.json`**
-   - Remove the invalid Builder override and embedded credential.
-   - Do not change trading, exchange, leverage, capital, ticker, or strategy settings.
+   - Remove the unsupported Builder `nebius` override through the approved configuration path.
+   - Do not alter trading, exchange, leverage, capital, ticker, or strategy settings.
 
 ## Verification After Approval
 
-- Run TypeScript check and production build.
-- Test that Architect requests remain below the provider limit.
-- Confirm HTTP 413 produces one blocked decision with no same-agent retry.
-- Confirm all seats resolve to supported, internally consistent providers.
-- Confirm no live orders, positions, strategy parameters, or exchange behavior change.
+- TypeScript check passes.
+- Production build passes.
+- A test handoff remains below the configured token budget.
+- HTTP 413 creates one blocked result without retrying the failed agent.
+- Seat resolution rejects unsupported providers consistently.
+- Confirm no orders, positions, strategies, risk settings, or service state changed.
 
 ## Approval Required
 
-Approve this pipeline-only patch before any files are edited.
+Approval is required before applying this pipeline-only patch.

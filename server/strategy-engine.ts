@@ -696,7 +696,8 @@ async function executeGridStrategy(strategy: Strategy) {
   let inventoryRecoveryReservePct = managedParam(config, "tpReservePct", 0.10);
   if (isTandemChild) {
     // Keep the ladder anchored until 20% of one-way grid orders have filled.
-    const threshold = Math.max(1, Math.ceil(gridLevels.length * (config.tandemRebuildThreshold ?? 0.20)));
+    // A six-level side would otherwise trigger on its first fill; require one open and one close event.
+    const threshold = Math.max(2, Math.ceil(gridLevels.length * (config.tandemRebuildThreshold ?? 0.20)));
     const scanSince = config.tandemFillScanSince || Date.now();
     const counted = new Set(config.tandemCountedFillIds || []);
     try {
@@ -706,10 +707,13 @@ async function executeGridStrategy(strategy: Strategy) {
         const id = String(order.orderId || order.id || "");
         const timestamp = Number(order.updateTime || order.ctime || order.createTime || order.time || 0);
         const status = String(order.status || "").toUpperCase();
-        const sideMatches = String(order.side || "").toUpperCase() === gridOrderSide;
-        const openOrder = String(order.tradeSide || "OPEN").toUpperCase() === "OPEN";
+        const orderSide = String(order.side || "").toUpperCase();
+        const tradeSide = String(order.tradeSide || "OPEN").toUpperCase();
+        const sideMatches = orderSide === gridOrderSide;
+        const openOrder = tradeSide === "OPEN";
+        const closeOrder = tradeSide === "CLOSE" || tradeSide === "CLOSE_ALL";
         const filled = ["FILLED", "COMPLETE", "DONE", "2", "3"].includes(status);
-        if (id && timestamp >= scanSince && sideMatches && openOrder && filled) counted.add(id);
+        if (id && timestamp >= scanSince && filled && ((sideMatches && openOrder) || (!sideMatches && closeOrder))) counted.add(id);
       }
       config.tandemCountedFillIds = Array.from(counted).slice(-100);
       config.tandemFillScanSince = scanSince;

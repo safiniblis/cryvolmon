@@ -1,18 +1,49 @@
 {
   "windowStart": "2026-08-21",
-  "totalCalls": 1,
-  "totalTokensIn": 0,
-  "totalTokensOut": 0,
-  "totalCostUsd": 0,
+  "totalCalls": 7,
+  "totalTokensIn": 12676,
+  "totalTokensOut": 458,
+  "totalCostUsd": 0.039488999999999996,
   "byProvider": {
     "opencode": {
+      "calls": 3,
+      "costUsd": 0.039488999999999996,
+      "tokensOut": 183
+    },
+    "nvidia": {
+      "calls": 2,
+      "costUsd": 0,
+      "tokensOut": 140
+    },
+    "nebius": {
       "calls": 1,
       "costUsd": 0,
-      "tokensOut": 0
+      "tokensOut": 23
+    },
+    "groq": {
+      "calls": 1,
+      "costUsd": 0,
+      "tokensOut": 112
     }
   },
   "byPosition": {
     "manager": {
+      "calls": 3,
+      "costUsd": 0.039488999999999996
+    },
+    "architect": {
+      "calls": 1,
+      "costUsd": 0
+    },
+    "builder": {
+      "calls": 1,
+      "costUsd": 0
+    },
+    "auditor": {
+      "calls": 1,
+      "costUsd": 0
+    },
+    "trader": {
       "calls": 1,
       "costUsd": 0
     }

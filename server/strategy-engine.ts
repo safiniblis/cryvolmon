@@ -265,6 +265,14 @@ export interface GridConfig {
   parentTandemId?: number;
   twinMode?: boolean;
   twinGapPct?: number;
+  /** Number of one-way grid fills accumulated since the last tandem rebuild. */
+  tandemFillCount?: number;
+  /** Position quantity observed at the previous child-grid cycle. */
+  tandemLastObservedQty?: number;
+  /** Fraction of one side's grid (default 20%) that triggers a rebuild. */
+  tandemRebuildThreshold?: number;
+  tandemFillScanSince?: number;
+  tandemCountedFillIds?: string[];
 }
 
 export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
@@ -597,7 +605,9 @@ async function executeGridStrategy(strategy: Strategy) {
       const lastRangeShift = (config as any).lastRangeShiftAt || 0;
       const rangeShiftCooldown = 120_000;
       const timeSinceShift = Date.now() - lastRangeShift;
-      const driftThreshold = 0.008;
+      // Tandem anchors move only after the one-way fill threshold below.
+      // Keep the range stable during ordinary price drift and fills.
+      const driftThreshold = Number.POSITIVE_INFINITY;
 
       if (drift > driftThreshold && timeSinceShift >= rangeShiftCooldown) {
         const lastShiftPrice = (config as any).lastRangeShiftPrice || oldMid;
@@ -685,6 +695,45 @@ async function executeGridStrategy(strategy: Strategy) {
   let inventoryRecoveryMultiplier = 1;
   let inventoryRecoveryReservePct = managedParam(config, "tpReservePct", 0.10);
   if (isTandemChild) {
+    // Keep the ladder anchored until 20% of one-way grid orders have filled.
+    const threshold = Math.max(1, Math.ceil(gridLevels.length * (config.tandemRebuildThreshold ?? 0.20)));
+    const scanSince = config.tandemFillScanSince || Date.now();
+    const counted = new Set(config.tandemCountedFillIds || []);
+    try {
+      const history = await client.getOrderHistory(strategy.symbol);
+      const rows = Array.isArray(history?.data?.orderList) ? history.data.orderList : (Array.isArray(history?.data) ? history.data : []);
+      for (const order of rows) {
+        const id = String(order.orderId || order.id || "");
+        const timestamp = Number(order.updateTime || order.ctime || order.createTime || order.time || 0);
+        const status = String(order.status || "").toUpperCase();
+        const sideMatches = String(order.side || "").toUpperCase() === gridOrderSide;
+        const openOrder = String(order.tradeSide || "OPEN").toUpperCase() === "OPEN";
+        const filled = ["FILLED", "COMPLETE", "DONE", "2", "3"].includes(status);
+        if (id && timestamp >= scanSince && sideMatches && openOrder && filled) counted.add(id);
+      }
+      config.tandemCountedFillIds = Array.from(counted).slice(-100);
+      config.tandemFillScanSince = scanSince;
+      config.tandemFillCount = counted.size;
+      if (counted.size >= threshold) {
+        const oldAnchor = Number(config.startPrice || currentPrice);
+        const newAnchor = positionEntryPrice > 0 ? positionEntryPrice : currentPrice;
+        if (oldAnchor > 0 && newAnchor > 0 && Math.abs(newAnchor - oldAnchor) / oldAnchor > 0.0001) {
+          const ratio = newAnchor / oldAnchor;
+          config.startPrice = newAnchor;
+          config.lowerPrice *= ratio;
+          config.upperPrice *= ratio;
+          config.liquidationPrice *= ratio;
+          console.log(`[${tag}] Tandem rebuild: ${counted.size}/${threshold} fills; anchor ${oldAnchor.toFixed(4)} -> ${newAnchor.toFixed(4)}`);
+        }
+        config.tandemFillCount = 0;
+        config.tandemFillScanSince = Date.now();
+        config.tandemCountedFillIds = [];
+      }
+      await storage.updateStrategy(strategy.id, { config });
+    } catch (e: any) {
+      console.warn(`[${tag}] Tandem fill scan unavailable; keeping ladder: ${e.message}`);
+    }
+
     const rawParentId = Number((config as any).parentTandemId);
     if (Number.isInteger(rawParentId) && rawParentId > 0) {
       try {

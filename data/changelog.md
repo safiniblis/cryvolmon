@@ -85,3 +85,8 @@
 - 2026-08-17T14:14:01.208Z — Documentation-only smoke-test pipeline completed; TypeScript check and production build passed, all constraints held, and no service restart or live trading activity occurred.
 - 2026-08-21T16:24:23.517Z — Tandem inventory-target implementation was not applied: the Architect stage again exceeded the provider's 8,000-token limit; no code, parameters, orders, or service state changed.
 - 2026-08-21T16:33:36.912Z — Added Tandem inventory recovery: each child grid now sizes new opens larger and reserves more quantity for closing when its live position falls below the recorded initial target, while reducing open sizing when above target; verified TypeScript check and production build.
+- 2026-08-21T22:29:56.749Z — Verified the pending Tandem 20% rebuild draft: TypeScript check and production build pass, but only configuration fields exist; no active fill-threshold logic is present, so no restart or deployment was approved.
+
+- 2026-08-21T22:30:33.058Z — Seat watchdog: SWITCH architect: nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1 (2x fail) -> groq/openai/gpt-oss-120b (290ms)
+- 2026-08-21T22:37:27.129Z — Implemented Tandem child-grid 20% one-way fill threshold: ladders stay anchored during normal fills, scan completed OPEN grid orders, and rescale the child range only after the threshold; TypeScript check and production build passed.
+- 2026-08-21T22:39:44.139Z — Cleaned trailing whitespace from the Tandem 20% rebuild source and verified TypeScript check, production build, and diff whitespace check passed.

@@ -1,0 +1,21 @@
+{
+  "windowStart": "2026-08-21",
+  "totalCalls": 1,
+  "totalTokensIn": 0,
+  "totalTokensOut": 0,
+  "totalCostUsd": 0,
+  "byProvider": {
+    "opencode": {
+      "calls": 1,
+      "costUsd": 0,
+      "tokensOut": 0
+    }
+  },
+  "byPosition": {
+    "manager": {
+      "calls": 1,
+      "costUsd": 0
+    }
+  },
+  "consecutiveFailures": 0
+}

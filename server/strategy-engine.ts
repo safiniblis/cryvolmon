@@ -682,6 +682,8 @@ async function executeGridStrategy(strategy: Strategy) {
   let tandemParentId = 0;
   let tandemAnchor = 0;
   let tandemRatio = 1;
+  let inventoryRecoveryMultiplier = 1;
+  let inventoryRecoveryReservePct = managedParam(config, "tpReservePct", 0.10);
   if (isTandemChild) {
     const rawParentId = Number((config as any).parentTandemId);
     if (Number.isInteger(rawParentId) && rawParentId > 0) {
@@ -692,6 +694,19 @@ async function executeGridStrategy(strategy: Strategy) {
         const parentEntry = Number(parentCfg.entryPrice || 0);
         tandemAnchor = parentEntry > 0 ? parentEntry : 0;
         tandemRatio = tandemGridRatio(parentCfg);
+        const targetQty = Number(parentCfg.initialPositionTargetQty || 0);
+        const tolerance = Math.max(0.02, Math.min(0.5, Number(parentCfg.inventoryTolerancePct ?? 0.10)));
+        const recoveryMax = Math.max(1, Math.min(1.5, Number(parentCfg.inventoryRecoveryMaxMultiplier ?? 1.5)));
+        if (parentCfg.inventoryTargetEnabled !== false && targetQty > 0) {
+          if (positionQty < targetQty * (1 - tolerance)) {
+            const gap = (targetQty - positionQty) / targetQty;
+            inventoryRecoveryMultiplier = 1 + Math.min(recoveryMax - 1, gap);
+            inventoryRecoveryReservePct = Math.min(0.5, Math.max(inventoryRecoveryReservePct, gap * 0.5));
+          } else if (positionQty > targetQty * (1 + tolerance)) {
+            inventoryRecoveryMultiplier = Math.max(0.5, 1 - Math.min(0.5, (positionQty - targetQty) / targetQty));
+          }
+          console.log(`[${tag}] Inventory target ${targetQty.toFixed(2)}; current ${positionQty.toFixed(2)}; open sizing x${inventoryRecoveryMultiplier.toFixed(2)}; TP reserve ${(inventoryRecoveryReservePct * 100).toFixed(0)}%`);
+        }
       } catch (e: any) {
         console.warn(`[${tag}] Tandem parent fetch failed: ${e.message}`);
       }
@@ -872,7 +887,7 @@ async function executeGridStrategy(strategy: Strategy) {
       }
     }
     const rawMargin = Math.min(marginPerOrder, (availableBalance - 0.1) * 0.95);
-    const effectiveMargin = Math.min(rawMargin * gridSizeMultiplier, (availableBalance - 0.1) * 0.95);
+    const effectiveMargin = Math.min(rawMargin * gridSizeMultiplier * inventoryRecoveryMultiplier, (availableBalance - 0.1) * 0.95);
     if (effectiveMargin < minMarginPerOrder * 0.9) break;
     const notional = effectiveMargin * leverage * 0.95;
     const qtyBase = notional / level;
@@ -1032,7 +1047,7 @@ async function executeGridStrategy(strategy: Strategy) {
         }
       }
 
-      const tpReservePct = Math.min(Math.max(managedParam(config, "tpReservePct", 0.10), 0), 0.5);
+      const tpReservePct = Math.min(Math.max(inventoryRecoveryReservePct, 0), 0.5);
       const sellableQty = tpQtyBasis * (1 - tpReservePct);
 
       const basePrecisionMultiplier = Math.pow(10, precision.basePrecision);

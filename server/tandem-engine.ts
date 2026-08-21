@@ -124,6 +124,10 @@ export interface TandemConfig {
   rebalanceCount?: number;
   consecutiveRebalances?: number;
   lastRebalancePriceRef?: number;
+  initialPositionTargetQty?: number;
+  inventoryTargetEnabled?: boolean;
+  inventoryTolerancePct?: number;
+  inventoryRecoveryMaxMultiplier?: number;
 }
 
 const tandemEntryLocks: Set<number> = new Set();
@@ -361,6 +365,10 @@ async function tandemEntry(strategy: Strategy, config: TandemConfig, client: any
       lastRebalancePriceRef: currentPrice,
       consecutiveRebalances: 0,
       rebalanceCount: 0,
+      initialPositionTargetQty: symmetricQtyNum,
+      inventoryTargetEnabled: true,
+      inventoryTolerancePct: 0.10,
+      inventoryRecoveryMaxMultiplier: 2,
     };
 
     await storage.updateStrategy(strategy.id, { config: updatedConfig });

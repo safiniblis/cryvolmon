@@ -1,36 +1,52 @@
 {
-  "id": "pipeline-msxbcsw3-bjup",
-  "goal": "Run the complete Manager → Architect → Manager review → Builder → Auditor → Manager final-gate pipeline as a live smoke test. This is documentation-only. Do not create new pipeline artifact files in the repository; the server records pipeline artifacts automatically. Builder may append one concise note to existing data/changelog.md and run the existing type-check and production-build commands. Do not modify trading logic, exchange settings, credentials, strategies, orders, positions, balances, leverage, capital, tickers, risk behavior, or service configuration.",
-  "createdAt": "2026-08-17T14:12:52.419Z",
-  "updatedAt": "2026-08-17T14:13:14.577Z",
-  "stage": "builder",
+  "id": "pipeline-mt35t0wa-10nt",
+  "goal": "Implement the approved Tandem inventory-target balancing change for the existing running strategy behavior. For each long and short child grid, preserve the original initial ADA quantity target (approximately 497 ADA per side for strategy #30, stored from the initial entry), and count live position plus pending opening orders. When below target tolerance, increase opening order quantities through the existing grid and protect/reduce ordinary closing quantities; when above target, reduce opening boost and allow normal closes. Keep current capital allocation, 25% initialSharePct, 75% grid allocation, leverage, ticker, exchange, order semantics, authentication, and locked risk unchanged. Add only managed parameters needed for tolerance, opening boost, and maximum close reserve; apply safely to existing tandem configurations with backward-compatible defaults. Verify TypeScript check and production build. Do not start/stop strategies or place live orders during implementation. Do not restart the service; manager will do that only after auditor approval.",
+  "createdAt": "2026-08-21T16:24:08.650Z",
+  "updatedAt": "2026-08-21T16:32:23.335Z",
+  "stage": "blocked",
   "loop": 0,
-  "maxLoop": 5,
-  "status": "running",
-  "summary": "Run the complete Manager → Architect → Manager review → Builder → Auditor → Manager final-gate pipeline as a live smoke test. This is documentation-only. Do not create new pipeline artifact files in the repository; the server records pipeline artifacts automatically. Builder may append one concise note to existing data/changelog.md and run the existing type-check and production-build commands. Do not modify trading logic, exchange settings, credentials, strategies, orders, positions, balances, leverage, capital, tickers, risk behavior, or service configuration.",
+  "maxLoop": 2,
+  "status": "blocked",
+  "summary": "Agent error analyzed. Proposed patch is waiting for operator approval; no changes were applied and no retry was started.",
   "history": [
     {
       "stage": "order",
       "position": "manager",
-      "at": "2026-08-17T14:12:56.129Z",
-      "summary": "## GOAL Run the full live smoke-test pipeline for a documentation-only job, with no product or trading changes. ## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed) No source, trading, exchange, credential, service, strategy, order, position, balance, or ",
-      "artifact": "data/pipeline-artifacts/pipeline-msxbcsw3-bjup-order.md"
+      "at": "2026-08-21T16:24:16.799Z",
+      "summary": "## GOAL Implement the approved Tandem inventory-target balancing change for existing running strategy behavior. For each long and short child grid, preserve the original initial ADA quantity target (approximately 497 ADA per side for strategy #30) from the stored initial entry. Count live position p",
+      "artifact": "data/pipeline-artifacts/pipeline-mt35t0wa-10nt-order.md"
     },
     {
       "stage": "architect",
       "position": "architect",
-      "at": "2026-08-17T14:13:09.269Z",
-      "summary": "## Recommendation Proceed with a documentation-only smoke test. The only permitted file change is one concise appended entry in `data/changelog.md`. ## Build Plan (ordered steps: file → exact change → why) 1. **No file → confirm clean scope →** Verify the job requires no source, trading, exchange, c",
-      "artifact": "data/pipeline-artifacts/pipeline-msxbcsw3-bjup-architect.md"
+      "at": "2026-08-21T16:24:17.597Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10783, please reduce your message size and try again. Need more tokens? Upgrad",
+      "artifact": "data/pipeline-artifacts/pipeline-mt35t0wa-10nt-architect.md"
     },
     {
       "stage": "manager-plan",
       "position": "manager",
-      "at": "2026-08-17T14:13:14.577Z",
-      "summary": "APPROVE_PLAN",
-      "artifact": "data/pipeline-artifacts/pipeline-msxbcsw3-bjup-manager-plan.md"
+      "at": "2026-08-21T16:24:38.301Z",
+      "summary": "## Diagnosis The Architect request exceeded the provider’s throughput budget: - Limit: **8,000 tokens** - Requested: **10,783 tokens** - Provider/model: **Groq `openai/gpt-oss-120b`** The request was oversized because the pipeline combines long role instructions, the full job order, repository conte",
+      "artifact": "data/pipeline-artifacts/pipeline-mt35t0wa-10nt-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-21T16:32:03.196Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10297, please reduce your message size and try again. Need more tokens? Upgrad",
+      "artifact": "data/pipeline-artifacts/pipeline-mt35t0wa-10nt-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-21T16:32:23.335Z",
+      "summary": "## Diagnosis This was a pipeline-sizing failure, not a trading failure. - Groq Architect seat: `openai/gpt-oss-120b` - Provider limit: **8,000 tokens per minute** - Failed request: **10,297 tokens** - Earlier attempt: **10,783 tokens** The request included lengthy role instructions, job order, repos",
+      "artifact": "data/pipeline-artifacts/pipeline-mt35t0wa-10nt-manager-plan.md"
     }
   ],
-  "managerOrder": "## GOAL\nRun the full live smoke-test pipeline for a documentation-only job, with no product or trading changes.\n\n## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed)\nNo source, trading, exchange, credential, service, strategy, order, position, balance, or risk-setting changes. Do not create pipeline artifact files. Builder may only append one concise note to `data/changelog.md`.\n\n## ACCEPTANCE CRITERIA (how we know the job is done AND running)\nManager plan approved; Architect plan reviewed by Manager; Builder completes the permitted changelog note and passes existing type-check and production build; Auditor approves; Manager final gate confirms all constraints held. No service restart is needed.\n\n## FILES-TO-TOUCH (your best guess of the files involved)\n`data/changelog.md` only (optional single concise appended note).",
-  "buildPlan": "## Recommendation\n\nProceed with a documentation-only smoke test. The only permitted file change is one concise appended entry in `data/changelog.md`.\n\n## Build Plan (ordered steps: file → exact change → why)\n\n1. **No file → confirm clean scope →** Verify the job requires no source, trading, exchange, credential, service, strategy, order, position, balance, or risk changes.\n2. **`data/changelog.md` → append one concise note only after successful completion →** Record that the live smoke-test pipeline completed, type-check and production build passed, all constraints held, and no restart was needed.\n3. **No artifact files → create nothing →** Preserve the documentation-only constraint.\n\n## Verification\n\n- **run_check:** `npm run check`\n- **run_build:** `npm run build`\n- **What to look at:** Manager approval, Architect review, Builder success, Auditor approval, and final Manager gate.\n- Confirm the only modified file is `data/changelog.md`.\n- Confirm no service restart or live trading activity occurred.\n\n## Risks\n\n- A failed check or build must stop the pipeline and must not be logged as successful.\n- Any detected change outside `data/changelog.md` is a scope violation.\n- Do not create pipeline artifacts or infer trading results.\n\n## What We Keep As-Is\n\nAll source code, configuration, credentials, services, strategies, exchange behavior, orders, positions, balances, leverage, capital, tickers, and risk settings remain unchanged."
+  "managerOrder": "## GOAL\nImplement the approved Tandem inventory-target balancing change for existing running strategy behavior. For each long and short child grid, preserve the original initial ADA quantity target (approximately 497 ADA per side for strategy #30) from the stored initial entry. Count live position plus pending opening orders. Below tolerance, boost opening quantities and protect/reduce ordinary closing quantities; above target, remove the boost and permit normal closes. Use backward-compatible managed-parameter defaults.\n\n## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed)\n- Keep current capital allocation, `initialSharePct=25%`, and `grid allocation=75%`.\n- Do not change leverage, ticker, exchange, authentication, order semantics, or locked risk inputs.\n- Do not start or stop strategies, place live orders, or restart the service during implementation.\n- Preserve existing Tandem configurations and behavior unless the new balancing logic applies.\n- Add only managed parameters for inventory tolerance, opening boost, and maximum close reserve.\n- Do not invent or reset the original initial quantity target.\n\n## ACCEPTANCE CRITERIA (how we know the job is done AND running)\n- Architect plan is approved before code changes; Builder implements only the approved scope; Auditor approves the result.\n- Each child side uses its stored original initial ADA target and evaluates live position plus pending opening orders.\n- Below target tolerance: opening quantities increase within the configured boost and ordinary closing quantities are protected by the configured reserve.\n- Above target: opening boost is removed/reduced and normal closing behavior is allowed.\n- Missing legacy parameters use safe backward-compatible defaults without changing locked risk.\n- TypeScript check and production build pass.\n- No live orders, strategy state changes, or service restart occur before final Manager approval.\n- After Auditor approval and Manager-approved restart, the running service demonstrates the balancing logic without changing locked inputs.\n\n## FILES-TO-TOUCH (your best guess of the files involved)\n- `server/tandem-engine.ts`\n- `server/managed-params.ts`\n- `server/strategy-engine.ts`\n- `server/order-coordinator.ts` (only if required for pending-order accounting or close protection)\n- `shared/schema.ts` (only if parameter/config typing requires it)\n- `server/gold-long-engine.test.ts` or a new focused Tandem test file\n- `data/changelog.md` (implementation summary only)",
+  "buildPlan": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10297, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at http",
+  "recoveryCount": 2,
+  "errorAnalysis": "## Diagnosis\n\nThis was a pipeline-sizing failure, not a trading failure.\n\n- Groq Architect seat: `openai/gpt-oss-120b`\n- Provider limit: **8,000 tokens per minute**\n- Failed request: **10,297 tokens**\n- Earlier attempt: **10,783 tokens**\n\nThe request included lengthy role instructions, job order, repository context, and pipeline history. The Architect never produced a build plan; no code, trading settings, orders, or restart changed.\n\nLive seats show the Architect and Auditor sharing Groq 120B. The Builder is using a persisted Nebius override that is not represented in the declared provider type/seat registry. This configuration mismatch should also be corrected.\n\n## Proposed Patch (not applied)\n\n**`server/council.ts`**\n\n1. Build a compact Architect request containing only the job order, relevant files, constraints, and necessary prior artifact.\n2. Exclude full council history, unrelated repository files, and runtime data.\n3. Enforce a request budget safely below 8,000 tokens, including output allowance.\n4. Treat HTTP 413 as a terminal blocked error; do not retry the failed agent.\n5. Prevent a failed request from consuming the review-loop budget.\n\n**`server/agent-providers.ts`**\n\n1. Validate persisted seat overrides against supported providers and models.\n2. Ignore or safely clear invalid overrides such as the persisted Nebius Builder assignment.\n3. Add provider/model budget metadata for Groq 120B.\n4. Keep provider changes limited to pipeline configuration; do not alter trading or exchange behavior.\n\n**Tests**\n\nAdd focused pipeline tests covering compact context, 413 handling, no retry, and invalid-seat override rejection.\n\n## Verification After Approval\n\n- Run TypeScript checking and the production build.\n- Confirm the estimated Architect request is below 8,000 tokens.\n- Confirm a 413 creates one blocked result without retrying.\n- Confirm invalid provider overrides cannot become active.\n- Confirm no trading files, risk settings, live orders, or service restart are involved.\n\n## Approval Required\n\nApproval is required before applying this pipeline-only patch."
 }

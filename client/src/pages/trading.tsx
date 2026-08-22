@@ -779,40 +779,38 @@ function VolatilityScoresPanel() {
           <Shield className="h-4 w-4 text-blue-400" />
           Volatility
         </CardTitle>
-        {!hasRunning && (
-          <div className="flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant={twinMode ? "default" : "outline"}
-              onClick={() => setTwinMode(!twinMode)}
-              className="h-6 px-2 text-[10px]"
-              data-testid="button-twin-mode"
-            >
-              <ArrowUpDown className="h-3 w-3 mr-1" />
-              Twin {twinMode ? "On" : "Off"}
-            </Button>
-            <select
-              value={exchange}
-              onChange={e => setExchange(e.target.value as "bitunix" | "bitrue")}
-              className="h-7 rounded-md border border-input bg-background px-2 text-xs"
-              data-testid="select-quickstart-exchange"
-            >
-              <option value="bitunix">Bitunix</option>
-              <option value="bitrue">Bitrue</option>
-            </select>
-            <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              data-testid="input-quickstart-amount"
-              type="number"
-              min="5"
-              step="10"
-              value={amount}
-              onChange={e => setAmount(e.target.value)}
-              className="w-20 h-7 text-xs font-mono"
-              placeholder="40"
-            />
-          </div>
-        )}
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="sm"
+            variant={twinMode ? "default" : "outline"}
+            onClick={() => setTwinMode(!twinMode)}
+            className="h-6 px-2 text-[10px]"
+            data-testid="button-twin-mode"
+          >
+            <ArrowUpDown className="h-3 w-3 mr-1" />
+            Twin {twinMode ? "On" : "Off"}
+          </Button>
+          <select
+            value={exchange}
+            onChange={e => setExchange(e.target.value as "bitunix" | "bitrue")}
+            className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+            data-testid="select-quickstart-exchange"
+          >
+            <option value="bitunix">Bitunix</option>
+            <option value="bitrue">Bitrue</option>
+          </select>
+          <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            data-testid="input-quickstart-amount"
+            type="number"
+            min="5"
+            step="10"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            className="w-20 h-7 text-xs font-mono"
+            placeholder="40"
+          />
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {isLoading && <p className="text-xs text-muted-foreground p-3">Loading...</p>}

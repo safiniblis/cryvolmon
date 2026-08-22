@@ -1281,6 +1281,7 @@ function TandemStartPanel() {
   const [rotation, setRotation] = useState(false);
   const [longWeight, setLongWeight] = useState("1");
   const [shortWeight, setShortWeight] = useState("1");
+  const [tandemExchange, setTandemExchange] = useState<"bitunix" | "bitrue">("bitunix");
   const tandemStart = useTandemStart();
   const { data: pairData } = useBitunixPairs();
   const bitunixPairs = pairData?.pairs || [];
@@ -1539,6 +1540,17 @@ function TandemStartPanel() {
             />
             Auto-rotate
           </label>
+          <div className="flex items-center gap-1.5">
+            <select
+              value={tandemExchange}
+              onChange={e => setTandemExchange(e.target.value as "bitunix" | "bitrue")}
+              className="h-7 rounded-md border border-input bg-background px-2 text-[10px]"
+              data-testid="select-tandem-exchange"
+            >
+              <option value="bitunix">Bitunix</option>
+              <option value="bitrue">Bitrue</option>
+            </select>
+          </div>
           <Button
             data-testid="button-tandem-start"
             size="sm"
@@ -1550,6 +1562,7 @@ function TandemStartPanel() {
               rotationEnabled: rotation,
               longWeight: parseInt(longWeight) || 1,
               shortWeight: parseInt(shortWeight) || 1,
+              exchange: tandemExchange,
             })}
           >
             {tandemStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Zap className="h-3 w-3 mr-1" />}
@@ -1806,6 +1819,7 @@ function HedgePairPanel() {
   const [leverage, setLeverage] = useState("100");
   const [autoRestart, setAutoRestart] = useState(true);
   const [trailingPct, setTrailingPct] = useState("0.33");
+  const [hedgeExchange, setHedgeExchange] = useState<"bitunix" | "bitrue">("bitunix");
 
   const { data: pairInfo } = usePairInfo(symbol);
   const maxLev = (pairInfo as any)?.maxLeverage || 125;
@@ -1988,6 +2002,17 @@ function HedgePairPanel() {
           </div>
         )}
         <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <label className="text-[10px] text-muted-foreground">Exchange</label>
+            <select
+              value={hedgeExchange}
+              onChange={e => setHedgeExchange(e.target.value as "bitunix" | "bitrue")}
+              className="bg-background border rounded px-1.5 py-0.5 text-[10px]"
+            >
+              <option value="bitunix">Bitunix</option>
+              <option value="bitrue">Bitrue</option>
+            </select>
+          </div>
           <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
             <input
               type="checkbox"
@@ -2008,6 +2033,7 @@ function HedgePairPanel() {
               leverage: parseInt(leverage),
               autoRestart,
               trailingPct: parseFloat(trailingPct) / 100,
+              exchange: hedgeExchange,
             })}
           >
             {hedgePairStart.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Shield className="h-3 w-3 mr-1" />}

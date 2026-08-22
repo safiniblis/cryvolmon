@@ -1033,10 +1033,11 @@ export async function registerRoutes(
         rotationEnabled: z.boolean().default(false),
         longWeight: z.number().min(1).max(10).default(1),
         shortWeight: z.number().min(1).max(10).default(1),
+        exchange: z.enum(["bitunix", "bitrue"]).default("bitunix"),
       });
-      const { symbol, totalCapital, leverage, rotationEnabled, longWeight, shortWeight } = schema.parse(req.body);
+      const { symbol, totalCapital, leverage, rotationEnabled, longWeight, shortWeight, exchange } = schema.parse(req.body);
 
-      const client = getBitunixClient();
+      const client = resolveClient(exchange);
       if (!client) return res.status(400).json({ message: "API keys not configured" });
 
       const strategy = await storage.createStrategy({
@@ -1046,6 +1047,7 @@ export async function registerRoutes(
         side: "BOTH",
         status: "running",
         config: {
+          exchange,
           leverage,
           totalCapital,
           initialCapital: totalCapital,
@@ -1164,10 +1166,11 @@ export async function registerRoutes(
         leverage: z.number().min(10).max(125).default(100),
         trailingPct: z.number().min(0.001).max(0.05).default(0.0033),
         autoRestart: z.boolean().default(true),
+        exchange: z.enum(["bitunix", "bitrue"]).default("bitunix"),
       });
       const params = schema.parse(req.body);
 
-      const client = getBitunixClient();
+      const client = resolveClient(params.exchange);
       if (!client) return res.status(400).json({ message: "API keys not configured" });
 
       const strategy = await storage.createStrategy({
@@ -1177,6 +1180,7 @@ export async function registerRoutes(
         side: "BOTH",
         status: "running",
         config: {
+          exchange: params.exchange,
           leverage: params.leverage,
           capitalPerSide: params.capitalPerSide,
           phase: "entry",

@@ -3,6 +3,9 @@ name: Exchange API Rules
 description: Bitunix vs Bitrue auth, endpoints, order fields, and known gotchas — never mix the two clients
 ---
 
+## Full Bitrue API Reference
+See `.agents/memory/bitrue-api-reference.md` for complete endpoint docs, error codes, rate limits, WS payloads, and leverage brackets.
+
 ## Bitunix (ADAUSDT and other non-gold strategies)
 - Uses `server/bitunix.ts`
 - Symbol field: `symbol`
@@ -54,12 +57,14 @@ description: Bitunix vs Bitrue auth, endpoints, order fields, and known gotchas 
 - Symbol field: `contractName` (not `symbol`)
 - Base URL: `https://fapi.bitrue.com`
 - Auth: HMAC-SHA256 over `ts + METHOD + path + body` (all four parts concatenated)
-- Order endpoint: POST `/fapi/v1/contract_order`
-  - MARKET orders: use `amount` (USDT notional, min $5) — NOT `volume`
-  - LIMIT  orders: use `volume` (integer contracts)
-  - `leverage` is per-order (no separate leverage endpoint on Bitrue futures)
-- Cancel: POST `/fapi/v1/cancel` — DELETE method NOT supported on Bitrue futures
-  - Batch cancel: POST `/fapi/v1/batchCancel`
+- V2 endpoints (preferred): POST `/fapi/v2/order`, POST `/fapi/v2/cancel`, GET `/fapi/v2/openOrders`, GET `/fapi/v2/account`
+- V1 endpoints (fallback): POST `/fapi/v1/contract_order`, POST `/fapi/v1/cancel`, POST `/fapi/v1/batchCancel`
+- Order types: LIMIT, MARKET, IOC, FOK, POST_ONLY (V2 only)
+- positionType: 1=crossed, 2=isolated
+- Leverage: per-order via `leverage` param (1-125), also `POST /fapi/v2/level_edit`
+- MARKET orders: use `amount` (USDT notional, min $5)
+- LIMIT orders: use `volume` (integer contracts) + `price`
+- Trigger/TP/SL orders: V2 supports `triggerOrderType`, `triggerType`, `triggerPrice`, `conditionOrder`, `triggerOrderCreateParams` directly on new order
 - Position: GET `/fapi/v1/positions?contractName=E-XAUT-USDT`
   - Response shape is inconsistent — use `BitrueClient.extractPositions(res)` static helper which handles `{ positions }`, `{ data: { positions } }`, `{ data: [] }`, or bare `[]`
   - Volume field: `volume` or `holdVol` or `qty` or `openVol` (try all)

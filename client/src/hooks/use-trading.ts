@@ -160,8 +160,8 @@ export function useStartStrategy() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("POST", `/api/strategies/${id}/start`);
+    mutationFn: async ({ id, exchange }: { id: number; exchange?: string }) => {
+      const res = await apiRequest("POST", `/api/strategies/${id}/start`, { exchange });
       return res.json();
     },
     onSuccess: () => {

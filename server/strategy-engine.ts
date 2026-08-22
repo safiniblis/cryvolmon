@@ -1,10 +1,18 @@
 import { getBitunixClient } from "./bitunix";
+import { resolveClient, type ExchangeName } from "./exchange-adapter";
 import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
 import { priceFeed } from "./ws-price-feed";
 import { managedParam } from "./managed-params";
 import { tandemCellFor, tandemGridRatio, isTandemCellReservedNear, hasPendingCloseAtPrice, acquireTandemSequence } from "./order-coordinator";
 import { shouldPauseTandemChild } from "./tandem-engine";
+
+function resolveStrategyClient(strategy: Strategy): any {
+  const exchange: ExchangeName = ((strategy.config as any)?.exchange as ExchangeName) || "bitunix";
+  const client = resolveClient(exchange);
+  if (!client) throw new Error(`Exchange "${exchange}" client not configured for strategy #${strategy.id}`);
+  return client;
+}
 
 interface TickerData {
   symbol: string;
@@ -24,11 +32,11 @@ export interface PairPrecision {
 
 const precisionCache: Map<string, PairPrecision> = new Map();
 
-export async function getPairPrecision(symbol: string): Promise<PairPrecision> {
+export async function getPairPrecision(symbol: string, clientOverride?: any): Promise<PairPrecision> {
   const cached = precisionCache.get(symbol);
   if (cached) return cached;
 
-  const client = getBitunixClient();
+  const client = clientOverride || getBitunixClient();
   if (!client) return { basePrecision: 2, quotePrecision: 3, minTradeVolume: 0.1, maxLeverage: 75 };
 
   try {
@@ -61,7 +69,7 @@ function roundPrice(price: number, precision: number): string {
 const activeGridOrders: Map<number, Map<string, { orderId: string; price: number; side: "BUY" | "SELL"; level: number }>> = new Map();
 const initialBuyLocks: Set<number> = new Set();
 
-async function getTickerPrice(symbol: string): Promise<TickerData | null> {
+async function getTickerPrice(symbol: string, clientOverride?: any): Promise<TickerData | null> {
   const wsPrice = priceFeed.getLastPrice(symbol);
   if (wsPrice && wsPrice > 0) {
     return {
@@ -74,7 +82,7 @@ async function getTickerPrice(symbol: string): Promise<TickerData | null> {
     };
   }
 
-  const client = getBitunixClient();
+  const client = clientOverride || getBitunixClient();
   if (!client) return null;
 
   try {
@@ -277,7 +285,7 @@ export interface GridConfig {
 }
 
 export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success: boolean; message: string; orderId?: string }> {
-  const client = getBitunixClient();
+  const client = resolveStrategyClient(strategy);
   if (!client) return { success: false, message: "Bitunix client not configured" };
 
   const config = strategy.config as GridConfig & { initialBuyDone?: boolean };
@@ -524,7 +532,7 @@ async function executeGridStrategy(strategy: Strategy) {
     console.log(`[Grid ${strategy.id}] Tandem gate active; child remains paused`);
     return;
   }
-  const client = getBitunixClient();
+  const client = resolveStrategyClient(strategy);
   if (!client) throw new Error("Bitunix client not configured");
 
   const config = strategy.config as GridConfig & { initialBuyDone?: boolean };
@@ -1286,8 +1294,7 @@ async function executeGridStrategy(strategy: Strategy) {
 }
 
 async function executeDCAStrategy(strategy: Strategy) {
-  const client = getBitunixClient();
-  if (!client) throw new Error("Bitunix client not configured");
+  const client = resolveStrategyClient(strategy);
 
   const config = strategy.config as {
     buyAmount: number;
@@ -1360,8 +1367,7 @@ async function executeDCAStrategy(strategy: Strategy) {
 }
 
 async function executeMomentumStrategy(strategy: Strategy) {
-  const client = getBitunixClient();
-  if (!client) throw new Error("Bitunix client not configured");
+  const client = resolveStrategyClient(strategy);
 
   const config = strategy.config as {
     threshold: number; // % change to trigger
@@ -1957,7 +1963,7 @@ export async function checkPairRotation(strategy: Strategy): Promise<{ shouldRot
   const currentScore = scores.find(s => s.symbol.toLowerCase() === currentSymbolBase);
   if (!currentScore) return { shouldRotate: false };
 
-  const client = getBitunixClient();
+  const client = resolveStrategyClient(strategy);
   let availablePairs: Set<string> = new Set();
   if (client) {
     try {
@@ -1991,8 +1997,7 @@ export async function checkPairRotation(strategy: Strategy): Promise<{ shouldRot
 }
 
 export async function executePairRotation(strategy: Strategy, newSymbol: string, reason: string) {
-  const client = getBitunixClient();
-  if (!client) return;
+  const client = resolveStrategyClient(strategy);
 
   console.log(`[Rotation ${strategy.id}] Starting rotation from ${strategy.symbol} to ${newSymbol}: ${reason}`);
 
@@ -2171,8 +2176,8 @@ export async function runStrategyCycle() {
   }
 }
 
-export async function cancelAllGridOrders(strategyId: number, symbol: string) {
-  const client = getBitunixClient();
+export async function cancelAllGridOrders(strategyId: number, symbol: string, exchange?: ExchangeName) {
+  const client = resolveClient(exchange) || getBitunixClient();
   if (!client) return;
 
   try {
@@ -2252,8 +2257,7 @@ export async function getMarginInfo(strategy: Strategy): Promise<{
   needsExtension: boolean;
   uncoveredLevels: number;
 }> {
-  const client = getBitunixClient();
-  if (!client) throw new Error("Bitunix client not configured");
+  const client = resolveStrategyClient(strategy);
 
   const config = (strategy.config || {}) as GridConfig & Record<string, any>;
   const precision = await getPairPrecision(strategy.symbol);
@@ -2307,8 +2311,7 @@ export async function getMarginInfo(strategy: Strategy): Promise<{
 }
 
 export async function extendOrdersToLowerBand(strategy: Strategy): Promise<{ success: boolean; message: string; ordersPlaced: number }> {
-  const client = getBitunixClient();
-  if (!client) throw new Error("Bitunix client not configured");
+  const client = resolveStrategyClient(strategy);
 
   const config = (strategy.config || {}) as GridConfig & Record<string, any>;
   const precision = await getPairPrecision(strategy.symbol);
@@ -2373,8 +2376,7 @@ export async function extendOrdersToLowerBand(strategy: Strategy): Promise<{ suc
 }
 
 export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): Promise<{ success: boolean; message: string; ordersPlaced: number }> {
-  const client = getBitunixClient();
-  if (!client) return { success: false, message: "Bitunix client not configured", ordersPlaced: 0 };
+  const client = resolveStrategyClient(strategy);
 
   const config = (strategy.config || {}) as GridConfig & Record<string, any>;
 
@@ -2464,8 +2466,7 @@ export async function addMarginToGrid(strategy: Strategy, amountUsdt: number): P
 }
 
 export async function removeMarginFromGrid(strategy: Strategy, count: number): Promise<{ success: boolean; message: string; ordersCancelled: number; freedMargin: number }> {
-  const client = getBitunixClient();
-  if (!client) throw new Error("Bitunix client not configured");
+  const client = resolveStrategyClient(strategy);
 
   const precision = await getPairPrecision(strategy.symbol);
   const ticker = await getTickerPrice(strategy.symbol);

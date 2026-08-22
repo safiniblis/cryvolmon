@@ -469,6 +469,7 @@ function MarginControls({ strategy }: { strategy: Strategy }) {
 
 function StrategyCard({ s }: { s: Strategy }) {
   const [expanded, setExpanded] = useState(false);
+  const [cardExchange, setCardExchange] = useState<"bitunix" | "bitrue">((s.config as any)?.exchange || "bitunix");
   const startStrategy = useStartStrategy();
   const stopStrategy = useStopStrategy();
   const deleteStrategy = useDeleteStrategy();
@@ -607,15 +608,26 @@ function StrategyCard({ s }: { s: Strategy }) {
                   <Square className="h-4 w-4 text-red-400" />
                 </Button>
               ) : (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => startStrategy.mutate(s.id)}
-                  disabled={startStrategy.isPending}
-                  data-testid={`button-start-${s.id}`}
-                >
-                  <Play className="h-4 w-4 text-emerald-400" />
-                </Button>
+                <>
+                  <select
+                    value={cardExchange}
+                    onChange={e => setCardExchange(e.target.value as "bitunix" | "bitrue")}
+                    className="h-6 rounded border border-input bg-background px-1 text-[9px]"
+                    data-testid={`select-exchange-${s.id}`}
+                  >
+                    <option value="bitunix">Bitunix</option>
+                    <option value="bitrue">Bitrue</option>
+                  </select>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => startStrategy.mutate({ id: s.id, exchange: cardExchange })}
+                    disabled={startStrategy.isPending}
+                    data-testid={`button-start-${s.id}`}
+                  >
+                    <Play className="h-4 w-4 text-emerald-400" />
+                  </Button>
+                </>
               )}
               <Button
                 size="icon"

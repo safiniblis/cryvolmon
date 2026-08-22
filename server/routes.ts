@@ -2,6 +2,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { getBitunixClient } from "./bitunix";
+import { resolveClient, type ExchangeName } from "./exchange-adapter";
 import { resolveExchangeKey, setExchangeKeys } from "./exchange-keys";
 import {
   managerChat,
@@ -542,14 +543,20 @@ export async function registerRoutes(
 
   app.post("/api/strategies/:id/start", async (req, res) => {
     const id = parseInt(req.params.id);
-    const client = getBitunixClient();
-    if (!client) {
-      return res.status(400).json({ message: "API keys not configured. Add your Bitunix API Key and Secret Key first." });
-    }
     const strategy = await storage.getStrategy(id);
     if (!strategy) return res.status(404).json({ message: "Strategy not found" });
 
-    const updated = await storage.updateStrategy(id, { status: "running" });
+    const exchange: ExchangeName = (req.body?.exchange as ExchangeName) || (strategy.config as any)?.exchange || "bitunix";
+    if (exchange === "bitrue") {
+      const { getBitrueClient } = await import("./bitrue");
+      if (!getBitrueClient()) return res.status(400).json({ message: "Bitrue API keys not configured." });
+    } else {
+      const client = getBitunixClient();
+      if (!client) return res.status(400).json({ message: "Bitunix API keys not configured." });
+    }
+
+    const updatedConfig = { ...(strategy.config as any), exchange };
+    const updated = await storage.updateStrategy(id, { status: "running", config: updatedConfig });
 
     let initialBuy = null;
     const config = strategy.config as any;
@@ -855,17 +862,14 @@ export async function registerRoutes(
   app.post("/api/strategies/quickstart", async (req, res) => {
     try {
       const { amount = 100, symbol: requestedSymbol, exchange = "bitunix", twinMode = false, twinGapPct = 0.006 } = req.body;
-      if (exchange !== "bitunix") {
-        return res.status(400).json({ message: "Bitrue crypto grid execution is not available yet. Bitrue currently supports the Gold Long strategy only." });
-      }
       const usdtAmount = parseFloat(amount);
       if (isNaN(usdtAmount) || usdtAmount <= 0) {
         return res.status(400).json({ message: "Invalid USDT amount" });
       }
 
-      const client = getBitunixClient();
+      const client = resolveClient(exchange as ExchangeName);
       if (!client) {
-        return res.status(400).json({ message: "API keys not configured. Add your Bitunix API Key and Secret Key first." });
+        return res.status(400).json({ message: `API keys not configured for ${exchange}.` });
       }
 
       const stats = await storage.getCryptoStats();
@@ -954,6 +958,7 @@ export async function registerRoutes(
           extensionsAbove: 0,
           rotationEnabled: true,
           allocatedBudget: usdtAmount,
+          exchange,
           ...(twinMode ? { twinMode: true, twinGapPct, feeMultiplier: twinFeeMultiplier } : {}),
         },
       });

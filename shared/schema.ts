@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, doublePrecision, varchar } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, doublePrecision, varchar, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -139,3 +139,30 @@ export const accountBalance = pgTable("account_balance", {
 });
 
 export type AccountBalance = typeof accountBalance.$inferSelect;
+
+/** Exchange order snapshots imported for reconciliation and audit. */
+export const exchangeOrderLedger = pgTable("exchange_order_ledger", {
+  id: serial("id").primaryKey(),
+  exchange: text("exchange").notNull(),
+  symbol: text("symbol").notNull(),
+  exchangeOrderId: text("exchange_order_id").notNull(),
+  clientOrderId: text("client_order_id"),
+  side: text("side"),
+  tradeSide: text("trade_side"),
+  orderType: text("order_type"),
+  status: text("status").notNull(),
+  quantity: doublePrecision("quantity"),
+  filledQuantity: doublePrecision("filled_quantity"),
+  price: doublePrecision("price"),
+  averagePrice: doublePrecision("average_price"),
+  fee: doublePrecision("fee"),
+  realizedPnl: doublePrecision("realized_pnl"),
+  exchangeCreatedAt: timestamp("exchange_created_at"),
+  exchangeUpdatedAt: timestamp("exchange_updated_at"),
+  raw: jsonb("raw").$type<Record<string, unknown>>().notNull(),
+  importedAt: timestamp("imported_at").defaultNow(),
+}, (table) => ({
+  exchangeOrderUnique: uniqueIndex("exchange_order_ledger_exchange_order_idx").on(table.exchange, table.exchangeOrderId),
+}));
+export type ExchangeOrderLedgerEntry = typeof exchangeOrderLedger.$inferSelect;
+export type InsertExchangeOrderLedger = typeof exchangeOrderLedger.$inferInsert;

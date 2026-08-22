@@ -6,6 +6,7 @@ import {
   councilMessages, type CouncilMessage, type InsertCouncilMessage,
   positions, type Position,
   accountBalance, type AccountBalance,
+  exchangeOrderLedger, type ExchangeOrderLedgerEntry, type InsertExchangeOrderLedger,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -36,6 +37,8 @@ export interface IStorage {
 
   getAccountBalances(): Promise<AccountBalance[]>;
   updateAccountBalances(balances: any[]): Promise<void>;
+  getExchangeOrderLedger(symbol?: string, limit?: number): Promise<ExchangeOrderLedgerEntry[]>;
+  upsertExchangeOrderLedger(entry: InsertExchangeOrderLedger): Promise<ExchangeOrderLedgerEntry>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -166,6 +169,20 @@ export class DatabaseStorage implements IStorage {
       }
     });
   }
+  async getExchangeOrderLedger(symbol?: string, limit: number = 500): Promise<ExchangeOrderLedgerEntry[]> {
+    const query = symbol
+      ? db.select().from(exchangeOrderLedger).where(eq(exchangeOrderLedger.symbol, symbol))
+      : db.select().from(exchangeOrderLedger);
+    return await query.orderBy(desc(exchangeOrderLedger.exchangeUpdatedAt), desc(exchangeOrderLedger.importedAt)).limit(limit);
+  }
+
+  async upsertExchangeOrderLedger(entry: InsertExchangeOrderLedger): Promise<ExchangeOrderLedgerEntry> {
+    const [result] = await db.insert(exchangeOrderLedger).values(entry)
+      .onConflictDoUpdate({ target: [exchangeOrderLedger.exchange, exchangeOrderLedger.exchangeOrderId], set: entry })
+      .returning();
+    return result;
+  }
+
 }
 
 export const storage = new DatabaseStorage();

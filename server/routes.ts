@@ -709,6 +709,44 @@ export async function registerRoutes(
     res.json(logs);
   });
 
+  // === Exchange order ledger ===
+  app.get("/api/exchange/orders", async (req, res) => {
+    const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || "500"), 10) || 500, 1), 1000);
+    res.json(await storage.getExchangeOrderLedger(symbol, limit));
+  });
+
+  app.post("/api/exchange/orders/import", async (req, res) => {
+    const client = getBitunixClient();
+    if (!client) return res.status(400).json({ message: "Bitunix API keys not configured" });
+    const symbol = typeof req.body?.symbol === "string" ? req.body.symbol.trim().toUpperCase() : undefined;
+    try {
+      const response = await client.getOrderHistory(symbol);
+      const orders: any[] = Array.isArray(response?.data) ? response.data : Array.isArray(response) ? response : [];
+      const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+      const date = (v: any) => { const n = num(v); return n === null ? null : new Date(n < 100000000000 ? n * 1000 : n); };
+      let imported = 0;
+      for (const order of orders) {
+        const id = String(order.orderId ?? order.id ?? "").trim();
+        if (!id) continue;
+        await storage.upsertExchangeOrderLedger({
+          exchange: "bitunix", symbol: String(order.symbol ?? symbol ?? "UNKNOWN"), exchangeOrderId: id,
+          clientOrderId: order.clientId ?? order.clientOrderId ?? null, side: order.side ?? null,
+          tradeSide: order.tradeSide ?? null, orderType: order.orderType ?? order.type ?? null,
+          status: String(order.status ?? order.orderStatus ?? "UNKNOWN"), quantity: num(order.qty ?? order.quantity ?? order.orderQty),
+          filledQuantity: num(order.tradeQty ?? order.filledQty ?? order.executedQty), price: num(order.price),
+          averagePrice: num(order.avgPrice ?? order.averagePrice), fee: num(order.fee),
+          realizedPnl: num(order.realizedPNL ?? order.realizedPnl), exchangeCreatedAt: date(order.ctime ?? order.createTime),
+          exchangeUpdatedAt: date(order.mtime ?? order.updateTime), raw: order,
+        });
+        imported++;
+      }
+      res.json({ imported, received: orders.length, symbol: symbol ?? null });
+    } catch (error: any) {
+      res.status(502).json({ message: `Order history import failed: ${error?.message || error}` });
+    }
+  });
+
   // === Manual Trade ===
   app.post("/api/trade", async (req, res) => {
     const client = getBitunixClient();

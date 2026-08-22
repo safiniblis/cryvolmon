@@ -91,3 +91,4 @@
 - 2026-08-21T22:37:27.129Z — Implemented Tandem child-grid 20% one-way fill threshold: ladders stay anchored during normal fills, scan completed OPEN grid orders, and rescale the child range only after the threshold; TypeScript check and production build passed.
 - 2026-08-21T22:39:44.139Z — Cleaned trailing whitespace from the Tandem 20% rebuild source and verified TypeScript check, production build, and diff whitespace check passed.
 - 2026-08-21T22:47:26.794Z — Adjusted Tandem rebuild threshold so a six-level side requires at least two completed events—one grid OPEN and one matching CLOSE/TP—before rebuilding; TypeScript check and production build passed.
+- 2026-08-22T05:55:13.837Z — Added a persistent Bitunix exchange-order ledger with deduplicated storage, history import endpoint, and read-only ledger retrieval; TypeScript, production build, and database schema checks passed.

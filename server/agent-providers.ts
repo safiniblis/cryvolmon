@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { MANAGER_BASE_URL, MANAGER_MODEL, MANAGER_PROVIDER } from "@shared/council-config";
 import { OPENROUTER_BASE_URL, FREE_MODEL_REGISTRY, getHealthyFreeModels, pingEndpoint, MODEL_DUPLICATES, EXTRA_FREE_ENDPOINTS, MANAGER_TRUSTED_MODELS, PROVIDER_BASE_URLS, KEYLESS_PROVIDERS, recordPingResult } from "./free-models";
+import { logCall } from "./llm-ledger";
 
 const COUNCIL_STATE_PATH =
   process.env.COUNCIL_STATE_PATH ||
@@ -64,7 +65,7 @@ function persistOverrides(): void {
 }
 
 export type AgentPosition = "manager" | "architect" | "builder" | "auditor" | "trader";
-export type AgentProvider = "opencode" | "abacus" | "deepseek" | "groq" | "cerebras" | "openrouter" | "hyperbolic" | "nemotron" | "nvidia" | "sambanova" | "mistral" | "hf" | "gemini" | "ovh" | "local";
+export type AgentProvider = "opencode" | "abacus" | "deepseek" | "groq" | "cerebras" | "openrouter" | "hyperbolic" | "nemotron" | "nvidia" | "sambanova" | "mistral" | "hf" | "gemini" | "ovh" | "local" | "nebius" | "llmgateway";
 
 export const AGENT_POSITIONS: AgentPosition[] = ["manager", "architect", "builder", "auditor", "trader"];
 export const OPERATOR_LOCKED_POSITIONS: ReadonlySet<AgentPosition> = new Set(["manager", "architect", "builder", "auditor"]);
@@ -227,6 +228,14 @@ const PROVIDER_DEFAULTS: Record<AgentProvider, ProviderDefaults> = {
     baseUrl: process.env.LOCAL_BASE_URL || "http://127.0.0.1:11434/v1",
     model: process.env.LOCAL_MODEL || "qwen3:4b",
   },
+  nebius: {
+    baseUrl: process.env.NEBIUS_BASE_URL || "https://api.tokenfactory.nebius.com/v1",
+    model: process.env.NEBIUS_MODEL || "deepseek-ai/DeepSeek-V4-Pro",
+  },
+  llmgateway: {
+    baseUrl: process.env.LLMGATEWAY_BASE_URL || "https://llmgateway.io/v1",
+    model: process.env.LLMGATEWAY_MODEL || "deepseek-v4-flash",
+  },
 };
 
 const POSITION_PROVIDER: Record<AgentPosition, AgentProvider> = Object.fromEntries(
@@ -294,6 +303,8 @@ function providerKeyName(provider: AgentProvider): string {
     case "gemini": return "GEMINI_API_KEY";
     case "ovh": return "none (keyless)";
     case "local": return "none (keyless)";
+    case "nebius": return "NEBIUS_API_KEY";
+    case "llmgateway": return "LLMGATEWAY_API_KEY";
   }
 }
 
@@ -315,6 +326,8 @@ export function resolveSlotKey(provider: AgentProvider, overrideKey: string | nu
     case "gemini": return process.env.GEMINI_API_KEY || openCodeAuthKey(provider);
     case "ovh": return null; // keyless anonymous tier
     case "local": return null; // local Ollama needs no key
+    case "nebius": return process.env.NEBIUS_API_KEY || null;
+    case "llmgateway": return process.env.LLMGATEWAY_API_KEY || null;
   }
 }
 
@@ -510,6 +523,7 @@ export interface AgentReply {
   provider: AgentProvider;
   model: string;
   ms: number;
+  toolCalls?: number;
 }
 
 export interface AgentToolDefinition {
@@ -522,7 +536,7 @@ export type AgentToolExecutor = (name: string, args: Record<string, unknown>) =>
 export async function chatSlot(
   position: AgentPosition,
   messages: AgentMessage[],
-  opts: { timeoutMs?: number; maxTokens?: number; modelOverride?: string; providerOverride?: AgentProvider; tools?: AgentToolDefinition[]; executeTool?: AgentToolExecutor; requestMessages?: any[]; toolRound?: number; toolResults?: string[]; fallbackDepth?: number; nudged?: boolean } = {},
+  opts: { timeoutMs?: number; maxTokens?: number; modelOverride?: string; providerOverride?: AgentProvider; tools?: AgentToolDefinition[]; executeTool?: AgentToolExecutor; requestMessages?: any[]; toolRound?: number; toolResults?: string[]; toolCalls?: number; fallbackDepth?: number; nudged?: boolean } = {},
 ): Promise<AgentReply> {
   const started = Date.now();
   const slot = getSlot(position);
@@ -531,7 +545,7 @@ export async function chatSlot(
   const key = resolveSlotKey(provider, opts.providerOverride ? null : slot.apiKey);
   const timeoutMs = opts.timeoutMs ?? 60_000;
   const fallbackToBigPickle = () =>
-    !overrides.has(position) && position !== "manager" && provider === "opencode" && model !== "big-pickle"
+    position !== "manager" && provider === "opencode" && model !== "big-pickle"
       ? chatSlot(position, messages, { ...opts, modelOverride: "big-pickle", timeoutMs: 45_000 })
       : null;
 
@@ -541,12 +555,14 @@ export async function chatSlot(
    * got swapped mid-query). Set COUNCIL_AUTO_HEAL=1 only if you explicitly want rescue swaps.
    * Even when enabled, the manager seat is never auto-healed — operator lock is sacred.
    */
-  const tryFallbackChain = async (reason: string): Promise<AgentReply | null> => {
-    if (process.env.COUNCIL_AUTO_HEAL !== "1") return null;
+  const tryFallbackChain = async (reason: string, force = false): Promise<AgentReply | null> => {
+    // Empty completions always trigger fallback — the provider returned nothing,
+    // so retrying the same provider is unlikely to help.  Other errors respect
+    // the COUNCIL_AUTO_HEAL gate to avoid overwriting operator-chosen models.
+    if (!force && process.env.COUNCIL_AUTO_HEAL !== "1") return null;
     if ((opts.fallbackDepth ?? 0) >= 1) return null;
     // Never auto-heal manager — operator chose it on purpose.
-    // Persisted or runtime slot selections are also operator-locked.
-    if (OPERATOR_LOCKED_POSITIONS.has(position) || overrides.has(position)) return null;
+    if (OPERATOR_LOCKED_POSITIONS.has(position)) return null;
     const hasKeyed = ["openrouter", "groq", "nvidia", "nemotron"].some((p) => resolveSlotKey(p as AgentProvider, null));
     if (!hasKeyed && !KEYLESS_PROVIDERS.has("ovh")) return null;
     const pick = await selectFallbackModel(position, model);
@@ -555,9 +571,10 @@ export async function chatSlot(
     return chatSlot(position, messages, { ...opts, modelOverride: pick.model, providerOverride: pick.provider as AgentProvider, timeoutMs: 60_000, fallbackDepth: (opts.fallbackDepth ?? 0) + 1 });
   };
 
-  const fail = async (error: string, extra: Partial<AgentReply> = {}): Promise<AgentReply> => {
-    const healed = await tryFallbackChain(error);
+  const fail = async (error: string, extra: Partial<AgentReply> = {}, force = false): Promise<AgentReply> => {
+    const healed = await tryFallbackChain(error, force);
     if (healed) return healed;
+    if ((opts.toolRound ?? 0) === 0) logCall({ position, provider, model, tokensIn: 0, tokensOut: 0, ms: Date.now() - started, ok: false, error });
     return { ok: false, content: null, error, position, provider, model, ms: Date.now() - started, ...extra };
   };
 
@@ -632,21 +649,22 @@ export async function chatSlot(
         toolResults.push(result);
         toolMessages.push({ role: "tool", tool_call_id: call.id, content: result });
       }
-      const followUp = await chatSlot(position, messages, { ...opts, requestMessages: toolMessages, toolRound: (opts.toolRound || 0) + 1, toolResults });
+      const totalToolCalls = (opts.toolCalls ?? 0) + toolCalls.length;
+      const followUp = await chatSlot(position, messages, { ...opts, requestMessages: toolMessages, toolRound: (opts.toolRound || 0) + 1, toolResults, toolCalls: totalToolCalls });
       if (!followUp.ok && followUp.error === "Empty completion" && toolResults.length > 0 && !opts.nudged) {
-        // The manager likely hit the tool-round cap mid-workflow or returned an
-        // empty final message. Give it ONE more bounded round, tools still
-        // available, to finish remaining steps (build/restart/commit/mark_job)
-        // and then write a real plain-English summary. If that also fails,
-        // fall back to a short note instead of dumping raw tool output.
+        // The model returned empty after tool execution.  Build a LEAN nudge
+        // context: original messages + a compact summary of what was called
+        // (no raw output — that wall of text is what choked the model).
+        const toolSummary = toolCalls.map((c: any) => c.function?.name || "unknown").join(", ");
         try {
           const nudged = await chatSlot(position, messages, {
             ...opts,
             toolRound: 0,
             nudged: true,
             requestMessages: [
-              ...toolMessages,
-              { role: "user", content: "You were interrupted mid-task and produced no final reply. If you still have remaining steps for this job (e.g. run_build, restart_service, log_change, git_commit, mark_job done), complete them now. When everything is done, reply to the operator in short plain English summarizing what you did and the result. Do not paste raw tool output. Do not call more tools once you reply." },
+              ...requestMessages,
+              { role: "assistant", content: `[Tool calls completed: ${toolSummary}]` },
+              { role: "user", content: "You were interrupted mid-task and produced no final reply. Your previous tool calls ran successfully. If you still have remaining steps for this job (e.g. run_build, restart_service, log_change, mark_job done), complete them now. Do not call git_commit unless the build plan explicitly requires it. When everything is done, reply to the operator in short plain English summarizing what you did and the result. Do not paste raw tool output. Do not call more tools once you reply." },
             ],
             timeoutMs: 60_000,
           });
@@ -669,11 +687,14 @@ export async function chatSlot(
       : normalizedMessageContent || data?.output_text || data?.text;
     overrides.set(position, { ...overrides.get(position), ...{ lastError: null } });
     if (typeof content === "string" && content.trim()) {
-      return { ok: true, content: content.trim(), position, provider, model, ms: Date.now() - started };
+      const tokensIn = data?.usage?.prompt_tokens ?? 0;
+      const tokensOut = data?.usage?.completion_tokens ?? 0;
+      if ((opts.toolRound ?? 0) === 0) logCall({ position, provider, model, tokensIn, tokensOut, ms: Date.now() - started, ok: true });
+      return { ok: true, content: content.trim(), position, provider, model, ms: Date.now() - started, toolCalls: opts.toolCalls };
     }
     const fallback = fallbackToBigPickle();
     if (fallback) return fallback;
-    return fail("Empty completion");
+    return fail("Empty completion", {}, true);
   } catch (e: any) {
     const error = e?.name === "AbortError" ? `timed out after ${timeoutMs}ms` : String(e?.message || e);
     overrides.set(position, { ...overrides.get(position), ...{ lastError: error } });
@@ -681,7 +702,7 @@ export async function chatSlot(
       const fallback = fallbackToBigPickle();
       if (fallback) return fallback;
     }
-    return fail(error);
+    return fail(error, {}, e?.name === "AbortError");
   } finally {
     clearTimeout(timer);
   }

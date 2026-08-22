@@ -476,7 +476,12 @@ async function executeManagerTool(name: string, args: Record<string, unknown>, a
     try {
       const commit = await execFileAsync(git, ["commit", "-m", message], { cwd: process.cwd(), timeout: 30_000 });
       const log = await execFileAsync(git, ["log", "--oneline", "-1"], { cwd: process.cwd(), timeout: 20_000 });
-      return `COMMITTED ${log.stdout.trim()}\n${commit.stdout}\n${commit.stderr}`.slice(-4000);
+      let pushNote = "";
+      try {
+        await execFileAsync(git, ["push", "origin", "main"], { cwd: process.cwd(), timeout: 30_000 });
+        pushNote = "\nPUSHED to GitHub";
+      } catch { pushNote = "\n(push failed — commit is local only)"; }
+      return `COMMITTED ${log.stdout.trim()}${pushNote}\n${commit.stdout}\n${commit.stderr}`.slice(-4000);
     } catch (error: any) {
       const stderr = String(error?.stderr || error?.message || "");
       if (/nothing to commit|no changes added|nothing added/i.test(stderr)) return "COMMITTED nothing to commit (working tree clean)";

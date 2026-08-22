@@ -744,22 +744,30 @@ function TradeHistory() {
 function VolatilityScoresPanel() {
   const { data: scores, isLoading } = useVolatilityScores();
   const { data: pairData } = useBitunixPairs();
+  const { data: bitrueContracts } = useBitrueContracts();
   const { data: strategies } = useStrategies();
   const manualRotation = useManualRotation();
   const quickStart = useQuickStart();
   const [amount, setAmount] = useState("40");
   const [startingSymbol, setStartingSymbol] = useState<string | null>(null);
   const [twinMode, setTwinMode] = useState(true);
+  const [exchange, setExchange] = useState<"bitunix" | "bitrue">("bitunix");
 
-  const runningStrategy = strategies?.find(s => s.status === "running" && s.type === "grid");
+  const runningStrategy = strategies?.find(s => s.status === "running" && s.type === "grid" && (s.config as any)?.exchange === exchange);
   const hasRunning = !!runningStrategy;
   const availablePairs = new Set(pairData?.pairs || []);
+  const bitruePairs = new Set(bitrueContracts?.pairs || []);
+  const visibleScores = scores?.filter(s => {
+    if (exchange === "bitunix") return availablePairs.size === 0 || availablePairs.has(s.bitunixSymbol);
+    const base = s.bitunixSymbol.replace(/USDT$/, "");
+    return bitruePairs.size === 0 || [...bitruePairs].some(p => p.replace(/^E-/, "").startsWith(`${base}-`));
+  });
 
   const handleStart = (bitunixSymbol: string) => {
     const val = parseFloat(amount);
     if (isNaN(val) || val <= 0) return;
     setStartingSymbol(bitunixSymbol);
-    quickStart.mutate({ amount: val, symbol: bitunixSymbol, twinMode, twinGapPct: 0.006 }, {
+    quickStart.mutate({ amount: val, symbol: bitunixSymbol, exchange, twinMode, twinGapPct: 0.006 }, {
       onSettled: () => setStartingSymbol(null),
     });
   };
@@ -783,6 +791,15 @@ function VolatilityScoresPanel() {
               <ArrowUpDown className="h-3 w-3 mr-1" />
               Twin {twinMode ? "On" : "Off"}
             </Button>
+            <select
+              value={exchange}
+              onChange={e => setExchange(e.target.value as "bitunix" | "bitrue")}
+              className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+              data-testid="select-quickstart-exchange"
+            >
+              <option value="bitunix">Bitunix</option>
+              <option value="bitrue">Bitrue</option>
+            </select>
             <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
             <Input
               data-testid="input-quickstart-amount"
@@ -812,7 +829,7 @@ function VolatilityScoresPanel() {
               </tr>
             </thead>
             <tbody>
-              {scores?.filter(s => availablePairs.size === 0 || availablePairs.has(s.bitunixSymbol)).slice(0, 10).map(s => {
+              {visibleScores?.slice(0, 10).map(s => {
                 const isActive = runningStrategy?.symbol === s.bitunixSymbol;
                 const isStarting = startingSymbol === s.bitunixSymbol;
                 return (

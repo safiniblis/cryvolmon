@@ -52,7 +52,7 @@ export function useQuickStart() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
-    mutationFn: async (data: { amount: number; symbol?: string; twinMode?: boolean; twinGapPct?: number }) => {
+    mutationFn: async (data: { amount: number; symbol?: string; exchange?: "bitunix" | "bitrue"; twinMode?: boolean; twinGapPct?: number }) => {
       const res = await apiRequest("POST", "/api/strategies/quickstart", data);
       return res.json();
     },

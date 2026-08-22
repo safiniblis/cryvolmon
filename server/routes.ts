@@ -854,7 +854,10 @@ export async function registerRoutes(
   // === Quick Start (auto-select best pair + create + start) ===
   app.post("/api/strategies/quickstart", async (req, res) => {
     try {
-      const { amount = 100, symbol: requestedSymbol, twinMode = false, twinGapPct = 0.006 } = req.body;
+      const { amount = 100, symbol: requestedSymbol, exchange = "bitunix", twinMode = false, twinGapPct = 0.006 } = req.body;
+      if (exchange !== "bitunix") {
+        return res.status(400).json({ message: "Bitrue crypto grid execution is not available yet. Bitrue currently supports the Gold Long strategy only." });
+      }
       const usdtAmount = parseFloat(amount);
       if (isNaN(usdtAmount) || usdtAmount <= 0) {
         return res.status(400).json({ message: "Invalid USDT amount" });

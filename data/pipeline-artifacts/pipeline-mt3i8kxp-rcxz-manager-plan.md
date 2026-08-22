@@ -1,41 +1,39 @@
 ## Diagnosis
 
-The failure occurred at the **Architect handoff**, before a build plan was produced.
+The failure occurred at the Architect handoff. The live Architect seat is Groq `openai/gpt-oss-120b`, with an 8,000-token-per-minute limit. The request was 10,324 tokens—2,324 over the limit—so Groq rejected it with HTTP 413 before producing a plan.
 
-- Groq’s `openai/gpt-oss-120b` seat allows 8,000 tokens/minute.
-- The request contained 10,324 tokens—2,324 over the limit—so HTTP 413 rejected it.
-- Repeated recovery attempts retained pipeline history, making requests larger.
-- Live configuration also contains an invalid persisted Builder provider: `nebius`, which is not supported by the registered provider type.
-- Logs show no trading activity, strategy changes, exchange actions, or service restart.
+The prompt expanded because resumed pipeline history repeatedly carried prior failures and artifacts. The existing packet-decomposition utility is not being used for the Architect request.
+
+Live configuration also shows Builder assigned to a Nebius override, but that did not cause this failure. No trading strategy or risk setting changed. The service is currently running.
 
 ## Proposed Patch (not applied)
 
-1. **`server/council.ts`**
-   - Send the Architect only the current job order, role instructions, and necessary file context.
-   - Exclude prior retry history, duplicate error analyses, and unrelated conversation history.
-   - Add a hard Architect prompt-size budget below 8,000 tokens.
-   - Treat HTTP 413 as a terminal blocked-stage error, not a repeated retry condition.
-   - Allow the pipeline to proceed only after a valid Architect plan exists.
+- **`server/council.ts`**
+  - Send the Architect only the current job order, essential instructions, and narrowly relevant context.
+  - Exclude repeated history, prior error analyses, and duplicate artifacts from Architect prompts.
+  - Add a hard request-size budget below 8,000 tokens.
+  - Detect HTTP 413 and stop without retrying the same oversized request.
+  - Preserve a concise failure artifact for diagnosis.
 
-2. **`server/agent-providers.ts`**
-   - Validate persisted seat providers against the supported `AgentProvider` list.
-   - Ignore invalid entries such as `nebius` and fall back to the role default.
-   - Ensure displayed and actual provider routing use the same validation.
+- **`server/task-decomposer.ts`**
+  - Reuse its context-slicing and bounded-packet logic for large Architect inputs where appropriate.
+  - Ensure packet retries remain limited to the failed packet.
 
-3. **`data/council-runtime.json`**
-   - Remove or replace the stale Builder override through the approved configuration path.
-   - Do not expose or copy its stored credential.
+- **`server/agent-providers.ts`**
+  - Add provider/model request-budget settings.
+  - Log estimated prompt size and selected seat without logging credentials.
+  - Keep all existing provider assignments and trading behavior unchanged.
 
-No trading logic, exchange behavior, strategy parameters, leverage, or capital would change.
+No changes are proposed to exchanges, strategy parameters, leverage, capital, or live trading state.
 
 ## Verification After Approval
 
-- Confirm Architect requests stay safely below the provider limit.
-- Confirm one HTTP 413 creates one blocked result without repeated resend attempts.
-- Confirm invalid seat configuration falls back safely.
-- Run TypeScript checking and the production build.
-- Confirm no trading, strategy, exchange, credential, or service-state changes occurred.
+- Run TypeScript check and production build.
+- Confirm Architect payloads stay below the configured safety budget.
+- Confirm HTTP 413 stops safely without repeating the oversized request.
+- Confirm resumed jobs do not accumulate duplicate history.
+- Confirm provider assignments, exchange behavior, and trading settings remain unchanged.
 
 ## Approval Required
 
-Approval is required before applying this pipeline-only patch.
+Approval is required before applying this patch. No files were changed and the failed agent was not retried.

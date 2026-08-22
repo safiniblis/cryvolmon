@@ -377,6 +377,7 @@ async function hedgePairTrailing(strategy: Strategy, config: HedgePairConfig, cl
         slPrice: slPriceStr,
         slStopType: "LAST_PRICE",
         slOrderType: "MARKET",
+        slQty: roundQty(parseFloat(survivorPos.qty || "0"), precision.basePrecision),
       });
       if (result?.code === 0) {
         const newSlId = result.data?.orderId || "";

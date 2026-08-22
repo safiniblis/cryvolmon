@@ -2,7 +2,7 @@
   "id": "pipeline-mt3i8kxp-rcxz",
   "goal": "Verify the already implemented Tandem inventory-recovery change in commit 91349ca. This is a focused no-op verification job: inspect only the existing Tandem inventory-target behavior, do not edit files unless a concrete regression is found, and do not change trading logic, risk settings, leverage, capital, ticker, exchange behavior, credentials, live orders, strategy state, or service state. Architect must provide a short plan; Builder must run check/build and make no edits if the implementation is already present; Auditor must approve or reject; Manager must perform final review. No restart unless an actual approved code change is made.",
   "createdAt": "2026-08-21T22:12:09.853Z",
-  "updatedAt": "2026-08-22T07:02:07.258Z",
+  "updatedAt": "2026-08-22T08:59:50.448Z",
   "stage": "blocked",
   "loop": 0,
   "maxLoop": 1,
@@ -127,10 +127,66 @@
       "at": "2026-08-22T07:02:07.257Z",
       "summary": "## Diagnosis The failure occurred at the **Architect handoff**, before a build plan was produced. - Groq’s `openai/gpt-oss-120b` seat allows 8,000 tokens/minute. - The request contained 10,324 tokens—2,324 over the limit—so HTTP 413 rejected it. - Repeated recovery attempts retained pipeline history",
       "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-22T07:46:52.573Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8724, please reduce your message size and try again. Need more tokens? Upgrade",
+      "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-22T07:47:05.945Z",
+      "summary": "## Diagnosis The manager stage did not fail internally. The failure occurred when handing work to the Architect. - Live Architect seat: Groq, `openai/gpt-oss-120b`. - Provider limit: 8,000 tokens/minute. - Failed request: 8,724 tokens—724 over the limit. - HTTP 413 means Groq rejected the oversized ",
+      "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-22T07:56:53.128Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8724, please reduce your message size and try again. Need more tokens? Upgrade",
+      "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-22T07:57:04.603Z",
+      "summary": "## Diagnosis The failure occurred at the Architect handoff, not inside Manager reasoning. - Live Architect seat: Groq `openai/gpt-oss-120b`. - Provider limit: 8,000 tokens/minute. - Request size: 8,724 tokens, exceeding the limit by 724. - Repeated recovery retained prior history and error text, cau",
+      "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-22T08:28:26.050Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8724, please reduce your message size and try again. Need more tokens? Upgrade",
+      "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-22T08:28:40.236Z",
+      "summary": "## Diagnosis The pipeline failed at the **Architect handoff**, not Manager reasoning. The live Architect seat is Groq `openai/gpt-oss-120b`, limited to 8,000 TPM; the request used 8,724 tokens—724 too many—so HTTP 413 rejected it. The prompt grew because resumed pipeline history repeatedly included ",
+      "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-manager-plan.md"
+    },
+    {
+      "stage": "architect",
+      "position": "architect",
+      "at": "2026-08-22T08:59:34.793Z",
+      "summary": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10324, please reduce your message size and try again. Need more tokens? Upgrad",
+      "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-architect.md"
+    },
+    {
+      "stage": "manager-plan",
+      "position": "manager",
+      "at": "2026-08-22T08:59:50.448Z",
+      "summary": "## Diagnosis The failure occurred at the Architect handoff. The live Architect seat is Groq `openai/gpt-oss-120b`, with an 8,000-token-per-minute limit. The request was 10,324 tokens—2,324 over the limit—so Groq rejected it with HTTP 413 before producing a plan. The prompt expanded because resumed p",
+      "artifact": "data/pipeline-artifacts/pipeline-mt3i8kxp-rcxz-manager-plan.md"
     }
   ],
   "managerOrder": "## GOAL\nVerify that commit `91349ca` contains the intended Tandem inventory-target recovery behavior. Produce a short Architect plan, have Builder run type-check and production build without editing when implementation is present, obtain Auditor approval or rejection, then complete Manager final review. Do not restart unless an approved code change is required.\n\n## CONSTRAINTS (locked risk: leverage, capital, ticker, exchange semantics — never to be changed)\n- No file edits unless a concrete regression is found.\n- Do not change trading logic beyond correcting a verified regression.\n- Do not change leverage, capital, ticker, exchange behavior, credentials, live orders, strategy state, or service state.\n- Do not consult or modify live trading state.\n- Builder must make no edits for an already-correct implementation.\n- No restart for this no-op verification.\n- If a regression is found, stop for pipeline approval before any change.\n\n## ACCEPTANCE CRITERIA (how we know the job is done AND running)\n- Architect supplies a concise verification plan.\n- Existing Tandem inventory-target behavior is confirmed against commit `91349ca`.\n- Builder completes type-check and production build successfully with no edits.\n- Auditor explicitly approves the verification.\n- Manager records the final review and confirms no code, risk, trading, or service-state changes.\n- The existing service remains running; no restart is performed unless an approved fix was actually made.\n\n## FILES-TO-TOUCH (your best guess of the files involved)\n- `server/tandem-engine.ts` — inspect existing inventory-target behavior.\n- `server/tandem-decision-log.ts` — inspect related decision recording if needed.\n- `server/gold-long-engine.test.ts` — run or inspect relevant regression coverage if applicable.\n- `data/changelog.md` — record the verification result.\n- `data/pipeline-artifacts/` — store Architect, Builder, Auditor, and Manager pipeline records.",
   "buildPlan": "BUILD_PLAN_ERROR: HTTP 413 {\"error\":{\"message\":\"Request too large for model `openai/gpt-oss-120b` in organization `org_01kzsq9cxserz8w448k5twzpt5` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 10324, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at http",
-  "recoveryCount": 8,
-  "errorAnalysis": "## Diagnosis\n\nThe failure occurred at the **Architect handoff**, before a build plan was produced.\n\n- Groq’s `openai/gpt-oss-120b` seat allows 8,000 tokens/minute.\n- The request contained 10,324 tokens—2,324 over the limit—so HTTP 413 rejected it.\n- Repeated recovery attempts retained pipeline history, making requests larger.\n- Live configuration also contains an invalid persisted Builder provider: `nebius`, which is not supported by the registered provider type.\n- Logs show no trading activity, strategy changes, exchange actions, or service restart.\n\n## Proposed Patch (not applied)\n\n1. **`server/council.ts`**\n   - Send the Architect only the current job order, role instructions, and necessary file context.\n   - Exclude prior retry history, duplicate error analyses, and unrelated conversation history.\n   - Add a hard Architect prompt-size budget below 8,000 tokens.\n   - Treat HTTP 413 as a terminal blocked-stage error, not a repeated retry condition.\n   - Allow the pipeline to proceed only after a valid Architect plan exists.\n\n2. **`server/agent-providers.ts`**\n   - Validate persisted seat providers against the supported `AgentProvider` list.\n   - Ignore invalid entries such as `nebius` and fall back to the role default.\n   - Ensure displayed and actual provider routing use the same validation.\n\n3. **`data/council-runtime.json`**\n   - Remove or replace the stale Builder override through the approved configuration path.\n   - Do not expose or copy its stored credential.\n\nNo trading logic, exchange behavior, strategy parameters, leverage, or capital would change.\n\n## Verification After Approval\n\n- Confirm Architect requests stay safely below the provider limit.\n- Confirm one HTTP 413 creates one blocked result without repeated resend attempts.\n- Confirm invalid seat configuration falls back safely.\n- Run TypeScript checking and the production build.\n- Confirm no trading, strategy, exchange, credential, or service-state changes occurred.\n\n## Approval Required\n\nApproval is required before applying this pipeline-only patch."
+  "recoveryCount": 12,
+  "errorAnalysis": "## Diagnosis\n\nThe failure occurred at the Architect handoff. The live Architect seat is Groq `openai/gpt-oss-120b`, with an 8,000-token-per-minute limit. The request was 10,324 tokens—2,324 over the limit—so Groq rejected it with HTTP 413 before producing a plan.\n\nThe prompt expanded because resumed pipeline history repeatedly carried prior failures and artifacts. The existing packet-decomposition utility is not being used for the Architect request.\n\nLive configuration also shows Builder assigned to a Nebius override, but that did not cause this failure. No trading strategy or risk setting changed. The service is currently running.\n\n## Proposed Patch (not applied)\n\n- **`server/council.ts`**\n  - Send the Architect only the current job order, essential instructions, and narrowly relevant context.\n  - Exclude repeated history, prior error analyses, and duplicate artifacts from Architect prompts.\n  - Add a hard request-size budget below 8,000 tokens.\n  - Detect HTTP 413 and stop without retrying the same oversized request.\n  - Preserve a concise failure artifact for diagnosis.\n\n- **`server/task-decomposer.ts`**\n  - Reuse its context-slicing and bounded-packet logic for large Architect inputs where appropriate.\n  - Ensure packet retries remain limited to the failed packet.\n\n- **`server/agent-providers.ts`**\n  - Add provider/model request-budget settings.\n  - Log estimated prompt size and selected seat without logging credentials.\n  - Keep all existing provider assignments and trading behavior unchanged.\n\nNo changes are proposed to exchanges, strategy parameters, leverage, capital, or live trading state.\n\n## Verification After Approval\n\n- Run TypeScript check and production build.\n- Confirm Architect payloads stay below the configured safety budget.\n- Confirm HTTP 413 stops safely without repeating the oversized request.\n- Confirm resumed jobs do not accumulate duplicate history.\n- Confirm provider assignments, exchange behavior, and trading settings remain unchanged.\n\n## Approval Required\n\nApproval is required before applying this patch. No files were changed and the failed agent was not retried."
 }

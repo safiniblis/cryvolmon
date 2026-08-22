@@ -1,44 +1,39 @@
 ## Diagnosis
 
-The manager stage failed because the **Architect request was too large for its provider**:
+The failure occurred at the **Architect handoff**, not in trading or the service.
 
-- Provider: Groq
-- Model: `openai/gpt-oss-120b`
-- Limit: 8,000 tokens/minute
-- Request: 10,034 tokens
-- Excess: 2,034 tokens
-- HTTP 413 means the provider rejected the request before producing a plan.
-
-The service logs show repeated oversized attempts, not a trading-engine failure. No service restart or trading-state change occurred.
-
-Live seat configuration also has a separate problem: Builder is persisted as `nebius`, but `server/agent-providers.ts` does not support that provider. This did not cause this Architect 413, but it can break the next pipeline handoff.
+- Live Architect seat: Groq `openai/gpt-oss-120b`.
+- Provider limit: **8,000 tokens per minute**.
+- Failed request: **8,837 tokens**, exceeding the limit by **837**.
+- Repeated recovery attempts retained too much pipeline history, causing request size to fluctuate above the limit.
+- Logs show no restart, trading action, strategy change, or exchange activity.
+- Separate configuration issue: the persisted Builder seat uses unsupported provider `nebius`, which may break a later handoff.
 
 ## Proposed Patch (not applied)
 
 1. **`server/council.ts`**
-   - Reduce the Architect handoff to the current job order, relevant file excerpts, and required constraints only.
-   - Exclude retained pipeline history, duplicate instructions, and unrelated conversation context.
-   - Add a hard prompt-size budget below 8,000 tokens, preferably approximately 6,500.
-   - Detect HTTP 413 as a non-retryable size failure.
-   - Record one blocked pipeline result instead of repeatedly retrying the same oversized request.
+   - Build Architect prompts from only the current job order, relevant file excerpts, and required role instructions.
+   - Exclude prior retry history, duplicate summaries, and unrelated conversation context.
+   - Enforce a hard prompt budget around **6,500 tokens**, safely below Groq’s 8,000-token limit.
+   - Treat HTTP 413 as a non-retryable size error.
+   - Mark the stage blocked once, rather than repeatedly resending the same oversized request.
 
 2. **`server/agent-providers.ts`**
-   - Validate persisted provider names against the supported provider registry during load.
-   - Ignore invalid entries such as `nebius` and fall back to the configured default seat.
-   - Ensure seat display and actual routing use the same validated provider.
-   - Prevent unsupported provider values from reaching key resolution or model calls.
+   - Validate persisted providers against the supported provider list while loading overrides.
+   - Ignore unsupported entries such as `nebius` and use the role’s configured default.
+   - Ensure displayed seat configuration and actual routing use the same validation.
 
-3. **Configuration handling**
-   - Remove the stale Builder `nebius` override through the normal approved configuration path.
-   - Do not alter credentials, trading behavior, exchange semantics, leverage, capital, ticker, or strategy parameters.
+3. **Configuration cleanup**
+   - Remove the stale Builder override through the approved configuration path.
+   - Do not change trading logic, exchange behavior, credentials, leverage, capital, ticker, or strategy parameters.
 
 ## Verification After Approval
 
-- Confirm Architect requests stay below the configured token budget.
-- Confirm one HTTP 413 marks the attempt blocked without retrying.
+- Confirm Architect request size remains below the configured budget.
+- Confirm one HTTP 413 does not trigger repeated identical retries.
+- Confirm invalid provider overrides safely fall back.
 - Run TypeScript check and production build.
-- Confirm invalid provider overrides are rejected safely.
-- Confirm all trading, strategy, account, and service state remains unchanged.
+- Confirm no trading, account, strategy, exchange, or service-state changes occurred.
 
 ## Approval Required
 

@@ -92,3 +92,4 @@
 - 2026-08-21T22:39:44.139Z — Cleaned trailing whitespace from the Tandem 20% rebuild source and verified TypeScript check, production build, and diff whitespace check passed.
 - 2026-08-21T22:47:26.794Z — Adjusted Tandem rebuild threshold so a six-level side requires at least two completed events—one grid OPEN and one matching CLOSE/TP—before rebuilding; TypeScript check and production build passed.
 - 2026-08-22T05:55:13.837Z — Added a persistent Bitunix exchange-order ledger with deduplicated storage, history import endpoint, and read-only ledger retrieval; TypeScript, production build, and database schema checks passed.
+- 2026-08-22T06:11:26.181Z — Implemented Tandem serialization: parent and child grids now share one async sequence lock, children re-check the persisted pause/cooldown gate after acquiring it, and parent actions remain pause/reconcile/act/verify/cooldown gated; TypeScript and production build passed.

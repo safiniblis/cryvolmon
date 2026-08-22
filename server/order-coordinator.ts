@@ -11,6 +11,26 @@ const RESERVATION_TTL_MS = 30_000;
 
 const tandemCellReservations = new Map<string, { orderId?: string; at: number }>();
 
+// A Tandem parent and its children share one async gate. This is deliberately
+// separate from the per-process strategy locks: a child cycle must not overlap
+// the parent's pause/cancel/act/verify sequence, even when both are awaiting
+// exchange responses.
+const tandemSequenceTails = new Map<number, Promise<void>>();
+
+export async function acquireTandemSequence(parentId: number): Promise<() => void> {
+  const previous = tandemSequenceTails.get(parentId) || Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  // Store the unresolved operation itself. This makes later callers wait for
+  // the complete previous operation and lets the final caller clean up safely.
+  tandemSequenceTails.set(parentId, current);
+  await previous;
+  return () => {
+    release();
+    if (tandemSequenceTails.get(parentId) === current) tandemSequenceTails.delete(parentId);
+  };
+}
+
 function cellKey(strategyId: number, cell: string): string {
   return `${strategyId}:${cell}`;
 }

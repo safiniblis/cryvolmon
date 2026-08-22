@@ -5,7 +5,7 @@ import { priceFeed } from "./ws-price-feed";
 import { getPairPrecision, checkPairRotation, type GridConfig, type PairPrecision } from "./strategy-engine";
 import { logTandemRebalanceDecision, logTandemRebalanceTrade, type TandemRebalanceContext } from "./tandem-decision-log";
 import { managedParam } from "./managed-params";
-import { tandemCellFor, tandemGridRatio, reserveTandemCell, expireStaleTandemReservations } from "./order-coordinator";
+import { tandemCellFor, tandemGridRatio, reserveTandemCell, expireStaleTandemReservations, acquireTandemSequence } from "./order-coordinator";
 
 function roundQty(qty: number, precision: number): string {
   return qty.toFixed(precision);
@@ -128,9 +128,75 @@ export interface TandemConfig {
   inventoryTargetEnabled?: boolean;
   inventoryTolerancePct?: number;
   inventoryRecoveryMaxMultiplier?: number;
+  /** Children remain stopped until this time after a confirmed parent action. */
+  tandemGateUntil?: number;
+  tandemActionState?: "idle" | "pausing" | "acting" | "cooldown" | "blocked";
 }
 
 const tandemEntryLocks: Set<number> = new Set();
+const tandemActionLocks: Set<number> = new Set();
+const TANDEM_ACTION_COOLDOWN_MS = 120_000;
+
+async function pauseAndReconcileChildren(config: TandemConfig, client: any, symbol: string): Promise<void> {
+  const childIds = [config.longGridId, config.shortGridId].filter(Boolean) as number[];
+  for (const id of childIds) await storage.updateStrategy(id, { status: "stopped" });
+  await client.cancelAllOrders(symbol);
+  const open = await client.getOpenOrders(symbol);
+  if (open?.code !== 0) throw new Error("could not verify child orders were cancelled");
+  let orders = open.data;
+  if (!Array.isArray(orders) && Array.isArray(orders?.orderList)) orders = orders.orderList;
+  if (Array.isArray(orders) && orders.length > 0) throw new Error("child orders remain after cancellation");
+  const positions = await client.getPositions(symbol);
+  if (positions?.code !== 0 || !Array.isArray(positions.data)) throw new Error("could not refresh positions");
+}
+
+async function resumeChildren(config: TandemConfig): Promise<void> {
+  for (const id of [config.longGridId, config.shortGridId].filter(Boolean) as number[]) {
+    await storage.updateStrategy(id, { status: "running" });
+  }
+}
+
+/** Execute exactly one parent close while both child grids are quiescent. */
+async function executeSerializedClose(
+  strategy: Strategy,
+  config: TandemConfig,
+  client: any,
+  params: Parameters<typeof placeLimitClose>[1],
+): Promise<{ result: any; filled: boolean }> {
+  config.tandemActionState = "pausing";
+  await storage.updateStrategy(strategy.id, { config: { ...config } });
+  await pauseAndReconcileChildren(config, client, strategy.symbol);
+  config.tandemActionState = "acting";
+  await storage.updateStrategy(strategy.id, { config: { ...config } });
+  const outcome = await placeLimitClose(client, params);
+  if (!outcome.filled) {
+    // An unfilled IOC is not a completed state transition. Release the children
+    // so the next parent cycle can reconcile and retry safely.
+    config.tandemActionState = "idle";
+    await storage.updateStrategy(strategy.id, { config: { ...config } });
+    await resumeChildren(config);
+    return outcome;
+  }
+
+  config.tandemActionState = "cooldown";
+  config.tandemGateUntil = Date.now() + TANDEM_ACTION_COOLDOWN_MS;
+  await storage.updateStrategy(strategy.id, { config: { ...config } });
+  return outcome;
+}
+
+export async function shouldPauseTandemChild(strategy: Strategy): Promise<boolean> {
+  const parentId = Number((strategy.config as any)?.parentTandemId || 0);
+  if (!parentId) return false;
+  const parent = await storage.getStrategy(parentId);
+  if (!parent) return true;
+  const parentConfig = parent.config as TandemConfig;
+  // Children are allowed to trade only while the parent is explicitly idle.
+  // This closes the race between the 15-second scheduler and an in-flight
+  // parent action: pausing/acting/cooldown are all hard stops.
+  return parent.status !== "running"
+    || parentConfig.tandemActionState !== "idle"
+    || !!parentConfig.tandemGateUntil;
+}
 
 function isSymbolPosition(position: any, symbol: string): boolean {
   return String(position?.symbol || "").toUpperCase() === symbol.toUpperCase();
@@ -235,32 +301,44 @@ function defaultGridConfigForSide(side: "LONG" | "SHORT", currentPrice: number, 
 }
 
 export async function executeTandemStrategy(strategy: Strategy) {
+  if (tandemActionLocks.has(strategy.id)) return;
+  tandemActionLocks.add(strategy.id);
   const client = getBitunixClient();
   if (!client) throw new Error("Bitunix client not configured");
 
   const config = strategy.config as TandemConfig;
-  expireStaleTandemReservations();
-  await refreshExchangeCapital(strategy, config, client);
-  const phase = config.phase || "entry";
+  if (!config.tandemActionState) {
+    config.tandemActionState = "idle";
+    await storage.updateStrategy(strategy.id, { config: { ...config } });
+  }
+  const releaseSequence = await acquireTandemSequence(strategy.id);
+  try {
+    expireStaleTandemReservations();
+    if (config.tandemGateUntil) {
+      if (Date.now() < config.tandemGateUntil) {
+        await pauseAndReconcileChildren(config, client, strategy.symbol);
+        return;
+      }
+      await resumeChildren(config);
+      delete config.tandemGateUntil;
+      config.tandemActionState = "idle";
+      await storage.updateStrategy(strategy.id, { config: { ...config } });
+    }
+    await refreshExchangeCapital(strategy, config, client);
+    const phase = config.phase || "entry";
 
-  console.log(`[Tandem ${strategy.id}] Phase: ${phase} | Cycle: ${config.cycleCount || 0} | Symbol: ${strategy.symbol}`);
+    console.log(`[Tandem ${strategy.id}] Phase: ${phase} | Cycle: ${config.cycleCount || 0} | Symbol: ${strategy.symbol}`);
 
-  switch (phase) {
-    case "entry":
-      await tandemEntry(strategy, config, client);
-      break;
-    case "waiting_liquidation":
-      await tandemWaitLiquidation(strategy, config, client);
-      break;
-    case "cascade":
-      await tandemCascade(strategy, config, client);
-      break;
-    case "trailing":
-      await tandemTrailing(strategy, config, client);
-      break;
-    case "complete":
-      await tandemComplete(strategy, config, client);
-      break;
+    switch (phase) {
+      case "entry": await tandemEntry(strategy, config, client); break;
+      case "waiting_liquidation": await tandemWaitLiquidation(strategy, config, client); break;
+      case "cascade": await tandemCascade(strategy, config, client); break;
+      case "trailing": await tandemTrailing(strategy, config, client); break;
+      case "complete": await tandemComplete(strategy, config, client); break;
+    }
+  } finally {
+    releaseSequence();
+    tandemActionLocks.delete(strategy.id);
   }
 }
 
@@ -625,7 +703,7 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
 
           try {
             const posToTrim = trimSide === "LONG" ? longPos : shortPos;
-            const { result, filled } = await placeLimitClose(client, {
+            const { result, filled } = await executeSerializedClose(strategy, config, client, {
               symbol: strategy.symbol,
               qty: trimQty,
               side: closeSide,
@@ -637,6 +715,8 @@ async function tandemWaitLiquidation(strategy: Strategy, config: TandemConfig, c
             });
 
             if (filled) {
+              await pauseAndReconcileChildren(config, client, strategy.symbol);
+              config.tandemGateUntil = Date.now() + TANDEM_ACTION_COOLDOWN_MS;
               config.lastRebalanceAt = Date.now();
               config.lastRebalancePriceRef = currentPrice;
               config.rebalanceCount = (config.rebalanceCount || 0) + 1;
@@ -796,7 +876,7 @@ async function bailOutAndRestart(
   const qtyStr = roundQty(currentQty, precision.basePrecision);
 
   try {
-    const { result, filled } = await placeLimitClose(client, {
+    const { result, filled } = await executeSerializedClose(strategy, config, client, {
       symbol: strategy.symbol,
       qty: qtyStr,
       side: closeSide,
@@ -922,7 +1002,7 @@ async function tandemCascade(strategy: Strategy, config: TandemConfig, client: a
         console.log(`[Tandem ${strategy.id}] CASCADE ${cascadeStep + 1}/${TOTAL_CASCADE_STEPS}: ${closeSide} ${qtyStr} (${(cascadePortions[cascadeStep] * 100).toFixed(0)}%) @ LIMIT IOC — ${cascadeLabels[cascadeStep]} (move=${(moveBeyondLiq * 100).toFixed(2)}%)`);
 
         try {
-          const { result, filled } = await placeLimitClose(client, {
+          const { result, filled } = await executeSerializedClose(strategy, config, client, {
             symbol: strategy.symbol,
             qty: qtyStr,
             side: closeSide,
@@ -1038,7 +1118,7 @@ async function tandemTrailing(strategy: Strategy, config: TandemConfig, client: 
     console.log(`[Tandem ${strategy.id}] TRAILING STOP triggered: ${closeSide} ${qtyStr} @ LIMIT IOC`);
 
     try {
-      const { result, filled } = await placeLimitClose(client, {
+      const { result, filled } = await executeSerializedClose(strategy, config, client, {
         symbol: strategy.symbol,
         qty: qtyStr,
         side: closeSide,

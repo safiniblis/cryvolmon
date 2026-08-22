@@ -3,7 +3,8 @@ import { storage } from "./storage";
 import type { Strategy, InsertTradeLog } from "@shared/schema";
 import { priceFeed } from "./ws-price-feed";
 import { managedParam } from "./managed-params";
-import { tandemCellFor, tandemGridRatio, isTandemCellReservedNear, hasPendingCloseAtPrice } from "./order-coordinator";
+import { tandemCellFor, tandemGridRatio, isTandemCellReservedNear, hasPendingCloseAtPrice, acquireTandemSequence } from "./order-coordinator";
+import { shouldPauseTandemChild } from "./tandem-engine";
 
 interface TickerData {
   symbol: string;
@@ -519,6 +520,10 @@ export async function placeInitialGridBuy(strategy: Strategy): Promise<{ success
 }
 
 async function executeGridStrategy(strategy: Strategy) {
+  if (await shouldPauseTandemChild(strategy)) {
+    console.log(`[Grid ${strategy.id}] Tandem gate active; child remains paused`);
+    return;
+  }
   const client = getBitunixClient();
   if (!client) throw new Error("Bitunix client not configured");
 
@@ -2072,23 +2077,31 @@ export async function executePairRotation(strategy: Strategy, newSymbol: string,
 const lastRotationCheck = new Map<number, number>();
 
 async function guardedExecuteGridStrategy(strategy: Strategy) {
-  const last = lastGridTrades.get(strategy.id);
-  const now = Date.now();
-  if (last && (now - last.time) < 60_000) {
-    return;
-  }
+  const parentId = Number((strategy.config as any)?.parentTandemId || 0);
+  const releaseSequence = parentId > 0 ? await acquireTandemSequence(parentId) : null;
+  try {
+    const last = lastGridTrades.get(strategy.id);
+    const now = Date.now();
+    if (last && (now - last.time) < 60_000) return;
 
-  const lastRotation = lastRotationCheck.get(strategy.id) || 0;
-  if (now - lastRotation > 5 * 60 * 1000) {
-    lastRotationCheck.set(strategy.id, now);
-    const rotation = await checkPairRotation(strategy);
-    if (rotation.shouldRotate && rotation.newSymbol) {
-      await executePairRotation(strategy, rotation.newSymbol, rotation.reason || "Score-based rotation");
-      return;
+    // Tandem children must re-check the persisted gate after acquiring the
+    // shared lock; the parent may have started pausing while this cycle waited.
+    if (parentId > 0 && await shouldPauseTandemChild(strategy)) return;
+
+    const lastRotation = lastRotationCheck.get(strategy.id) || 0;
+    if (now - lastRotation > 5 * 60 * 1000) {
+      lastRotationCheck.set(strategy.id, now);
+      const rotation = await checkPairRotation(strategy);
+      if (rotation.shouldRotate && rotation.newSymbol) {
+        await executePairRotation(strategy, rotation.newSymbol, rotation.reason || "Score-based rotation");
+        return;
+      }
     }
-  }
 
-  await executeGridStrategy(strategy);
+    await executeGridStrategy(strategy);
+  } finally {
+    releaseSequence?.();
+  }
 }
 
 
